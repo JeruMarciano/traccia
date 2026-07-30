@@ -44,4 +44,35 @@ describe('validateProject', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.errors).toContain('Flow f1 refers to unknown id: missing-a')
   })
+
+  it('does not throw when places contains a null instead of an object', () => {
+    const p: any = createEmptyProject('X', NOW)
+    p.places.push(null)
+    expect(() => validateProject(p)).not.toThrow()
+    const r = validateProject(p)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors).toContain('places[0] must be an object with a string id.')
+  })
+
+  it('does not throw when subjectGroups contains a non-object element', () => {
+    const p: any = createEmptyProject('X', NOW)
+    p.subjectGroups.push('not-an-object')
+    expect(() => validateProject(p)).not.toThrow()
+    const r = validateProject(p)
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.errors).toContain('subjectGroups[0] must be an object with a string id.')
+    }
+  })
+
+  it('does not throw when flows contains null', () => {
+    const p: any = createEmptyProject('X', NOW)
+    p.flows.push(null)
+    expect(() => validateProject(p)).not.toThrow()
+    const r = validateProject(p)
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.errors).toContain('flows[0] must be an object with string id, from, and to.')
+    }
+  })
 })

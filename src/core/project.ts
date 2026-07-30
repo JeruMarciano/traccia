@@ -1,4 +1,4 @@
-import type { Project } from './types'
+import type { Place, Project, SubjectGroup } from './types'
 
 export const DEFAULT_PURPOSE_GROUPS = [
   'Selling',
@@ -47,15 +47,54 @@ export function validateProject(value: unknown): ValidationResult {
   }
 
   if (errors.length === 0) {
-    const p = value as Project
+    // The arrays themselves are confirmed to be arrays above, but a
+    // hand-edited or corrupted project file can still put `null` or other
+    // non-object junk *inside* those arrays. Guard every element access so a
+    // malformed entry produces a validation error instead of an uncaught
+    // TypeError (e.g. `null.id`).
+    const isRecord = (x: unknown): x is Record<string, unknown> =>
+      typeof x === 'object' && x !== null && !Array.isArray(x)
+
+    const rawPlaces = v.places as unknown[]
+    const rawSubjectGroups = v.subjectGroups as unknown[]
+    const rawFlows = v.flows as unknown[]
+
+    const validPlaces: Place[] = []
+    rawPlaces.forEach((x, i) => {
+      if (!isRecord(x) || typeof x.id !== 'string') {
+        errors.push(`places[${i}] must be an object with a string id.`)
+        return
+      }
+      validPlaces.push(x as unknown as Place)
+    })
+
+    const validSubjectGroups: SubjectGroup[] = []
+    rawSubjectGroups.forEach((x, i) => {
+      if (!isRecord(x) || typeof x.id !== 'string') {
+        errors.push(`subjectGroups[${i}] must be an object with a string id.`)
+        return
+      }
+      validSubjectGroups.push(x as unknown as SubjectGroup)
+    })
+
     const ids = new Set<string>([
-      ...p.places.map((x) => x.id),
-      ...p.subjectGroups.map((x) => x.id),
+      ...validPlaces.map((x) => x.id),
+      ...validSubjectGroups.map((x) => x.id),
     ])
-    for (const f of p.flows) {
+
+    rawFlows.forEach((f, i) => {
+      if (
+        !isRecord(f) ||
+        typeof f.id !== 'string' ||
+        typeof f.from !== 'string' ||
+        typeof f.to !== 'string'
+      ) {
+        errors.push(`flows[${i}] must be an object with string id, from, and to.`)
+        return
+      }
       if (!ids.has(f.from)) errors.push(`Flow ${f.id} refers to unknown id: ${f.from}`)
       if (!ids.has(f.to)) errors.push(`Flow ${f.id} refers to unknown id: ${f.to}`)
-    }
+    })
   }
 
   return errors.length === 0
