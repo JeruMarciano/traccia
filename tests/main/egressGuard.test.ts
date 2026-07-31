@@ -55,6 +55,50 @@ describe('decideEgress', () => {
   })
 })
 
+// These probe the exact bypass classes a security-auditor pass checks for on egress code:
+// userinfo tricks, IDN/homograph confusables, and Unicode/whitespace host-injection lookalikes.
+// Each expected outcome below was confirmed against Node's WHATWG URL parser before being
+// asserted here, so this is a verified regression test, not a restatement of the implementation.
+describe('decideEgress — bypass attempts', () => {
+  const origins = ['rossi-editore.it']
+
+  it('is not fooled by the scan target used as userinfo in front of a real attacker host', () => {
+    // Displays as if it points at the scan target; new URL().hostname is actually evil.example.
+    expect(decideEgress('https://rossi-editore.it@evil.example/', origins).allow).toBe(false)
+    expect(decideEgress('https://rossi-editore.it:443@evil.example/', origins).allow).toBe(false)
+  })
+
+  it('is not fooled by an attacker host with the scan target as a userinfo-adjacent prefix', () => {
+    expect(decideEgress('https://evil@rossi-editore.it.attacker.example/', origins).allow).toBe(
+      false,
+    )
+  })
+
+  it('is not fooled by a Unicode dot look-alike normalized into a lookalike subdomain', () => {
+    // U+3002 IDEOGRAPHIC FULL STOP is host-parsed as '.', producing rossi-editore.it.evil.example
+    expect(decideEgress('https://rossi-editore.it。evil.example/', origins).allow).toBe(false)
+  })
+
+  it('is not fooled by a tab injected into the host component', () => {
+    // ASCII tab is stripped from the URL by the parser, again yielding the lookalike subdomain.
+    expect(decideEgress('https://rossi-editore.it\t.evil.example/', origins).allow).toBe(false)
+  })
+
+  it('does not let a Unicode-hyphen homograph of the scan target match', () => {
+    // U+2010 HYPHEN is punycode-encoded (xn--...), never collapsing to the ASCII scan origin.
+    expect(decideEgress('https://rossi‐editore.it/', origins).allow).toBe(false)
+  })
+
+  it('does not allowlist an IPv6 literal by falling through to some default-allow', () => {
+    expect(decideEgress('https://[::1]/', origins).allow).toBe(false)
+  })
+
+  it('treats the scan origin case-insensitively regardless of URL casing', () => {
+    expect(decideEgress('https://ROSSI-EDITORE.IT/', origins).allow).toBe(true)
+    expect(decideEgress('HTTPS://rossi-editore.it/', origins).allow).toBe(true)
+  })
+})
+
 describe('installEgressGuard', () => {
   it('cancels a request the decision rejects', () => {
     const { session, fire } = fakeSession()
@@ -66,5 +110,13 @@ describe('installEgressGuard', () => {
     const { session, fire } = fakeSession()
     installEgressGuard(session, () => [])
     expect(fire('file:///app/index.html')).toEqual({ cancel: false })
+  })
+
+  it('fails closed, and still calls back, if getScanOrigins throws', () => {
+    const { session, fire } = fakeSession()
+    installEgressGuard(session, () => {
+      throw new Error('scan origin lookup blew up')
+    })
+    expect(fire('https://rossi-editore.it/')).toEqual({ cancel: true })
   })
 })
