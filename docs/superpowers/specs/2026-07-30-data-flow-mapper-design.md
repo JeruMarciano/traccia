@@ -232,7 +232,16 @@ one area where a defect is fatal to the product, so it gets hard requirements ra
 
 1. **No outbound network traffic**, except requests the scanner makes to the URL the user explicitly
    entered. No telemetry, no crash reporting, no update check in v1, no font or asset CDN. Fonts and
-   all assets are bundled.
+   all assets are bundled — nothing is fetched at runtime.
+
+   **Amended 2026-07-31.** "Bundled" governs fonts, assets and data. It no longer requires the app to
+   ship its own browser engine: the app may drive a Chromium-family browser already installed on the
+   user's machine in order to run a scan. Rationale — bundling Chromium accounts for ~99 MB of a
+   99,452,988-byte download, and this tool is distributed free from GitHub, where size is a real
+   barrier to adoption. Depending on a browser being present is acceptable; sending data anywhere is
+   not. The no-egress rule above is unchanged and still absolute: a driven browser must be constrained
+   to the scan target exactly as an embedded one would be, and that constraint must be enforced by
+   test per §7.2. See `docs/decisions/2026-07-31-shell-architecture.md`.
 2. **Enforced by test, not by policy.** An automated check fails the build if egress occurs outside a
    scan. See §9.
 3. **Local storage only.** One project file per organisation, in a directory the user picks.
