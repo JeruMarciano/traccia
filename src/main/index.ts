@@ -21,6 +21,14 @@ function createWindow(): void {
       spellcheck: false,
     },
   })
+  // Closes window.open and target=_blank: a child window would be created outside these
+  // webPreferences and could load a remote URL.
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  // Closes page-initiated navigation away from the bundled app, e.g. a link or a script setting
+  // location.href, which would replace the renderer with content this app does not control.
+  win.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
+  })
   win.loadFile(join(__dirname, '../renderer/index.html'))
 }
 
@@ -29,6 +37,16 @@ app.whenReady().then(() => {
   // to a third-party DoH resolver over HTTPS, and resolver traffic never reaches
   // session.webRequest. Must precede the guard and any window.
   app.configureHostResolver({ secureDnsMode: 'off' })
+  // Closes every permission request (geolocation, camera, microphone, notifications, and the
+  // rest): Electron grants them by default when no handler is installed, and geolocation in
+  // particular is serviced by the browser process outside session.webRequest, where the egress
+  // guard cannot see it.
+  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => {
+    callback(false)
+  })
+  // Closes the same permissions on the synchronous check path, which Chromium consults without
+  // ever raising a request.
+  session.defaultSession.setPermissionCheckHandler(() => false)
   // Installed before any window exists, so nothing escapes during startup.
   installEgressGuard(session.defaultSession, () => scanOrigins)
   registerIpc()

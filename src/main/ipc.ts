@@ -4,21 +4,41 @@ import { validateProject } from '../core/project'
 
 const FILTERS = [{ name: 'Traccia project', extensions: ['json'] }]
 
+// Anything a handler throws is written to the process console by Electron's ipcMain.handle
+// wrapper. In a Finder-launched macOS build that lands in the system log, which is collected by
+// sysdiagnose and handed to third parties. Two kinds of detail must therefore never escape a
+// handler: absolute filesystem paths (Node fs errors quote them verbatim) and anything out of the
+// user's map (validateProject quotes place and flow ids). Each handler throws one of these fixed
+// strings instead, with no `cause` attached -- a cause would be printed alongside the error and
+// put the detail straight back in the log. The user is told the action did not complete, not
+// which entry is at fault; for a tool whose promise is that the map never leaves the machine,
+// that is the right trade.
+const OPEN_FAILED = 'This file could not be read as a project.'
+const SAVE_FAILED = 'The project could not be saved.'
+
 export function registerIpc(): void {
   ipcMain.handle('project:open', async () => {
-    const r = await dialog.showOpenDialog({ properties: ['openFile'], filters: FILTERS })
-    if (r.canceled || !r.filePaths[0]) return null
-    return readProjectFile(r.filePaths[0])
+    try {
+      const r = await dialog.showOpenDialog({ properties: ['openFile'], filters: FILTERS })
+      if (r.canceled || !r.filePaths[0]) return null
+      return await readProjectFile(r.filePaths[0])
+    } catch {
+      throw new Error(OPEN_FAILED)
+    }
   })
 
   ipcMain.handle('project:save', async (_e, project: unknown) => {
-    // Never trust the renderer. Validate before anything reaches the disk.
-    const checked = validateProject(project)
-    if (!checked.ok) throw new Error(checked.errors.join('\n'))
+    try {
+      // Never trust the renderer. Validate before anything reaches the disk.
+      const checked = validateProject(project)
+      if (!checked.ok) throw new Error(SAVE_FAILED)
 
-    const r = await dialog.showSaveDialog({ filters: FILTERS })
-    if (r.canceled || !r.filePath) return false
-    await writeProjectFile(r.filePath, checked.project)
-    return true
+      const r = await dialog.showSaveDialog({ filters: FILTERS })
+      if (r.canceled || !r.filePath) return false
+      await writeProjectFile(r.filePath, checked.project)
+      return true
+    } catch {
+      throw new Error(SAVE_FAILED)
+    }
   })
 }
