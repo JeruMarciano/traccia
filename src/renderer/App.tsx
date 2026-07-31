@@ -8,6 +8,7 @@ import { MapView } from './components/MapView'
 import { RegisterPanel } from './components/RegisterPanel'
 import { saveNotice } from './saveNotice'
 import { STRINGS } from './strings'
+import { STYLESHEET } from './theme'
 
 declare global {
   interface Window {
@@ -56,32 +57,40 @@ export function App() {
     }
   }
 
+  // The title block dates the sheet, which matters once it is printed and left with a client.
+  // A project file is only checked for a string, so the date is shown only when it reads as one.
+  const started = /^\d{4}-\d{2}-\d{2}/.test(project.createdAt) ? project.createdAt.slice(0, 10) : null
+
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F7F6F2' }}>
-      <main style={{ flex: 1, padding: 20 }}>
-        <header style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 16 }}>
-          <strong>{project.name}</strong>
-          <button onClick={openProject}>{STRINGS.open}</button>
-          <button onClick={saveProject}>{STRINGS.save}</button>
-          <button disabled={!canUndo(history)} onClick={() => setHistory(undo)}>
-            {STRINGS.undo}
-          </button>
-          <button disabled={!canRedo(history)} onClick={() => setHistory(redo)}>
-            {STRINGS.redo}
-          </button>
-        </header>
-        {notice === null ? null : (
-          <p role="status"
-             style={{ display: 'flex', gap: 12, justifyContent: 'space-between',
-                      alignItems: 'baseline', margin: '0 0 16px', padding: '10px 12px',
-                      border: '1px solid #D8D4CB', fontSize: 12, color: '#17171A' }}>
-            {notice}
-            <button onClick={() => setNotice(null)}>{STRINGS.dismiss}</button>
-          </p>
-        )}
-        <MapView layout={layout} selected={selected} onSelect={setSelected} />
-      </main>
-      <RegisterPanel gaps={gaps} onHover={setSelected} />
-    </div>
+    <>
+      <style>{STYLESHEET}</style>
+      <div className="sheet">
+        <main className="plate">
+          <header className="titleblock">
+            <span className="wordmark">{STRINGS.appName}</span>
+            <h1 className="project">{project.name}</h1>
+            {started === null ? null : <span className="drawn">{STRINGS.startedOn(started)}</span>}
+            <div className="actions">
+              <button className="action" onClick={openProject}>{STRINGS.open}</button>
+              <button className="action" onClick={saveProject}>{STRINGS.save}</button>
+              <button className="action" disabled={!canUndo(history)} onClick={() => setHistory(undo)}>
+                {STRINGS.undo}
+              </button>
+              <button className="action" disabled={!canRedo(history)} onClick={() => setHistory(redo)}>
+                {STRINGS.redo}
+              </button>
+            </div>
+          </header>
+          {notice === null ? null : (
+            <p className="notice" role="status">
+              {notice}
+              <button className="action" onClick={() => setNotice(null)}>{STRINGS.dismiss}</button>
+            </p>
+          )}
+          <MapView layout={layout} selected={selected} onSelect={setSelected} />
+        </main>
+        <RegisterPanel gaps={gaps} onHover={setSelected} />
+      </div>
+    </>
   )
 }

@@ -1,0 +1,31 @@
+appId: com.traccia.app
+productName: Traccia
+directories:
+  output: release
+# Maximum compression and per-architecture builds keep the download as small as possible: a
+# universal macOS binary roughly doubles it, and only en-US is bundled because nothing in this
+# app's UI is translated yet (see the Global Constraints note on strings.ts for the day it is).
+compression: maximum
+electronLanguages:
+  - en-US
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  category: public.app-category.business
+  # Unsigned in v1. To sign later, add:
+  #   identity: "Developer ID Application: NAME (TEAMID)"
+  #   notarize: true
+  identity: null
+win:
+  target: nsis
+  # Unsigned in v1. To sign later, add certificateFile and certificatePassword
+  # via CI secrets — never commit a certificate.
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
