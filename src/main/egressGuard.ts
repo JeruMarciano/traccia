@@ -45,7 +45,17 @@ export function installEgressGuard(
   getScanOrigins: () => readonly string[],
 ): void {
   session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
-    const decision = decideEgress(details.url, getScanOrigins())
-    callback({ cancel: !decision.allow })
+    // Fail closed: if getScanOrigins() (caller-supplied) throws, or decideEgress throws for a
+    // reason we haven't anticipated, the request is still cancelled. The callback must always be
+    // invoked with cancel: true on any error path — an uninvoked callback leaves Electron's
+    // request pending rather than blocked, which is not an acceptable failure mode for the guard
+    // that is the app's entire no-egress promise.
+    let allow = false
+    try {
+      allow = decideEgress(details.url, getScanOrigins()).allow
+    } catch {
+      allow = false
+    }
+    callback({ cancel: !allow })
   })
 }
