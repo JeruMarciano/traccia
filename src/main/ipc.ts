@@ -1,5 +1,5 @@
 import { dialog, ipcMain } from 'electron'
-import { readProjectFile, writeProjectFile } from './projectFile'
+import { readProjectFile, writeProjectFile, SAVE_BLOCKED_BY_LOCK } from './projectFile'
 import { validateProject } from '../core/project'
 
 const FILTERS = [{ name: 'Traccia project', extensions: ['json'] }]
@@ -15,6 +15,18 @@ const FILTERS = [{ name: 'Traccia project', extensions: ['json'] }]
 // that is the right trade.
 const OPEN_FAILED = 'This file could not be read as a project.'
 const SAVE_FAILED = 'The project could not be saved.'
+
+// The single exception: writeProjectFile's file-is-locked sentence, which is a compile-time
+// constant with nothing interpolated into it, and the one save failure a user can act on. The
+// caught error is compared to it by exact equality and then discarded -- what is thrown is the
+// constant itself, never the caught error and never its text. So the value leaving the save
+// handler is always one of two literals fixed at compile time, and no path or project content can
+// travel with it.
+function saveFailureMessage(err: unknown): string {
+  return err instanceof Error && err.message === SAVE_BLOCKED_BY_LOCK
+    ? SAVE_BLOCKED_BY_LOCK
+    : SAVE_FAILED
+}
 
 export function registerIpc(): void {
   ipcMain.handle('project:open', async () => {
@@ -37,8 +49,8 @@ export function registerIpc(): void {
       if (r.canceled || !r.filePath) return false
       await writeProjectFile(r.filePath, checked.project)
       return true
-    } catch {
-      throw new Error(SAVE_FAILED)
+    } catch (err) {
+      throw new Error(saveFailureMessage(err))
     }
   })
 }

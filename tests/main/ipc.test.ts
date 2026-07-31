@@ -28,13 +28,18 @@ vi.mock('electron', () => ({
   },
 }))
 
-vi.mock('../../src/main/projectFile', () => ({
+// Only the two I/O functions are replaced. The real module's constants are kept, so the tests
+// below assert against the exact string the real writeProjectFile throws, not a copy of it.
+vi.mock('../../src/main/projectFile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/projectFile')>()),
   readProjectFile: mocks.readProjectFile,
   writeProjectFile: mocks.writeProjectFile,
 }))
 
 import { registerIpc } from '../../src/main/ipc'
+import { SAVE_BLOCKED_BY_LOCK } from '../../src/main/projectFile'
 import { createEmptyProject } from '../../src/core/project'
+import { STRINGS } from '../../src/renderer/strings'
 import type { Project } from '../../src/core/types'
 
 const NOW = '2026-07-30T09:00:00.000Z'
@@ -159,7 +164,49 @@ describe('project:save', () => {
     expect(err.message).toBe('The project could not be saved.')
     expect(err.message).not.toContain(SECRET_PATH)
     expect(err.message).not.toContain('secret.json')
+    expect(err.message).not.toContain('/Users')
     expect(err.message).not.toContain('EACCES')
     expect(err.cause).toBeUndefined()
+  })
+
+  // The one save failure a user can act on. It is a fixed sentence built at compile time, holding
+  // no path and nothing out of the map, so passing it through costs the log nothing.
+  it('surfaces the file-is-locked message, which is a fixed sentence carrying no detail', async () => {
+    const project = createEmptyProject('ACME GDPR map', NOW)
+    mocks.showSaveDialog.mockResolvedValue({ canceled: false, filePath: SECRET_PATH })
+    mocks.writeProjectFile.mockRejectedValue(new Error(SAVE_BLOCKED_BY_LOCK))
+
+    const err = await rejection(invoke('project:save', project))
+    expect(err.message).toBe(SAVE_BLOCKED_BY_LOCK)
+    expect(err.cause).toBeUndefined()
+  })
+
+  it('does not pass through an error that merely resembles the locked message', async () => {
+    const project = createEmptyProject('ACME GDPR map', NOW)
+    mocks.showSaveDialog.mockResolvedValue({ canceled: false, filePath: SECRET_PATH })
+    mocks.writeProjectFile.mockRejectedValue(
+      new Error(`${SAVE_BLOCKED_BY_LOCK} Held by ${SECRET_PATH}`),
+    )
+
+    const err = await rejection(invoke('project:save', project))
+    expect(err.message).toBe('The project could not be saved.')
+    expect(err.message).not.toContain('secret.json')
+    expect(err.message).not.toContain('/Users')
+  })
+
+  it('drops a non-Error rejection onto the generic message', async () => {
+    const project = createEmptyProject('ACME GDPR map', NOW)
+    mocks.showSaveDialog.mockResolvedValue({ canceled: false, filePath: SECRET_PATH })
+    mocks.writeProjectFile.mockRejectedValue({ message: SAVE_BLOCKED_BY_LOCK, path: SECRET_PATH })
+
+    const err = await rejection(invoke('project:save', project))
+    expect(err.message).toBe('The project could not be saved.')
+  })
+})
+
+describe('the two save messages', () => {
+  it('are worded identically in the main process and in the renderer', () => {
+    expect(STRINGS.saveBlocked).toBe(SAVE_BLOCKED_BY_LOCK)
+    expect(STRINGS.saveFailed).toBe('The project could not be saved.')
   })
 })

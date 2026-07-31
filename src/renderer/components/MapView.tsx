@@ -1,4 +1,5 @@
 import type { LayoutResult } from '../../core/layout'
+import { STRINGS } from '../strings'
 
 interface Props {
   layout: LayoutResult
@@ -27,7 +28,7 @@ export function MapView({ layout, selected, onSelect }: Props) {
             <g key={n.id} opacity={dim ? 0.25 : 1}>
               <circle cx={n.x} cy={n.y} r={44} fill="#17171A" />
               <text x={n.x} y={n.y + 4} textAnchor="middle" fill="#F7F6F2" fontSize={13}>
-                {n.label}
+                {STRINGS.people}
               </text>
             </g>
           )
@@ -39,7 +40,9 @@ export function MapView({ layout, selected, onSelect }: Props) {
                   fill="#F7F6F2" stroke="#17171A" strokeWidth={1.5} />
             <rect x={n.x - 70} y={n.y - 28} width={140} height={7} fill="#17171A" />
             <text x={n.x - 58} y={n.y + 1} fontSize={10.5} fontWeight={700}>{n.label}</text>
-            <text x={n.x - 58} y={n.y + 15} fontSize={9} fill="#9C978E">{n.count} places</text>
+            <text x={n.x - 58} y={n.y + 15} fontSize={9} fill="#9C978E">
+              {STRINGS.placesInGroup(n.count ?? 0)}
+            </text>
             {n.leavesEEA ? (
               <>
                 <rect x={n.x + 20} y={n.y + 5} width={22} height={15} fill="#E2411E" />
