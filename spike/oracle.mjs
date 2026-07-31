@@ -120,6 +120,24 @@ function routeFor(host, port) {
     : { host, port };
 }
 
+// Enforcement at the proxy rather than at CDP. This exists because CDP's Fetch
+// domain intercepts *requests*, and a `<link rel=preconnect>` opens a TCP+TLS
+// connection without issuing one — so Fetch never sees it and cannot stop it.
+// A proxy sees the connection attempt itself, which is the thing spec 7.1
+// actually forbids.
+const DENY = (process.env.ORACLE_DENY ?? '').split(',').filter(Boolean);
+const ALLOW_ONLY = (process.env.ORACLE_ALLOW_ONLY ?? '').split(',').filter(Boolean);
+
+function suffixMatch(host, list) {
+  return list.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+function deniedReason(host) {
+  if (ALLOW_ONLY.length && !suffixMatch(host, ALLOW_ONLY)) return 'not-in-allowlist';
+  if (DENY.length && suffixMatch(host, DENY)) return 'denied';
+  return null;
+}
+
 const proxy = http.createServer((req, res) => {
   let target;
   try {
@@ -129,7 +147,12 @@ const proxy = http.createServer((req, res) => {
     return;
   }
   const port = Number(target.port || 80);
-  record({ kind: 'http', host: target.hostname, port, url: req.url });
+  const refuse = deniedReason(target.hostname);
+  record({ kind: refuse ? 'refused' : 'http', host: target.hostname, port, url: req.url, refuse });
+  if (refuse) {
+    res.writeHead(403).end();
+    return;
+  }
 
   const route = routeFor(target.hostname, port);
   const upstream = http.request(
@@ -153,7 +176,16 @@ const proxy = http.createServer((req, res) => {
 proxy.on('connect', (req, clientSocket, head) => {
   const [host, rawPort] = req.url.split(':');
   const port = Number(rawPort || 443);
-  record({ kind: 'connect', host, port, url: req.url });
+  // Attach before any early return: a refused client resets the socket, and an
+  // 'error' with no listener takes the whole process down.
+  clientSocket.on('error', () => clientSocket.destroy());
+
+  const refuse = deniedReason(host);
+  record({ kind: refuse ? 'refused' : 'connect', host, port, url: req.url, refuse });
+  if (refuse) {
+    clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+    return;
+  }
 
   const route = routeFor(host, port);
   const upstream = net.connect(route.port, route.host, () => {
@@ -163,7 +195,13 @@ proxy.on('connect', (req, clientSocket, head) => {
     clientSocket.pipe(upstream);
   });
   upstream.on('error', () => clientSocket.destroy());
-  clientSocket.on('error', () => upstream.destroy());
+});
+
+// The oracle is the spike's measuring instrument. If it dies mid-run the result
+// is silently wrong, so a crash must be loud rather than fatal.
+process.on('uncaughtException', (e) => {
+  record({ kind: 'oracle-error', host: '', message: String(e) });
+  console.error('ORACLE ERROR', e);
 });
 
 siteServer.listen(SITE_PORT, '127.0.0.1', () => {
