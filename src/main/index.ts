@@ -2,6 +2,12 @@ import { app, BrowserWindow, session } from 'electron'
 import { join } from 'node:path'
 import { installEgressGuard } from './egressGuard'
 import { registerIpc } from './ipc'
+import { writeCrashLine } from './log'
+
+// The npm package name stays "dataflow-tool" (package.json), but the product the user sees — and
+// the folder its local, never-uploaded crash log lives in (see docs/INSTALL.md) — is "Traccia".
+// Electron otherwise derives app.getPath('userData') from package.json's "name" field.
+app.setName('Traccia')
 
 /** Populated only while a scan is running. Empty in Phase 1. */
 const scanOrigins: string[] = []
@@ -33,6 +39,14 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // §7 forbids crash reporting: nothing is ever uploaded. This writes a local line the user can
+  // find and choose to share, so an unhandled error does not simply vanish.
+  process.on('uncaughtException', (err) => {
+    void writeCrashLine(app.getPath('userData'), `uncaught: ${err.message}`)
+  })
+  process.on('unhandledRejection', (reason) => {
+    void writeCrashLine(app.getPath('userData'), `unhandled: ${String(reason)}`)
+  })
   // Closes an egress path the webRequest guard cannot see: Chromium otherwise auto-upgrades DNS
   // to a third-party DoH resolver over HTTPS, and resolver traffic never reaches
   // session.webRequest. Must precede the guard and any window.
