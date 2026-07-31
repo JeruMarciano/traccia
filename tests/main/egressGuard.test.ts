@@ -99,6 +99,87 @@ describe('decideEgress — bypass attempts', () => {
   })
 })
 
+// A file: URL can carry an authority. Chromium maps file://host/share/x to the UNC path
+// \\host\share\x on Windows and opens an SMB connection to that host — off-machine egress to an
+// attacker-chosen destination, plus an NTLM credential leak. Only a hostless (or localhost)
+// file: URL is actually local. Node's WHATWG parser normalises file://localhost/x to hostname ''.
+describe('decideEgress — file: authority', () => {
+  it('blocks a file url pointing at a remote authority', () => {
+    expect(decideEgress('file://attacker.example/share/x.png', []).allow).toBe(false)
+  })
+
+  it('blocks a remote file authority even when it is the scan target', () => {
+    expect(decideEgress('file://rossi-editore.it/share/x.png', ['rossi-editore.it']).allow).toBe(
+      false,
+    )
+  })
+
+  it('still allows hostless and localhost file urls', () => {
+    expect(decideEgress('file:///app/index.html', []).allow).toBe(true)
+    expect(decideEgress('file://localhost/app/index.html', []).allow).toBe(true)
+  })
+
+  it('leaves the other local schemes, which have no meaningful authority, alone', () => {
+    expect(decideEgress('devtools://devtools/bundled/x.js', []).allow).toBe(true)
+    expect(decideEgress('data:text/css,body{}', []).allow).toBe(true)
+    expect(decideEgress('blob:https://evil.example/uuid', []).allow).toBe(true)
+    expect(decideEgress('chrome-extension://abc/x.js', []).allow).toBe(true)
+  })
+})
+
+// scanOrigins is populated from parsed user input in a later phase, where an empty or partial
+// hostname is easy to produce. An unusable entry must be skipped, never matched on.
+describe('decideEgress — unusable scan origins', () => {
+  it('does not let a blank origin match a host with a trailing dot', () => {
+    // 'https://evil.example./' is a working URL: a trailing dot is absolute-DNS form. With a blank
+    // origin, host.endsWith('.' + o) degenerates into host.endsWith('.') and matches it.
+    expect(decideEgress('https://evil.example./', ['']).allow).toBe(false)
+  })
+
+  it('does not let a blank origin match a url with an empty hostname', () => {
+    expect(decideEgress('about:blank', ['']).allow).toBe(false)
+  })
+
+  it('does not let a whitespace-only origin match', () => {
+    expect(decideEgress('https://evil.example./', ['   ']).allow).toBe(false)
+  })
+
+  it('does not let a bare TLD origin allow everything under it', () => {
+    expect(decideEgress('https://anything.it/', ['it']).allow).toBe(false)
+  })
+
+  it('ignores origins carrying a scheme or a port separator', () => {
+    expect(decideEgress('https://evil.example/', ['https://evil.example/']).allow).toBe(false)
+    expect(decideEgress('https://evil.example/', ['evil.example:443']).allow).toBe(false)
+  })
+
+  it('skips unusable entries but still honours a usable one alongside them', () => {
+    const origins = ['', '   ', 'it', 'rossi-editore.it']
+    expect(decideEgress('https://rossi-editore.it/', origins).allow).toBe(true)
+    expect(decideEgress('https://www.rossi-editore.it/a.css', origins).allow).toBe(true)
+  })
+
+  it('accepts a usable origin that needs trimming and lowercasing', () => {
+    expect(decideEgress('https://rossi-editore.it/', ['  Rossi-Editore.IT  ']).allow).toBe(true)
+  })
+})
+
+// decideEgress is exported and reused where a throw is not automatically a deny, so a malformed
+// argument must return a decision rather than blow up.
+describe('decideEgress — malformed scanOrigins argument', () => {
+  it('blocks, without throwing, when scanOrigins is not an array', () => {
+    const bad = undefined as unknown as readonly string[]
+    expect(() => decideEgress('https://evil.example/', bad)).not.toThrow()
+    expect(decideEgress('https://evil.example/', bad).allow).toBe(false)
+  })
+
+  it('blocks, without throwing, when an entry is not a string', () => {
+    const bad = [null] as unknown as readonly string[]
+    expect(() => decideEgress('https://evil.example/', bad)).not.toThrow()
+    expect(decideEgress('https://evil.example/', bad).allow).toBe(false)
+  })
+})
+
 describe('installEgressGuard', () => {
   it('cancels a request the decision rejects', () => {
     const { session, fire } = fakeSession()
@@ -110,6 +191,12 @@ describe('installEgressGuard', () => {
     const { session, fire } = fakeSession()
     installEgressGuard(session, () => [])
     expect(fire('file:///app/index.html')).toEqual({ cancel: false })
+  })
+
+  it('cancels a file url aimed at a remote authority', () => {
+    const { session, fire } = fakeSession()
+    installEgressGuard(session, () => [])
+    expect(fire('file://attacker.example/share/x.png')).toEqual({ cancel: true })
   })
 
   it('fails closed, and still calls back, if getScanOrigins throws', () => {
