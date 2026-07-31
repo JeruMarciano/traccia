@@ -21,6 +21,14 @@ export async function readProjectFile(path: string): Promise<Project> {
 
 const RETRY_DELAYS_MS = [0, 50, 150, 400]
 
+// The one save failure the user can do something about. It is a fixed sentence: no filesystem
+// path, nothing out of the map, nothing interpolated. That is what lets ipc.ts pass it through to
+// the renderer instead of collapsing it into the generic message. `src/renderer/strings.ts` holds
+// the identical wording; tests/main/ipc.test.ts pins the two together.
+export const SAVE_BLOCKED_BY_LOCK =
+  'The project could not be saved because another program is holding the file open. ' +
+  'Close it and try again.'
+
 // The project file is the complete map of the organisation's personal-data flows. In the
 // absence of any pre-existing permissions to carry forward (i.e. this is a brand new file),
 // default to owner-only access rather than the platform default (typically 0644/0666), so a
@@ -103,11 +111,7 @@ export async function writeProjectFile(path: string, project: Project): Promise<
         lastError = err
       }
     }
-    throw new Error(
-      'The project could not be saved because another program is holding the file open. ' +
-        'Close it and try again.',
-      { cause: lastError },
-    )
+    throw new Error(SAVE_BLOCKED_BY_LOCK, { cause: lastError })
   } catch (err) {
     await unlink(tmp).catch(() => undefined)
     throw err
