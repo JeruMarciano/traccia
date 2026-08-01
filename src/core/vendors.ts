@@ -20,8 +20,13 @@ export function identify(host: string, dictionary: VendorDictionary): VendorEntr
   const labels = normalised.split('.')
   for (let i = 0; i < labels.length; i += 1) {
     const candidate = labels.slice(i).join('.')
-    const hit = dictionary[candidate]
-    if (hit !== undefined) return hit
+    // A plain `dictionary[candidate]` reads the prototype chain, so
+    // `__proto__` and `constructor` would otherwise come back as an
+    // "identified" vendor with an undefined owner. Only own properties count.
+    if (Object.prototype.hasOwnProperty.call(dictionary, candidate)) {
+      const hit = dictionary[candidate]
+      if (hit !== undefined) return hit
+    }
   }
   return null
 }

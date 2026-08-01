@@ -6,11 +6,12 @@
 // docs/decisions/2026-08-01-v0.1-preflight.md §3) and writes it out as the
 // flat VendorDictionary shape the app loads.
 //
-// Category -> purpose-group mapping. The twelve categories the project
-// recognises are visible in src/core/expectations.ts; this dictionary only
-// ever needs the seven that a name-the-vendor lookup can plausibly produce.
-// Anything not listed here falls through to "Running the systems", the
-// existing default.
+// Category -> purpose-group mapping, one row per category this source data
+// uses. (These are unrelated to the twelve expectation categories visible in
+// src/core/expectations.ts — that's a different list, for a different
+// purpose.) The output purpose group is always one of the seven the project
+// recognises. Anything not listed here falls through to "Running the
+// systems", the existing default.
 //
 //   analytics        -> Marketing
 //   advertising       -> Marketing
