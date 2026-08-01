@@ -1,7 +1,5 @@
 node_modules/
-out/
 dist/
-release/
 .DS_Store
 *.local
 
@@ -12,3 +10,4 @@ release/
 .superpowers/
 .claude/proven-config.json
 .claude/.proven-config-version
+.claude/settings.local.json
