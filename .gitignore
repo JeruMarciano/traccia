@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.DS_Store
+*.local
+
+# Local agent-tooling scratch. Holds absolute paths and working history, so it must
+# never reach a shared repository. Previously excluded only via .git/info/exclude,
+# which is local to one clone and does not travel with it.
+.claude-flow/
+.superpowers/
+.claude/proven-config.json
+.claude/.proven-config-version
+.claude/settings.local.json

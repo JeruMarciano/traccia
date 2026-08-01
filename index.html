@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!-- The CSP lives in src-tauri/tauri.conf.json alone. Two CSPs intersect, and the
+         connect-src 'none' that used to be here would block `invoke` on Windows, where
+         Tauri's IPC goes over http://ipc.localhost. -->
+    <title>Traccia</title>
+  </head>
+  <body style="margin:0">
+    <div id="root"></div>
+    <script type="module" src="/src/renderer/main.tsx"></script>
+  </body>
+</html>

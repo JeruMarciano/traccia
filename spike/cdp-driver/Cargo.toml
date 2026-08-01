@@ -1,0 +1,42 @@
+[package]
+name = "cdp-driver"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Dependency budget. Every crate here is a candidate for the shipped binary, so
+# each one has to earn its bytes:
+#
+#   tokio             Async runtime. Tauri 2 already depends on tokio, so the
+#                     marginal cost in a Tauri app is close to zero. Feature set
+#                     kept narrow deliberately.
+#   tokio-tungstenite CDP is a WebSocket protocol; there is no way around a
+#                     WebSocket client. This is the smallest maintained one.
+#                     No TLS features — the endpoint is always 127.0.0.1.
+#   futures-util      Stream/Sink combinators that tokio-tungstenite's API needs.
+#   serde/serde_json  CDP is JSON. Tauri already depends on both for `invoke`,
+#                     so again the marginal cost is near zero.
+#
+# Deliberately NOT taken:
+#   reqwest / hyper   An HTTP client would be needed only to read
+#                     /json/version. Reading the DevToolsActivePort file that
+#                     the browser writes into its own user-data-dir gives the
+#                     same information for zero dependencies.
+#   chromiumoxide     A full CDP client library. Convenient, but it pulls a
+#                     large generated protocol surface for the handful of
+#                     commands this needs, and it would own the interception
+#                     loop that the egress guard has to own.
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "time", "sync", "io-util", "fs"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
