@@ -99,6 +99,15 @@ The proxy will add an HTTP/CONNECT server. The spike used Node for the oracle, w
 nothing; the real one must be Rust. Budget for it and re-measure — it is small, but it is not
 free, and it is now load-bearing.
 
+**Re-measured after the port, 2026-07-31.** The numbers above are the spike's, taken before the
+proxy existed and before `tauri-plugin-dialog` was added. See
+`docs/decisions/2026-07-31-tauri-bundle-measurement.md` for the shipped figures.
+
+In short: the `.dmg` is 1,536,327 bytes and the binary 2,436,064 — **64.7×** smaller than
+Electron rather than the 69× above, the binary having grown 101,008 bytes net. That figure is net
+of the CDP dependency set, which is no longer in the tree and which Phase 2 will pay for again.
+Windows, which the spike could not build at all, ships a 1,124,383-byte NSIS installer.
+
 ---
 
 ## F8 — Windows
