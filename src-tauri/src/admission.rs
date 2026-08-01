@@ -5,10 +5,17 @@
 //! spawned connection task would be a silent failure of the guard, which is the one failure mode
 //! this component may not have.
 //!
-//! The deny path allocates exactly once, in `normalise_host`, and never again: a lowercased copy
-//! of the authority is made before any comparison, and no deny reason carries a value. That is a
-//! bounded, single, 253-byte-capped allocation per decision, not a per-origin one, and it is the
-//! price of comparing without mutating the caller's input.
+//! The deny path allocates nothing at all. `vet_host` validates in place and hands back a
+//! borrowed slice of the caller's input; comparison is `eq_ignore_ascii_case` and a
+//! length-arithmetic label-boundary check rather than a lowercased copy and a `format!("{.o}")`.
+//! No deny reason carries a value, so no deny path can interpolate anything either. Only the
+//! `Allow` arm allocates, once it has a decision worth carrying: the vetted host and the origin
+//! that matched.
+//!
+//! This is a real constraint and not housekeeping. `decide` runs once per connection attempt on
+//! a path whose whole job is to reject, and an earlier version of this module claimed to be
+//! allocation-free on deny while allocating once per origin entry per request. The claim is now
+//! enforced by construction rather than by comment.
 
 use std::net::IpAddr;
 
@@ -55,7 +62,9 @@ pub enum DenyReason {
 /// here removes the entire homograph and Unicode-separator class in one rule rather than
 /// requiring every future reader to reason about Unicode normalisation. `@`, `:`, `/`, `\`,
 /// whitespace and control characters all fall out of this for free.
-fn normalise_host(raw: &str) -> Option<String> {
+/// Returns a borrowed slice of the caller's input, never a copy — comparison is done
+/// case-insensitively rather than by lowercasing, so nothing is allocated to reach a `Deny`.
+fn vet_host(raw: &str) -> Option<&str> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_HOST_LEN {
         return None;
@@ -63,18 +72,14 @@ fn normalise_host(raw: &str) -> Option<String> {
     if !trimmed.is_ascii() {
         return None;
     }
-    let lowered = trimmed.to_ascii_lowercase();
     // A single trailing dot is absolute-DNS form for the same name. Strip exactly one, on both
     // sides of every comparison, so `example.com.` and `example.com` cannot be played against
     // each other in either direction.
-    let host = lowered.strip_suffix('.').unwrap_or(&lowered);
+    let host = trimmed.strip_suffix('.').unwrap_or(trimmed);
     if host.is_empty() {
         return None;
     }
-    if !host
-        .bytes()
-        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
-    {
+    if !host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-') {
         return None;
     }
     // Empty labels (`..`, a leading dot) are not a name, and would make suffix matching
@@ -82,7 +87,25 @@ fn normalise_host(raw: &str) -> Option<String> {
     if host.split('.').any(|label| label.is_empty()) {
         return None;
     }
-    Some(host.to_string())
+    Some(host)
+}
+
+/// True when `h` is a strict subdomain of `o`, on a label boundary.
+///
+/// Length arithmetic and `get`, never `format!` and never indexing: the `format!(".{o}")` this
+/// replaces allocated once per origin entry per request, on the path whose entire job is to
+/// reject. `checked_sub` and `str::get` mean no input can make this panic, which
+/// `regression_never_panics_on_hostile_input` is there to hold.
+fn is_subdomain_of(h: &str, o: &str) -> bool {
+    let Some(cut) = h.len().checked_sub(o.len()) else {
+        return false;
+    };
+    let (Some(prefix), Some(suffix)) = (h.get(..cut), h.get(cut..)) else {
+        return false;
+    };
+    // `prefix` must be at least one label character plus the separating dot, so `notrossi` can
+    // never pass for `.rossi` and a leading-dot host can never match.
+    prefix.len() >= 2 && prefix.ends_with('.') && suffix.eq_ignore_ascii_case(o)
 }
 
 fn is_ip_literal(host: &str) -> bool {
@@ -93,22 +116,22 @@ fn is_ip_literal(host: &str) -> bool {
 /// else is skipped, never matched: a blank entry, a single label such as a bare TLD, or an IP
 /// literal. `scan_origins` is populated from parsed user input in Phase 2, where a partial or
 /// empty value is easy to produce.
-fn usable_origin(entry: &str) -> Option<String> {
-    let o = normalise_host(entry)?;
+fn usable_origin(entry: &str) -> Option<&str> {
+    let o = vet_host(entry)?;
     if !o.contains('.') {
         return None;
     }
-    if is_ip_literal(&o) {
+    if is_ip_literal(o) {
         return None;
     }
     Some(o)
 }
 
 pub fn decide(host: &str, port: u16, scan_origins: &[String]) -> Decision {
-    let Some(h) = normalise_host(host) else {
+    let Some(h) = vet_host(host) else {
         return Decision::Deny { reason: DenyReason::MalformedAuthority };
     };
-    if is_ip_literal(&h) {
+    if is_ip_literal(h) {
         // A scan target is a hostname the user typed. Denying IP literals unconditionally costs
         // the ability to scan a bare address — which the product does not offer — and closes
         // loopback pivots and cloud metadata endpoints (169.254.169.254) in one rule.
@@ -122,10 +145,14 @@ pub fn decide(host: &str, port: u16, scan_origins: &[String]) -> Decision {
     }
     for entry in scan_origins {
         let Some(o) = usable_origin(entry) else { continue };
-        // Suffix matching is on a label boundary only: `.{o}` and never a bare `ends_with(o)`,
-        // so `notrossi-editore.it` cannot pass as `rossi-editore.it`.
-        if h == o || h.ends_with(&format!(".{o}")) {
-            return Decision::Allow { host: h, origin: o };
+        // Suffix matching is on a label boundary only, never a bare `ends_with(o)`, so
+        // `notrossi-editore.it` cannot pass as `rossi-editore.it`. Only here, having decided to
+        // admit, is anything allocated.
+        if h.eq_ignore_ascii_case(o) || is_subdomain_of(h, o) {
+            return Decision::Allow {
+                host: h.to_ascii_lowercase(),
+                origin: o.to_ascii_lowercase(),
+            };
         }
     }
     Decision::Deny { reason: DenyReason::NotAScanTarget }
@@ -165,6 +192,27 @@ mod tests {
         assert_eq!(decide("rossi-editore.it", 443, &o), allowed("rossi-editore.it", "rossi-editore.it"));
         assert_eq!(decide("www.rossi-editore.it", 443, &o), allowed("www.rossi-editore.it", "rossi-editore.it"));
         assert_eq!(decide("a.b.rossi-editore.it", 80, &o), allowed("a.b.rossi-editore.it", "rossi-editore.it"));
+    }
+
+    // ---- audit finding F4: the label-boundary check, without format! -------
+
+    #[test]
+    fn the_label_boundary_check_holds_at_every_edge() {
+        // The allocation-free replacement for `h.ends_with(&format!(".{o}"))`. These are the
+        // cases where length arithmetic could go wrong where string concatenation would not.
+        assert!(is_subdomain_of("www.rossi-editore.it", "rossi-editore.it"));
+        assert!(is_subdomain_of("a.b.rossi-editore.it", "rossi-editore.it"));
+        assert!(is_subdomain_of("A.ROSSI-EDITORE.IT", "rossi-editore.it"));
+        // equal is not a *sub*domain; `decide` handles that with eq_ignore_ascii_case
+        assert!(!is_subdomain_of("rossi-editore.it", "rossi-editore.it"));
+        // no label boundary
+        assert!(!is_subdomain_of("notrossi-editore.it", "rossi-editore.it"));
+        // a bare dot is not a label
+        assert!(!is_subdomain_of(".rossi-editore.it", "rossi-editore.it"));
+        // origin longer than the host must not underflow
+        assert!(!is_subdomain_of("it", "rossi-editore.it"));
+        assert!(!is_subdomain_of("", "rossi-editore.it"));
+        assert!(!is_subdomain_of("x", ""));
     }
 
     // ---- audit finding F1/F3 -----------------------------------------------
