@@ -1,6 +1,6 @@
 import { addFlow, addPlace } from './graph'
 import { identify } from './vendors'
-import type { Flow, Place, Project, ScanResult, VendorDictionary } from './types'
+import type { Flow, Observation, Place, Project, ScanResult, VendorDictionary } from './types'
 
 export interface IngestIds {
   /** Prefix for generated ids, e.g. "scan1". Callers pass a fresh one per scan. */
@@ -26,11 +26,27 @@ function displayName(host: string, dictionary: VendorDictionary): string {
   return hit === null ? host : `${hit.owner} ${titleCase(hit.category)}`
 }
 
+// A handful of categories whose correct rendering is not mechanically
+// derivable from the identifier — acronyms and initialisms that a mechanical
+// kebab-split cannot know about. "cdn" is a content delivery network, not a
+// word "Cdn"; "crm" is a CRM, not a "Crm"; "a-b-testing" is A/B testing, not
+// "A B Testing". Checked before the generic split below; everything else
+// falls through unchanged. Every distinct category in the shipped
+// dictionary was checked against this: see the Task 2 report for the full
+// list of categories and their rendered names.
+const CATEGORY_OVERRIDES: Readonly<Record<string, string>> = {
+  cdn: 'CDN',
+  crm: 'CRM',
+  'a-b-testing': 'A/B Testing',
+}
+
 // Dictionary categories are kebab-case identifiers (e.g. "tag-manager",
 // "session-replay"), but these strings become place names on a printed map a
 // consultant hands to a client — "Google Tag-manager" is not a thing that
 // exists. Split on the hyphen, capitalise each word, join with a space.
 function titleCase(s: string): string {
+  const override = CATEGORY_OVERRIDES[s]
+  if (override !== undefined) return override
   return s
     .split('-')
     .map((word) => word.slice(0, 1).toUpperCase() + word.slice(1))
@@ -131,12 +147,40 @@ export function ingestScan(
   // 4. The raw observations, so the map can always be traced back to what was
   //    seen. beforeConsent is always true: Traccia never clicks anything, so
   //    nothing it records happened after consent was given.
-  const seen = new Set(working.observations.map((o) => o.domain))
-  const fresh = result.hosts
-    .filter((h) => !seen.has(h.host))
-    .map((h) => ({ domain: h.host, requestCount: h.requestCount, beforeConsent: true }))
+  //
+  //    Keyed case-insensitively, the same way place matching is (finding 3),
+  //    so "X.com" and "x.com" collapse to one row rather than two — whether
+  //    that pair comes from an earlier scan or from the same result.hosts
+  //    listing a host twice. And a domain already recorded from an earlier
+  //    scan has its requestCount replaced by this scan's count rather than
+  //    left stale (finding 2): the newer scan wins. Its position in the
+  //    array is preserved rather than moved to the end, so ordering already
+  //    relied on elsewhere does not shift underneath it.
+  const latestCountByKey = new Map<string, number>()
+  for (const h of result.hosts) {
+    latestCountByKey.set(h.host.toLowerCase(), h.requestCount)
+  }
 
-  return { ...working, observations: [...working.observations, ...fresh] }
+  const updatedExisting = working.observations.map((o) => {
+    const latest = latestCountByKey.get(o.domain.toLowerCase())
+    return latest === undefined ? o : { ...o, requestCount: latest }
+  })
+
+  const alreadyKnown = new Set(working.observations.map((o) => o.domain.toLowerCase()))
+  const seenThisScan = new Set<string>()
+  const fresh: Observation[] = []
+  for (const h of result.hosts) {
+    const key = h.host.toLowerCase()
+    if (alreadyKnown.has(key) || seenThisScan.has(key)) continue
+    seenThisScan.add(key)
+    fresh.push({
+      domain: h.host,
+      requestCount: latestCountByKey.get(key) ?? h.requestCount,
+      beforeConsent: true,
+    })
+  }
+
+  return { ...working, observations: [...updatedExisting, ...fresh] }
 }
 
 function visitorFlow(from: string, to: string): Omit<Flow, 'id'> {

@@ -123,6 +123,76 @@ describe('ingestScan', () => {
     expect(p.places.map((pl) => pl.name)).toContain('Google Tag Manager')
   })
 
+  it('renders acronym categories as acronyms, not mechanical title-case', () => {
+    // "cdn", "crm" and "a-b-testing" are not ordinary words: a mechanical
+    // kebab-split would print "Cdn", "Crm" and "A B Testing" on a client-
+    // facing map, none of which are things that exist.
+    const d: VendorDictionary = {
+      ...DICT,
+      'cloudflare.com': { owner: 'Cloudflare', category: 'cdn', purposeGroup: 'Running the systems' },
+      'hubspot.com': { owner: 'HubSpot', category: 'crm', purposeGroup: 'Selling' },
+      'optimizely.com': { owner: 'Optimizely', category: 'a-b-testing', purposeGroup: 'Marketing' },
+    }
+    const p = ingestScan(
+      emptyProject(),
+      result({
+        hosts: [
+          { host: 'rossi-editore.it', requestCount: 1 },
+          { host: 'cloudflare.com', requestCount: 2 },
+          { host: 'hubspot.com', requestCount: 3 },
+          { host: 'optimizely.com', requestCount: 4 },
+        ],
+      }),
+      d,
+      IDS,
+    )
+    const names = p.places.map((pl) => pl.name)
+    expect(names).toContain('Cloudflare CDN')
+    expect(names).toContain('HubSpot CRM')
+    expect(names).toContain('Optimizely A/B Testing')
+  })
+
+  it('replaces a stale request count on re-scan rather than keeping the first one', () => {
+    // A domain's traffic volume is a fact about the last scan, not the first
+    // one — leaving it at the original count after a second scan would make
+    // the observation actively wrong, not just outdated.
+    const r1 = result({
+      hosts: [
+        { host: 'rossi-editore.it', requestCount: 1 },
+        { host: 'doubleclick.net', requestCount: 2 },
+      ],
+    })
+    const r2 = result({
+      hosts: [
+        { host: 'rossi-editore.it', requestCount: 1 },
+        { host: 'doubleclick.net', requestCount: 77 },
+      ],
+    })
+    const once = ingestScan(emptyProject(), r1, DICT, IDS)
+    const twice = ingestScan(once, r2, DICT, { prefix: 'scan2' })
+    expect(twice.observations).toEqual([
+      { domain: 'rossi-editore.it', requestCount: 1, beforeConsent: true },
+      { domain: 'doubleclick.net', requestCount: 77, beforeConsent: true },
+    ])
+  })
+
+  it('collapses a host listed twice, in different case, into one observation', () => {
+    const p = ingestScan(
+      emptyProject(),
+      result({
+        hosts: [
+          { host: 'rossi-editore.it', requestCount: 1 },
+          { host: 'x.com', requestCount: 2 },
+          { host: 'X.com', requestCount: 5 },
+        ],
+      }),
+      DICT,
+      IDS,
+    )
+    expect(p.observations.filter((o) => o.domain.toLowerCase() === 'x.com')).toHaveLength(1)
+    expect(p.observations.find((o) => o.domain.toLowerCase() === 'x.com')?.requestCount).toBe(5)
+  })
+
   it('shows an unrecognised host in full and does not collapse it', () => {
     const p = ingestScan(
       emptyProject(),
@@ -194,6 +264,26 @@ describe('ingestScan', () => {
     const before = emptyProject()
     const snapshot = JSON.stringify(before)
     ingestScan(before, result(), DICT, IDS)
+    expect(JSON.stringify(before)).toBe(snapshot)
+  })
+
+  it('is pure on a second ingest — existing places and subject groups are not edited in place', () => {
+    // emptyProject() has no places or subject groups, so the test above
+    // cannot catch an in-place edit of an *existing* one. This one gives a
+    // second ingest real objects to accidentally mutate.
+    const before = ingestScan(emptyProject(), result(), DICT, IDS)
+    const snapshot = JSON.stringify(before)
+    ingestScan(
+      before,
+      result({
+        hosts: [
+          { host: 'rossi-editore.it', requestCount: 1 },
+          { host: 'doubleclick.net', requestCount: 9 },
+        ],
+      }),
+      DICT,
+      { prefix: 'scan2' },
+    )
     expect(JSON.stringify(before)).toBe(snapshot)
   })
 })
