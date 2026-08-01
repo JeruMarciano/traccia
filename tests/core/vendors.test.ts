@@ -44,4 +44,12 @@ describe('identify', () => {
   it('does not treat a trailing dot as a different host', () => {
     expect(identify('stripe.com.', DICT)?.owner).toBe('Stripe')
   })
+
+  it('returns null for keys that live on the prototype chain', () => {
+    // A plain property read would find Object.prototype's own members and
+    // report them as an identified vendor with an undefined owner.
+    expect(identify('__proto__', DICT)).toBeNull()
+    expect(identify('constructor', DICT)).toBeNull()
+    expect(identify('a.constructor', DICT)).toBeNull()
+  })
 })

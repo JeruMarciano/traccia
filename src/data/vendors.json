@@ -89,11 +89,6 @@
     "category": "captcha",
     "purposeGroup": "Running the systems"
   },
-  "www.google.com": {
-    "owner": "Google",
-    "category": "infrastructure",
-    "purposeGroup": "Running the systems"
-  },
   "maps.googleapis.com": {
     "owner": "Google",
     "category": "maps",
@@ -234,7 +229,7 @@
     "category": "advertising",
     "purposeGroup": "Marketing"
   },
-  "sf16-scmcdn.ibytedtos.com": {
+  "ibytedtos.com": {
     "owner": "TikTok",
     "category": "cdn",
     "purposeGroup": "Running the systems"
@@ -305,7 +300,7 @@
     "purposeGroup": "Running the systems"
   },
   "maxcdn.bootstrapcdn.com": {
-    "owner": "Bootstrap",
+    "owner": "StackPath",
     "category": "cdn",
     "purposeGroup": "Running the systems"
   },
@@ -1131,13 +1126,13 @@
   },
   "wa.me": {
     "owner": "WhatsApp (Meta)",
-    "category": "social",
-    "purposeGroup": "Marketing"
+    "category": "support",
+    "purposeGroup": "Support"
   },
   "api.whatsapp.com": {
     "owner": "WhatsApp (Meta)",
-    "category": "social",
-    "purposeGroup": "Marketing"
+    "category": "support",
+    "purposeGroup": "Support"
   },
   "tile.openstreetmap.org": {
     "owner": "OpenStreetMap Foundation",
@@ -1171,8 +1166,8 @@
   },
   "poste.it": {
     "owner": "Poste Italiane",
-    "category": "payments",
-    "purposeGroup": "Getting paid"
+    "category": "delivery",
+    "purposeGroup": "Delivering orders"
   },
   "posteitaliane.it": {
     "owner": "Poste Italiane",
