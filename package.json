@@ -11,13 +11,14 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "dist": "electron-vite build && electron-builder --mac --win",
-    "dist:mac": "electron-vite build && electron-builder --mac",
-    "dist:win": "electron-vite build && electron-builder --win"
+    "dev:vite": "vite",
+    "build:vite": "vite build",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "@types/node": "^26.1.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -26,9 +27,11 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
+    "vite": "^8",
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   }

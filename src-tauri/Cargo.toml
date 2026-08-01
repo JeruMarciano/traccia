@@ -1,0 +1,64 @@
+[package]
+name = "traccia"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.97"
+description = "Maps where an organisation's personal data goes."
+publish = false
+
+[lib]
+name = "traccia_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+# Dependency budget. Every crate here lands in the shipped binary, so each one
+# has to earn its bytes. `cargo tree -i <crate>` shows whether Tauri already
+# pulls it, in which case the marginal cost is close to zero.
+#
+#   tauri                 The shell itself.
+#   tauri-plugin-dialog   Native open/save dialogs, opened from Rust so the
+#                         renderer never holds a filesystem path. Wraps `rfd`,
+#                         which is what any alternative would use directly. Note
+#                         it also pulls tauri-plugin-fs into the graph; that is a
+#                         Rust-side crate only, and capabilities/default.json
+#                         grants the renderer no `fs:` permission, so the surface
+#                         is not reachable from the webview. Re-check that if the
+#                         capability file ever grows.
+#   serde / serde_json    The project file is JSON and `invoke` is JSON. Tauri
+#                         depends on both regardless — verified with
+#                         `cargo tree -i serde_json`, which shows tauri v2.11.5.
+#   tokio                 Async runtime for the proxy listener. Tauri depends on
+#                         it regardless — verified with `cargo tree -i tokio`,
+#                         which shows tauri v2.11.5. Feature set kept narrow.
+#
+# Deliberately NOT taken:
+#   hyper / reqwest / h2  The proxy handles CONNECT only: parse a request line,
+#                         answer 200 or 403, then splice bytes. An HTTP stack
+#                         would add a large attack surface to the one component
+#                         that must be small enough to audit by reading it.
+#   uuid                  Temp-file uniqueness comes from pid + a process-local
+#                         counter + nanos since epoch. Same guarantee, no crate.
+#   tokio-tungstenite     CDP is Phase 2. Not added until it is needed.
+#   tauri-plugin-opener   Shipped by create-tauri-app and removed here. It hands
+#                         a URL or a path to the OS to open, which is precisely
+#                         the egress and execution surface this app must not have.
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+
+[dev-dependencies]
+# Dev only. Never shipped.
+tempfile = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
