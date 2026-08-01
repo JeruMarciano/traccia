@@ -34,6 +34,35 @@ const MAX_HEADER_BYTES: usize = 8 * 1024;
 /// A client that opens a connection and then says nothing must not hold a task open.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// RFC 1035's cap on a domain name. `admission::vet_host` refuses anything longer, so a recorded
+/// authority above this length is by definition one the guard rejected, and there is no reason to
+/// retain the rest of it.
+const MAX_RECORDED_HOST: usize = 253;
+/// The detail record is bounded. A local process can drive refusals at will, and this ledger
+/// lives inside an app holding the user's unsaved project; unbounded growth driven by an
+/// untrusted peer is not a property that belongs there. The counts are not capped — see
+/// `Ledger::outcomes` — so a truncated record shows up as a gap rather than as a clean sheet.
+const MAX_LEDGER_ENTRIES: usize = 10_000;
+
+/// Make an authority safe to retain and later render.
+///
+/// `DenyReason` is an enum precisely so no deny reason can carry a value, but the ledger pairs
+/// the reason with the host anyway — and on the deny path that host is the *raw* authority off
+/// the request line, which the guard refused rather than vetted. It can be 8 KB long and can
+/// carry control characters: `"evil\u{1b}[2Kspoof.example"` is a valid CONNECT authority as far
+/// as the read loop is concerned, and it rewrites a terminal line when printed. Capping and
+/// reducing to printable ASCII here is what keeps the enum's guarantee from being undone one
+/// line later.
+fn redact_authority(raw: String) -> String {
+    if raw.len() <= MAX_RECORDED_HOST && raw.bytes().all(|b| b.is_ascii_graphic()) {
+        return raw;
+    }
+    raw.chars()
+        .take(MAX_RECORDED_HOST)
+        .map(|c| if c.is_ascii_graphic() { c } else { '?' })
+        .collect()
+}
+
 const REFUSED: &[u8] = b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
 const ESTABLISHED: &[u8] = b"HTTP/1.1 200 Connection Established\r\n\r\n";
 const UPSTREAM_FAILED: &[u8] =
@@ -66,6 +95,16 @@ pub struct Ledger {
     /// is nothing to name in the record — nothing was contacted — but the connection must still
     /// be accountable, or `accepted` cannot be reconciled against anything.
     refused: AtomicU64,
+    /// Accounting, kept separately from the detail vectors above so that capping the record
+    /// cannot quietly cap the reconciliation. If these tracked `Vec::len` then filling the
+    /// detail record would make `healthy()` start failing, and the fix under pressure would be
+    /// to weaken `healthy()`.
+    allowed_count: AtomicU64,
+    denied_count: AtomicU64,
+    /// Outcomes that were counted but whose detail was not retained, because the record was
+    /// full or its lock was poisoned. Never silently zero: a caller reading the ledger needs to
+    /// know the difference between "nothing else happened" and "we stopped writing it down".
+    dropped_records: AtomicU64,
     handler_panics: AtomicU64,
 }
 
@@ -80,13 +119,26 @@ impl Ledger {
         self.completed.fetch_add(1, Ordering::SeqCst);
     }
     fn note_allowed(&self, host: String, port: u16) {
-        if let Ok(mut v) = self.allowed.lock() {
-            v.push((host, port));
+        self.allowed_count.fetch_add(1, Ordering::SeqCst);
+        // No redaction here: an allowed host has been through `admission::vet_host`, so it is
+        // already lowercase ASCII within the length cap. The deny path is the one that records
+        // a string the guard refused rather than approved.
+        match self.allowed.lock() {
+            Ok(mut v) if v.len() < MAX_LEDGER_ENTRIES => v.push((host, port)),
+            _ => {
+                self.dropped_records.fetch_add(1, Ordering::SeqCst);
+            }
         }
     }
     fn note_denied(&self, host: String, port: u16, reason: DenyReason) {
-        if let Ok(mut v) = self.denied.lock() {
-            v.push((host, port, reason));
+        self.denied_count.fetch_add(1, Ordering::SeqCst);
+        match self.denied.lock() {
+            Ok(mut v) if v.len() < MAX_LEDGER_ENTRIES => {
+                v.push((redact_authority(host), port, reason))
+            }
+            _ => {
+                self.dropped_records.fetch_add(1, Ordering::SeqCst);
+            }
         }
     }
     fn note_refused(&self) {
@@ -110,10 +162,17 @@ impl Ledger {
     pub fn refused(&self) -> u64 {
         self.refused.load(Ordering::SeqCst)
     }
-    /// Every accepted connection, accounted for exactly once.
+    /// Outcomes that were counted but not written down — the detail record was full, or its lock
+    /// was poisoned. A non-zero value means `allowed()` and `denied()` are incomplete.
+    pub fn dropped_records(&self) -> u64 {
+        self.dropped_records.load(Ordering::SeqCst)
+    }
+    /// Every accepted connection, accounted for exactly once. Counted, not measured off the
+    /// detail vectors, so that capping the record cannot weaken the reconciliation.
     pub fn outcomes(&self) -> u64 {
-        let listed = self.allowed().len() as u64 + self.denied().len() as u64;
-        listed + self.refused()
+        self.allowed_count.load(Ordering::SeqCst)
+            + self.denied_count.load(Ordering::SeqCst)
+            + self.refused()
     }
     pub fn healthy(&self) -> bool {
         self.handler_panics.load(Ordering::SeqCst) == 0 && self.accepted() == self.outcomes()
@@ -698,6 +757,55 @@ mod tests {
         assert!(!ledger.healthy());
         assert_eq!(ledger.accepted(), 1);
         assert_eq!(ledger.completed(), 0);
+    }
+
+    // ---- audit finding F4 --------------------------------------------------
+
+    #[tokio::test]
+    async fn a_refused_authority_is_recorded_capped_and_free_of_control_characters() {
+        // F4. DenyReason is an enum so that no reason can carry a value, but the ledger pairs the
+        // reason with the raw authority — which the guard *refused*, so it is subject to no cap
+        // and no character rule at all. Before the fix a 7000-character authority was retained in
+        // full, and an ESC sequence in a hostname survived into anything that later rendered the
+        // record.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+
+        let long = "a".repeat(7000);
+        let _ = send(p.addr, &format!("CONNECT {long}.example:443 HTTP/1.1\r\n\r\n")).await;
+        let _ = send(p.addr, "CONNECT evil\u{1b}[2Kspoof.example:443 HTTP/1.1\r\n\r\n").await;
+        let _ = send(p.addr, "CONNECT \u{7}bell.example:443 HTTP/1.1\r\n\r\n").await;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let denied = p.ledger.denied();
+        assert_eq!(denied.len(), 3);
+        for (h, _, _) in &denied {
+            assert!(h.len() <= MAX_RECORDED_HOST, "retained {} bytes: {h:?}", h.len());
+            assert!(
+                h.bytes().all(|b| b.is_ascii_graphic()),
+                "a control character survived into the record: {h:?}"
+            );
+        }
+        // and the redaction is visible rather than silent
+        assert!(denied.iter().any(|(h, _, _)| h.contains('?')));
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[test]
+    fn the_detail_record_is_capped_while_the_accounting_is_not() {
+        // An untrusted local peer can drive refusals at will, into a ledger living inside an app
+        // that holds the user's unsaved project. The record stops growing; the reconciliation
+        // does not, so a capped record still reads as a live sensor rather than a dead one.
+        let l = Ledger::new();
+        for i in 0..(MAX_LEDGER_ENTRIES + 50) {
+            l.note_accepted();
+            l.note_denied(format!("h{i}.example"), 443, DenyReason::NotAScanTarget);
+        }
+        assert_eq!(l.denied().len(), MAX_LEDGER_ENTRIES);
+        assert_eq!(l.dropped_records(), 50, "a truncated record must be visible, not silent");
+        assert_eq!(l.outcomes(), (MAX_LEDGER_ENTRIES + 50) as u64);
+        assert!(l.healthy(), "capping the record must not make the sensor read as dead");
     }
 
     // ---- audit findings F5 and F6 ------------------------------------------
