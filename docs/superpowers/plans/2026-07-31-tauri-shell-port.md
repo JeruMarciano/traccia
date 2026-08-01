@@ -135,6 +135,96 @@ Node is v24.18.0, npm 11.16.0.
 
 ---
 
+## Execution harness
+
+### Measured baseline
+
+Captured on `phase1-data-flow-mapper` at the branch point, not quoted from a prior document:
+
+```
+Test Files  20 passed (20)
+     Tests  139 passed (139)
+  Duration  468ms
+```
+
+Per file, so the delta at every stage is checkable rather than approximate:
+
+| Area | Files | Tests | Fate |
+|---|---|---|---|
+| `tests/core/**` | 11 | **64** | Unchanged. Any movement here falsifies the transplant. |
+| `tests/renderer/noLooseStrings` | 1 | 8 | Unchanged. |
+| `tests/renderer/saveNotice` | 1 | 4 | → 7 (Task 8 adds the string-rejection cases). |
+| `tests/smoke` | 1 | 1 | Unchanged. |
+| `tests/main/egressGuard` | 1 | **31** | Retired to Rust `admission` + `proxy`, case by case, via Task 10's retirement table. |
+| `tests/main/ipc` | 1 | 12 | Retired to Rust `commands` + `tests/bridge/errorStrings`. |
+| `tests/main/projectFile` | 1 | 12 | Retired to Rust `project_file`. |
+| `tests/main/log` | 1 | 3 | Retired to Rust `log`. |
+| `tests/main/builtArtefactClean` | 1 | 3 | Retired to `tests/build/bundleClean`. |
+| `tests/main/noRemoteAssets` | 1 | 1 | Moved and widened to 2 (one per root). |
+
+`builtArtefactClean` registers 3 of its 4 `it` blocks because `out/` exists at the branch point; the fourth is the `it.skip` placeholder that only registers when it does not. 64 + 8 + 4 + 1 + 62 = 139.
+
+### Regression eval — the expected end state
+
+Run at Task 12, Step 5. If the totals disagree with this table, something was dropped rather than moved, and the diff is where to look.
+
+| | Baseline | Expected after the port |
+|---|---|---|
+| TypeScript (`npm test`) | 139 | **91** — core 64, noLooseStrings 8, smoke 1, saveNotice 7, noRemoteAssets 2, bundleClean 4, capabilities 2, errorStrings 3 |
+| Rust (`cargo test`) | 0 | **51** on macOS — admission 14, proxy 10, project_file 14, log 5, commands 8 (49 on Windows: the two `#[cfg(unix)]` mode tests do not compile in) |
+| Combined | 139 | **142** |
+
+Three net new tests for a port is the right shape: the coverage did not grow much because the behaviour did not, but the Windows lock-retry path went from **0 tests to 5**, which is the one real coverage gain and the gap the shell-architecture doc recorded as open.
+
+The **capability eval** — the thing that must be true that was not true before — is Task 4's proxy suite: a connection attempt to a non-target host is refused before a socket opens, and the ledger proves the observer was alive while refusing. Nothing in the Electron baseline tested that, because `session.webRequest` could not see it.
+
+### Task sizing, honestly
+
+The 15-minute unit rule and this plan's task boundaries do not agree, and pretending otherwise would mislead whoever executes it. A task here is drawn where the `superpowers:writing-plans` rule puts it — the smallest unit worth a fresh reviewer's gate — and Tasks 3, 4 and 5 are each several hours. What *is* 15-minute-sized is the **step**: every step is one action with a stated command and a stated expected result, and the TDD steps come in the write-fail-implement-pass-commit rhythm.
+
+Where a task exceeds the unit, the internal checkpoint is the step boundary, and the single dominant risk is named below. Do not merge steps to move faster; the fail-first step in each pair is what proves the test is testing something.
+
+### Routing, risk and session boundaries
+
+| Task | Model | Dominant risk | Done condition |
+|---|---|---|---|
+| 1 Scaffold | Sonnet | Generated config carries a capability or updater we do not want | `capabilities.test.ts` green, `tauri dev` opens a window |
+| 2 Toolchain | Sonnet | A hidden Electron coupling in core surfaces | `git diff --stat src/core tests/core` empty, 139 → still green |
+| 3 `admission.rs` | **Opus** | A bypass nobody thought of; a panic path | 14 tests green, clippy clean, no `unwrap` outside tests |
+| 4 `proxy.rs` | **Opus** | A connection reaching a terminal state unrecorded — the spike's exact failure | 10 tests green, `healthy()` asserted in every one |
+| 5 `project_file.rs` | Sonnet | A half-written or mode-widened save | 14 tests green, retry loop covered on any platform |
+| 6 `log.rs` | Haiku | Truncation panics on a char boundary | 5 tests green |
+| 7 `commands.rs` | Sonnet | A path or map id escaping in an error | 8 tests green, three literals only |
+| 8 Bridge | Sonnet | The string-rejection regression shipping silently | 7 + 3 tests green, Open/Save verified in the running app |
+| 9 Bundle tests | Sonnet | A remote reference reaching the artefact | 4 tests green against a real `dist/` |
+| 10 Audit | **Opus** (`security-auditor`) | An auditor too close to the code to see it | Retirement table covers all 31; findings dispositioned |
+| 11 CI | Sonnet | Windows fails and gets papered over | Both `rust` jobs and both `bundle` jobs green |
+| 12 Delete | Sonnet | Deleting coverage that was never re-homed | Full suite green, core diff still empty |
+| 13 Measure | Haiku | — | Numbers recorded, spike doc annotated |
+
+**Session boundaries.** Start fresh at each rule below; compact at the boundary, never mid-task.
+
+- **A — Tasks 1–2.** Both are about the build. Coupled; keep together.
+- **B — Tasks 3–4.** Fresh session. Load the spike findings first: this is the work that needs the preconnect measurement in context, and it is the only work where being wrong is fatal to the product.
+- **C — Tasks 5–7.** Fresh. The Rust filesystem and IPC layer, no security invariants beyond error hygiene.
+- **D — Tasks 8–9.** Fresh. Back in TypeScript.
+- **E — Task 10.** **Must be a fresh session, and the auditor must not be an agent that wrote the code.** An auditor that watched `admission.rs` being written has already accepted its reasoning, which is the thing under audit. This is the one session boundary that is a correctness requirement rather than a context-management preference.
+- **F — Tasks 11–13.** Fresh. CI, deletion, measurement.
+
+**Review routing.** Task 10 is the `security-auditor` gate and can block. Tasks 3, 4, 5, 7 additionally warrant `reviewer` on the diff, focused on invariants, error boundaries and hidden coupling — not on style, which `cargo clippy -- -D warnings` and `tsc --noEmit` already settle. Tasks 1, 6, 11, 12, 13 need no separate review pass; their tests are the gate.
+
+**Escalation rule.** Escalate a task's tier only on a demonstrated reasoning gap — a wrong invariant, a missed case — not on a first failing compile. A borrow-checker error is not a reasoning gap.
+
+### Cost log
+
+Fill one row per task as it completes. The point is to find out where the estimate was wrong, so record the failure rows too.
+
+| Task | Model | Output tokens | Retries | Wall clock | Result |
+|---|---|---|---|---|---|
+| | | | | | |
+
+---
+
 ## Task 1: Branch and clean-generated Tauri scaffold
 
 **Files:**
@@ -2591,7 +2681,7 @@ Create `docs/decisions/2026-07-31-admission-audit.md` with:
 
 - The date, the two files audited, and their git hashes at audit time (`git rev-parse HEAD:src-tauri/src/admission.rs`).
 - **The mapping table**: for each of the four `egressGuard.ts` defects, the equivalent case here, the test that covers it, and its result. Task 3's table is the starting point; the audit either confirms it or corrects it.
-- **A retirement table for `tests/main/egressGuard.test.ts`**: walk every `it(...)` in that file — 30 of them across six describe blocks — and record for each one either the Rust test that carries it forward, or why it does not apply at a proxy (the `file:`, `data:`, `blob:`, `devtools:` and `chrome-extension:` scheme cases do not: a proxy sees an authority, not a scheme). This table is what makes it safe to delete that file in Task 12.
+- **A retirement table for `tests/main/egressGuard.test.ts`**: walk every `it(...)` in that file — 31 of them across six describe blocks, counted on the branch point — and record for each one either the Rust test that carries it forward, or why it does not apply at a proxy (the `file:`, `data:`, `blob:`, `devtools:` and `chrome-extension:` scheme cases do not: a proxy sees an authority, not a scheme). This table is what makes it safe to delete that file in Task 12.
 - Each finding, its severity, and its disposition: fixed, or accepted with a stated reason.
 - Anything the audit could not determine, named as such.
 
@@ -2779,13 +2869,13 @@ Expected: all green. If anything fails, stop — the deletion is the last step, 
 
 - [ ] **Step 2: Confirm the retirement table exists**
 
-`tests/main/egressGuard.test.ts` is 30 cases of adversarial thinking about the product's central promise. It may only be deleted once Task 10's audit document accounts for every one of them.
+`tests/main/egressGuard.test.ts` is 31 cases of adversarial thinking about the product's central promise. It may only be deleted once Task 10's audit document accounts for every one of them.
 
 ```bash
-grep -c "  it(" tests/main/egressGuard.test.ts
+grep -cE "^\s+it\(" tests/main/egressGuard.test.ts
 ```
 
-Expected: 30. Read the retirement table in `docs/decisions/2026-07-31-admission-audit.md` and confirm each of those 30 appears in it. If any is unaccounted for, **stop and go back to Task 10**.
+Expected: 31. Read the retirement table in `docs/decisions/2026-07-31-admission-audit.md` and confirm each of those 31 appears in it. If any is unaccounted for, **stop and go back to Task 10**.
 
 - [ ] **Step 3: Delete**
 
@@ -2831,7 +2921,7 @@ git add -A
 git commit -m "chore(shell): delete the Electron main, preload, build config and tests
 
 Recoverable from the electron-phase1 tag and this branch's history. The egress guard's
-30 adversarial cases are accounted for one by one in
+31 adversarial cases are accounted for one by one in
 docs/decisions/2026-07-31-admission-audit.md before this deletion."
 ```
 
