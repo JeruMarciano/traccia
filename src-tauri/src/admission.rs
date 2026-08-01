@@ -20,9 +20,18 @@ const ALLOWED_PORTS: [u16; 2] = [80, 443];
 /// asked to allow, so it is rejected before any comparison work happens.
 const MAX_HOST_LEN: usize = 253;
 
+/// `Allow` carries both halves deliberately.
+///
+/// `host` is the *normalised* host that was asked for — the only string the guard has actually
+/// vetted. The caller must connect to that and record that; the raw authority it parsed off the
+/// request line differs from it by anything `str::trim` removes, which is the whole Unicode
+/// `White_Space` set, so handing the raw string to a resolver would mean dialling a name the
+/// guard never approved. `origin` is the scan-origin entry that matched, which is what makes the
+/// decision explicable but is not the host anything was contacted at: three different subdomains
+/// of one scan target must not all be recorded as the apex.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
-    Allow { origin: String },
+    Allow { host: String, origin: String },
     Deny { reason: DenyReason },
 }
 
@@ -116,7 +125,7 @@ pub fn decide(host: &str, port: u16, scan_origins: &[String]) -> Decision {
         // Suffix matching is on a label boundary only: `.{o}` and never a bare `ends_with(o)`,
         // so `notrossi-editore.it` cannot pass as `rossi-editore.it`.
         if h == o || h.ends_with(&format!(".{o}")) {
-            return Decision::Allow { origin: o };
+            return Decision::Allow { host: h, origin: o };
         }
     }
     Decision::Deny { reason: DenyReason::NotAScanTarget }
@@ -133,8 +142,14 @@ mod tests {
     fn denied(d: &Decision) -> &DenyReason {
         match d {
             Decision::Deny { reason } => reason,
-            Decision::Allow { origin } => panic!("expected a deny, got allow for {origin}"),
+            Decision::Allow { host, origin } => {
+                panic!("expected a deny, got allow for {host} via {origin}")
+            }
         }
+    }
+
+    fn allowed(host: &str, origin: &str) -> Decision {
+        Decision::Allow { host: host.to_string(), origin: origin.to_string() }
     }
 
     // ---- ordinary behaviour -------------------------------------------------
@@ -147,9 +162,43 @@ mod tests {
     #[test]
     fn allows_the_scan_target_and_its_subdomains() {
         let o = origins(&["rossi-editore.it"]);
-        assert_eq!(decide("rossi-editore.it", 443, &o), Decision::Allow { origin: "rossi-editore.it".into() });
-        assert_eq!(decide("www.rossi-editore.it", 443, &o), Decision::Allow { origin: "rossi-editore.it".into() });
-        assert_eq!(decide("a.b.rossi-editore.it", 80, &o), Decision::Allow { origin: "rossi-editore.it".into() });
+        assert_eq!(decide("rossi-editore.it", 443, &o), allowed("rossi-editore.it", "rossi-editore.it"));
+        assert_eq!(decide("www.rossi-editore.it", 443, &o), allowed("www.rossi-editore.it", "rossi-editore.it"));
+        assert_eq!(decide("a.b.rossi-editore.it", 80, &o), allowed("a.b.rossi-editore.it", "rossi-editore.it"));
+    }
+
+    // ---- audit finding F1/F3 -----------------------------------------------
+
+    #[test]
+    fn allow_carries_the_normalised_host_asked_for_and_not_only_the_matched_origin() {
+        // F1: the caller records what this returns. If `Allow` carried only the origin, three
+        // different subdomains of one scan target would all be recorded as the apex, and a
+        // vendor on `analytics.` — exactly what a data-flow map exists to surface — would be
+        // indistinguishable from the site itself.
+        let o = origins(&["rossi-editore.it"]);
+        assert_eq!(
+            decide("analytics.rossi-editore.it", 443, &o),
+            allowed("analytics.rossi-editore.it", "rossi-editore.it")
+        );
+        assert_eq!(
+            decide("cdn.rossi-editore.it", 443, &o),
+            allowed("cdn.rossi-editore.it", "rossi-editore.it")
+        );
+    }
+
+    #[test]
+    fn the_allowed_host_is_the_normalised_form_never_the_raw_input() {
+        // F3: the caller connects to what this returns. `str::trim` removes the whole Unicode
+        // `White_Space` set, so the raw authority and the string the guard vetted can differ —
+        // and only the vetted one may reach a resolver.
+        let o = origins(&["rossi-editore.it"]);
+        for raw in ["  ROSSI-EDITORE.IT  ", "rossi-editore.it.", "\u{a0}rossi-editore.it"] {
+            assert_eq!(
+                decide(raw, 443, &o),
+                allowed("rossi-editore.it", "rossi-editore.it"),
+                "{raw:?}"
+            );
+        }
     }
 
     #[test]
