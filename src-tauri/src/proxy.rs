@@ -44,16 +44,28 @@ const UPSTREAM_FAILED: &[u8] =
 ///
 /// During the spike the observing proxy crashed mid-run and silently under-reported a clean
 /// result; it was caught only because the number looked impossible. The counted contract below
-/// makes that impossible to miss: every accepted connection increments `accepted`, and reaches
-/// exactly one terminal outcome which increments `completed`. `healthy()` is false whenever the
-/// two disagree or a handler panicked, and every test that concludes "nothing escaped" must
-/// assert `healthy()` before believing itself.
+/// makes that impossible to miss: every accepted connection increments `accepted` and reaches
+/// exactly one recorded outcome — an entry in `allowed`, an entry in `denied`, or a tick of
+/// `refused` for a connection that ended before any host was known. `healthy()` is the
+/// reconciliation of those two numbers, and every test that concludes "nothing escaped" must
+/// assert it before believing itself.
+///
+/// The reconciliation is deliberately against `accepted`, not against `completed`. Outcomes are
+/// recorded at the moment of decision, while `completed` only ticks when the handler returns —
+/// which for an established tunnel means when the tunnel closes. Reconciling against `completed`
+/// would report every keep-alive connection of a real scan as a dead sensor, exactly when §9.3
+/// needs the check to be meaningful. `completed` is kept as an observable, not as the invariant.
 #[derive(Debug, Default)]
 pub struct Ledger {
     allowed: Mutex<Vec<(String, u16)>>,
     denied: Mutex<Vec<(String, u16, DenyReason)>>,
     accepted: AtomicU64,
     completed: AtomicU64,
+    /// Terminal states that never learned a host: a timed-out or oversized preamble, bytes that
+    /// were not UTF-8, a method that was not CONNECT, an authority with no parseable port. There
+    /// is nothing to name in the record — nothing was contacted — but the connection must still
+    /// be accountable, or `accepted` cannot be reconciled against anything.
+    refused: AtomicU64,
     handler_panics: AtomicU64,
 }
 
@@ -77,6 +89,9 @@ impl Ledger {
             v.push((host, port, reason));
         }
     }
+    fn note_refused(&self) {
+        self.refused.fetch_add(1, Ordering::SeqCst);
+    }
     fn note_panic(&self) {
         self.handler_panics.fetch_add(1, Ordering::SeqCst);
     }
@@ -92,8 +107,16 @@ impl Ledger {
     pub fn completed(&self) -> u64 {
         self.completed.load(Ordering::SeqCst)
     }
+    pub fn refused(&self) -> u64 {
+        self.refused.load(Ordering::SeqCst)
+    }
+    /// Every accepted connection, accounted for exactly once.
+    pub fn outcomes(&self) -> u64 {
+        let listed = self.allowed().len() as u64 + self.denied().len() as u64;
+        listed + self.refused()
+    }
     pub fn healthy(&self) -> bool {
-        self.handler_panics.load(Ordering::SeqCst) == 0 && self.accepted() == self.completed()
+        self.handler_panics.load(Ordering::SeqCst) == 0 && self.accepted() == self.outcomes()
     }
 }
 
@@ -252,13 +275,18 @@ async fn handle(
     ledger: Arc<Ledger>,
 ) {
     let Some(head) = read_head(&mut client).await else {
+        // A timeout, an oversized preamble, bytes that were not UTF-8, or a client that closed
+        // without speaking. Nothing was contacted, so there is no host to record — but the
+        // connection is still counted, or `accepted` reconciles against nothing.
+        ledger.note_refused();
         let _ = client.write_all(REFUSED).await;
         return;
     };
 
     let Some((host, port)) = parse_connect_authority(&head) else {
         // Not a CONNECT, or an authority that could not be read. Either way it does not become a
-        // tunnel, and there is no host worth recording against a scan.
+        // tunnel, and there is no host worth recording against a scan — but see above: counted.
+        ledger.note_refused();
         let _ = client.write_all(REFUSED).await;
         return;
     };
@@ -670,6 +698,75 @@ mod tests {
         assert!(!ledger.healthy());
         assert_eq!(ledger.accepted(), 1);
         assert_eq!(ledger.completed(), 0);
+    }
+
+    // ---- audit findings F5 and F6 ------------------------------------------
+
+    #[tokio::test]
+    async fn a_connection_refused_before_a_host_is_known_is_still_accounted_for() {
+        // F5, and it is the spike's exact failure. These three reach a terminal state — a 403 and
+        // a closed socket — without `handle` ever learning a host, so nothing lands in `allowed`
+        // or `denied`. Before the fix the ledger read accepted=3, allowed=0, denied=0 and
+        // healthy()=true: a sensor that saw nothing, reporting itself well.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+
+        // an authority with no port at all — `rsplit_once(':')` finds nothing
+        let _ = send(p.addr, "CONNECT rossi-editore.it HTTP/1.1\r\n\r\n").await;
+        // a method that is not CONNECT
+        let _ = send(p.addr, "GET / HTTP/1.1\r\nHost: rossi-editore.it\r\n\r\n").await;
+        // a client that connects and says nothing at all
+        drop(TcpStream::connect(p.addr).await.unwrap());
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(p.ledger.accepted(), 3);
+        assert!(p.ledger.allowed().is_empty());
+        assert!(p.ledger.denied().is_empty());
+        assert_eq!(
+            p.ledger.refused(), 3,
+            "a terminal state that recorded no outcome is unaccountable — accepted cannot be \
+             reconciled against what the ledger saw, which is how the spike's oracle died quietly"
+        );
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn an_unaccounted_connection_makes_the_sensor_read_unhealthy() {
+        // The tripwire is not vacuous: an accept with no outcome behind it must fail the check,
+        // otherwise the reconciliation above proves nothing.
+        let ledger = Ledger::new();
+        ledger.note_accepted();
+        assert!(!ledger.healthy());
+        ledger.note_refused();
+        assert!(ledger.healthy());
+    }
+
+    #[tokio::test]
+    async fn the_sensor_reads_healthy_while_a_tunnel_is_still_open() {
+        // F6. `copy_bidirectional` does not return until the tunnel closes, so under the old
+        // accepted == completed rule every keep-alive connection of a real scan read as a dead
+        // sensor. The §9.3 egress test must assert healthy() *during* a scan; a rule that is
+        // false exactly then invites someone to weaken it, which would throw away the tripwire
+        // the spike paid for.
+        let upstream = fake_upstream(b"pong").await;
+        let p = start(origins(&["rossi-editore.it"]), connector_to(upstream)).await.unwrap();
+
+        let mut s = TcpStream::connect(p.addr).await.unwrap();
+        s.write_all(b"CONNECT rossi-editore.it:443 HTTP/1.1\r\n\r\n").await.unwrap();
+        let mut head = [0u8; 39];
+        s.read_exact(&mut head).await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(p.ledger.completed(), 0, "the tunnel should still be open");
+        assert_eq!(p.ledger.allowed(), vec![("rossi-editore.it".to_string(), 443)]);
+        assert!(
+            p.ledger.healthy(),
+            "an open tunnel is a working sensor, not a dead one: accepted={} completed={}",
+            p.ledger.accepted(),
+            p.ledger.completed()
+        );
+        drop(s);
     }
 
     // ---- audit finding F2 --------------------------------------------------
