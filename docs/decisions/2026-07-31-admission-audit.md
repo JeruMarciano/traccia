@@ -56,8 +56,31 @@ not retired**:
 > **Carried forward to Phase 2.** The browser Traccia drives must be prevented from issuing
 > `file://` requests with a remote authority, and from any protocol the proxy cannot see (SMB,
 > mDNS, UDP/QUIC). The proxy is not, and cannot be, the enforcement point for those. Whatever
-> mechanism Phase 2 uses must carry its own test; the four `file:`-authority cases in
-> `tests/main/egressGuard.test.ts` are the specification for it.
+> mechanism Phase 2 uses must carry its own test.
+
+The specification for that test is reproduced below rather than referenced. It previously lived in
+`tests/main/egressGuard.test.ts`, which Task 12 deletes; a requirement that points at a deleted
+file is a requirement that quietly stops existing. These are the original assertions, verbatim:
+
+```ts
+// MUST DENY — the defect itself (retirement-table #15, #16, and #30 at the guard layer).
+decideEgress('file://attacker.example/share/x.png', [])                    // allow === false
+decideEgress('file://rossi-editore.it/share/x.png', ['rossi-editore.it'])  // allow === false
+//   ^ denied even though the authority *is* the scan target: a remote file authority
+//     is an SMB fetch, not a fetch of the thing the user asked to scan.
+
+// MUST STILL ALLOW — the paired control (#17, #18).
+// Without these a Phase 2 mechanism could pass by blocking everything and breaking the app.
+decideEgress('file:///app/index.html', [])              // allow === true
+decideEgress('file://localhost/app/index.html', [])     // allow === true
+decideEgress('devtools://devtools/bundled/x.js', [])    // allow === true
+decideEgress('data:text/css,body{}', [])                // allow === true
+decideEgress('blob:https://evil.example/uuid', [])      // allow === true
+decideEgress('chrome-extension://abc/x.js', [])         // allow === true
+```
+
+The deny cases are the requirement; the allow cases are what stops the requirement being met
+trivially. A Phase 2 implementation satisfies this only if it reproduces both halves.
 
 ---
 

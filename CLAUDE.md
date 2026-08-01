@@ -18,7 +18,8 @@ Local-only desktop app that maps where an organisation's personal data goes.
 
 - `npm test` — Vitest, all suites
 - `npm run typecheck` — tsc, no emit
-- `npm run dev` — Electron in development
+- `npm run dev` — Tauri in development
+- `cargo test` / `cargo clippy --all-targets -- -D warnings` — from `src-tauri/`
 
 ## Working method
 
