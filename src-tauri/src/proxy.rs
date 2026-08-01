@@ -16,7 +16,7 @@
 
 use crate::admission::{decide, Decision, DenyReason};
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -102,13 +102,104 @@ pub struct ProxyHandle {
     pub ledger: Arc<Ledger>,
 }
 
+/// Whether an address the resolver returned may be dialled.
+///
+/// `admission::decide` denies IP literals and its comment claims that closes loopback pivots and
+/// the cloud metadata endpoint. It does not, and cannot: it sees an authority string, while the
+/// connector resolves a *name*. The owner of a scan target controls its DNS, so
+/// `internal.rossi-editore.it` can hold an A record of `127.0.0.1` or `169.254.169.254` and pass
+/// the label-boundary suffix match honestly. Without this check the guard would admit it and the
+/// proxy would dial the user's own loopback services, their LAN, or the metadata endpoint of the
+/// machine the app happens to be running on.
+///
+/// The rule is stated as an exclusion list rather than an allowlist because the set of routable
+/// unicast addresses is the complement of a short, stable set of special-purpose ranges, and
+/// several of the standard-library predicates for those ranges (`is_global`, `is_shared`,
+/// `is_unique_local`) are still unstable — so the ranges are spelled out here.
+fn is_permitted_upstream(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(a) => {
+            let o = a.octets();
+            !(a.is_loopback()                        // 127.0.0.0/8
+                || a.is_private()                    // 10/8, 172.16/12, 192.168/16
+                || a.is_link_local()                 // 169.254/16 — the metadata endpoint
+                || a.is_broadcast()
+                || a.is_documentation()              // 192.0.2/24, 198.51.100/24, 203.0.113/24
+                || a.is_unspecified()
+                || o[0] == 0                         // 0.0.0.0/8 "this network"
+                || (o[0] == 100 && (64..=127).contains(&o[1])) // 100.64/10 CGNAT
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)     // 192.0.0/24 IETF protocol
+                || (o[0] == 198 && (18..=19).contains(&o[1]))  // 198.18/15 benchmarking
+                || o[0] >= 224) // 224/4 multicast, 240/4 reserved, 255.255.255.255
+        }
+        IpAddr::V6(a) => {
+            // An IPv4 address wearing an IPv6 hat is still that IPv4 address. `to_ipv4` covers
+            // both the mapped (::ffff:a.b.c.d) and the deprecated compatible (::a.b.c.d) forms,
+            // either of which would otherwise smuggle 127.0.0.1 past the checks below.
+            if let Some(v4) = a.to_ipv4() {
+                return is_permitted_upstream(IpAddr::V4(v4));
+            }
+            let s = a.segments();
+            !(a.is_loopback()
+                || a.is_unspecified()
+                || a.is_multicast()
+                || (s[0] & 0xfe00) == 0xfc00   // fc00::/7 unique local
+                || (s[0] & 0xffc0) == 0xfe80)  // fe80::/10 link-local unicast
+        }
+    }
+}
+
+/// Dial the first permitted address, or refuse outright if any resolved address is not permitted.
+///
+/// Refusing the whole connection rather than skipping the bad address and trying the next is
+/// deliberate. A name that resolves to both a public address and `127.0.0.1` is not a name this
+/// product has any reason to reach, and quietly using the acceptable half would turn a rebinding
+/// attempt into a silent success. Failing closed is the only acceptable direction.
+///
+/// The error carries no host and no address: it becomes a 502 to the client either way, and a
+/// connector error is not a channel for map content.
+/// True if the resolved set contains anything that must not be dialled, or is empty.
+///
+/// Separate from the dialling below, and checked in full before a single connection is opened, so
+/// that "one bad address refuses the whole set" is a property of the code rather than of the
+/// order the resolver happened to return. It is also what lets the test for this assert the
+/// mixed-set case without the suite ever opening a socket to a non-loopback address.
+fn any_address_refused(addrs: &[SocketAddr]) -> bool {
+    addrs.is_empty() || !addrs.iter().all(|a| is_permitted_upstream(a.ip()))
+}
+
+async fn connect_to_permitted(
+    addrs: impl IntoIterator<Item = SocketAddr>,
+) -> std::io::Result<TcpStream> {
+    let addrs: Vec<SocketAddr> = addrs.into_iter().collect();
+    if any_address_refused(&addrs) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "upstream address refused",
+        ));
+    }
+    let mut last: Option<std::io::Error> = None;
+    for addr in addrs {
+        match TcpStream::connect(addr).await {
+            Ok(s) => return Ok(s),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::PermissionDenied, "upstream address refused")
+    }))
+}
+
 /// The connector the application installs. Tests never use it: a test that dials anything but
 /// 127.0.0.1 violates the product's own promise (Global Constraints), so every test injects a
-/// connector pointed at a local stand-in.
+/// connector pointed at a local stand-in. Resolution is done here rather than inside
+/// `TcpStream::connect` so that every address it produces is checked before anything is dialled.
 pub fn real_connector() -> Connector {
     Arc::new(|host: String, port: u16| {
-        Box::pin(async move { TcpStream::connect((host.as_str(), port)).await })
-            as BoxFuture<'static, std::io::Result<TcpStream>>
+        Box::pin(async move {
+            let addrs = tokio::net::lookup_host((host.as_str(), port)).await?;
+            connect_to_permitted(addrs).await
+        }) as BoxFuture<'static, std::io::Result<TcpStream>>
     })
 }
 
@@ -579,6 +670,66 @@ mod tests {
         assert!(!ledger.healthy());
         assert_eq!(ledger.accepted(), 1);
         assert_eq!(ledger.completed(), 0);
+    }
+
+    // ---- audit finding F2 --------------------------------------------------
+
+    #[test]
+    fn refuses_every_address_that_is_not_a_routable_unicast_destination() {
+        // `admission::decide` denies IP *literals*; it cannot deny a *name* that resolves to one
+        // of these, because the owner of the scan target writes its own DNS. 169.254.169.254 is
+        // the cloud metadata endpoint the admission comment claims to close and does not.
+        let denied = [
+            "127.0.0.1", "127.1.2.3", "0.0.0.0", "0.1.2.3",
+            "169.254.169.254", "169.254.0.1",
+            "10.0.0.1", "172.16.0.1", "172.31.255.255", "192.168.1.1",
+            "100.64.0.1", "100.127.255.255",
+            "192.0.0.1", "192.0.2.5", "198.51.100.5", "203.0.113.5",
+            "198.18.0.1", "198.19.255.255",
+            "224.0.0.1", "239.255.255.255", "240.0.0.1", "255.255.255.255",
+            "::1", "::", "ff02::1",
+            "fc00::1", "fd12:3456::1", "fe80::1",
+            // an IPv4 address wearing an IPv6 hat is still that IPv4 address
+            "::ffff:127.0.0.1", "::ffff:169.254.169.254", "::127.0.0.1",
+        ];
+        for a in denied {
+            let ip: IpAddr = a.parse().unwrap();
+            assert!(!is_permitted_upstream(ip), "{a} should not be dialled");
+        }
+
+        let permitted = ["93.184.216.34", "8.8.8.8", "172.32.0.1", "100.128.0.1", "2606:2800:220:1::1"];
+        for a in permitted {
+            let ip: IpAddr = a.parse().unwrap();
+            assert!(is_permitted_upstream(ip), "{a} is an ordinary destination and must dial");
+        }
+    }
+
+    #[tokio::test]
+    async fn will_not_dial_a_loopback_address_even_when_something_is_listening_on_it() {
+        // The wiring, not just the predicate. `fake_upstream` binds 127.0.0.1 and is genuinely
+        // accepting connections, so a connector without the check would succeed here — which is
+        // precisely the rebinding outcome: the admitted name resolved to the user's own machine.
+        // No DNS is involved, so the suite still never resolves or dials anything off-machine.
+        let listening = fake_upstream(b"pong").await;
+        let err = connect_to_permitted([listening]).await.expect_err("dialled loopback");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn a_mixed_answer_is_refused_outright_rather_than_using_the_acceptable_half() {
+        // Asserted against the pure check rather than by dialling: a name that resolves to both a
+        // public address and 127.0.0.1 must be refused whole, and proving that by calling
+        // `connect_to_permitted` would mean the suite either dials the public address or relies
+        // on the resolver's ordering to avoid it. Neither is acceptable under Global Constraints.
+        let public: SocketAddr = "93.184.216.34:443".parse().unwrap();
+        let loopback: SocketAddr = "127.0.0.1:443".parse().unwrap();
+        let metadata: SocketAddr = "169.254.169.254:80".parse().unwrap();
+
+        assert!(!any_address_refused(&[public]));
+        assert!(any_address_refused(&[public, loopback]), "the acceptable half must not save it");
+        assert!(any_address_refused(&[loopback, public]), "and the order must not matter");
+        assert!(any_address_refused(&[public, metadata]));
+        assert!(any_address_refused(&[]), "an empty resolution is a refusal, not a success");
     }
 
     #[tokio::test]
