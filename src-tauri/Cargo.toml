@@ -32,12 +32,40 @@ tauri-build = { version = "2", features = [] }
 #   tokio                 Async runtime for the proxy listener. Tauri depends on
 #                         it regardless — verified with `cargo tree -i tokio`,
 #                         which shows tauri v2.11.5. Feature set kept narrow.
+#   chromiumoxide         The CDP client. Pinned to 0.7.0 by Task 0's preflight
+#                         (`version = "0.7"` has exactly one match on crates.io;
+#                         0.8/0.9 exist and were not taken because the plan
+#                         names 0.7). Declared here but not yet referenced by
+#                         any code, so LTO strips it and today's cost is +160
+#                         bytes of binary against the 2026-07-31 baseline.
+#                         That figure is an artefact of the strip, not a budget.
+#                         Measured with the crate actually reachable from
+#                         `run()`: +1,380,736 bytes of binary / +718,410 of
+#                         .dmg, rising to +1,581,216 / +836,366 once
+#                         `Browser::connect` is on a live path. Method and
+#                         caveats: docs/decisions/2026-08-01-v0.1-preflight.md.
 #
 # Deliberately NOT taken:
 #   hyper / reqwest / h2  The proxy handles CONNECT only: parse a request line,
 #                         answer 200 or 403, then splice bytes. An HTTP stack
 #                         would add a large attack surface to the one component
 #                         that must be small enough to audit by reading it.
+#                         NOTE, added by Task 0: this is no longer true of the
+#                         whole tree. chromiumoxide 0.7.0 depends on reqwest
+#                         unconditionally (`default-features = false`, so no TLS
+#                         and no h2), which pulls hyper, hyper-util, tower and
+#                         tower-http. It is used in exactly one place —
+#                         `Browser::connect_with_config` fetching /json/version
+#                         — which is the call this project already avoids by
+#                         reading DevToolsActivePort. Reachable only through
+#                         `Browser::connect`; the ~200 KB above is what that
+#                         reachability costs. Phase 2 decides whether to pay it.
+#   chromiumoxide's own   `Target.attachedToTarget` → immediate
+#   attach handling       `Runtime.runIfWaitingForDebugger`, hardcoded in the
+#                         crate's `pub(crate)` handler, with no hook to arm
+#                         Fetch first. This is the F2 race the CDP spike proved
+#                         must not happen, so the interception loop cannot be
+#                         delegated to `Browser`. See the preflight doc §1.
 #   uuid                  Temp-file uniqueness comes from pid + a process-local
 #                         counter + nanos since epoch. Same guarantee, no crate.
 #   tokio-tungstenite     CDP is Phase 2. Not added until it is needed.
@@ -51,6 +79,7 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
 
 [dev-dependencies]
 # Dev only. Never shipped.
