@@ -3,21 +3,12 @@ import { createEmptyProject } from '../core/project'
 import { computeGaps } from '../core/gaps'
 import { computeLayout } from '../core/layout'
 import { initHistory, undo, redo, canUndo, canRedo } from '../core/history'
-import type { Project } from '../core/types'
 import { MapView } from './components/MapView'
 import { RegisterPanel } from './components/RegisterPanel'
+import { openProject as openViaShell, saveProject as saveViaShell } from './bridge'
 import { saveNotice } from './saveNotice'
 import { STRINGS } from './strings'
 import { STYLESHEET } from './theme'
-
-declare global {
-  interface Window {
-    traccia: {
-      openProject(): Promise<Project | null>
-      saveProject(p: Project): Promise<boolean>
-    }
-  }
-}
 
 export function App() {
   const [history, setHistory] = useState(() =>
@@ -32,22 +23,20 @@ export function App() {
 
   async function openProject(): Promise<void> {
     try {
-      const p = await window.traccia.openProject()
+      const p = await openViaShell()
       setNotice(null)
       if (p) setHistory(initHistory(p))
     } catch {
-      // The main process deliberately throws a short, neutral message carrying no filesystem
-      // path and nothing out of the map, so that nothing sensitive reaches the system log. The
-      // same wording is repeated here rather than read off the rejection, because Electron
-      // wraps an IPC rejection in its own "Error invoking remote method ..." text on the way
-      // across.
+      // Rust deliberately throws a short, neutral sentence carrying no filesystem path and
+      // nothing out of the map, so that nothing sensitive reaches the system log. The same
+      // wording is repeated here rather than read off the rejection.
       setNotice(STRINGS.openFailed)
     }
   }
 
   async function saveProject(): Promise<void> {
     try {
-      await window.traccia.saveProject(project)
+      await saveViaShell(project)
       setNotice(null)
     } catch (e) {
       // Two sentences can come back: the file is held open by another program, which the user can
