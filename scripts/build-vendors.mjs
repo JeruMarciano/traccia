@@ -14,7 +14,7 @@
 // systems", the existing default.
 //
 //   analytics        -> Marketing
-//   advertising       -> Marketing
+//   ads               -> Marketing
 //   social            -> Marketing
 //   tag-manager       -> Marketing
 //   a-b-testing       -> Marketing
@@ -49,7 +49,7 @@ const outPath = path.join(here, '..', 'src', 'data', 'vendors.json')
 
 const CATEGORY_TO_PURPOSE_GROUP = {
   analytics: 'Marketing',
-  advertising: 'Marketing',
+  ads: 'Marketing',
   social: 'Marketing',
   'tag-manager': 'Marketing',
   'a-b-testing': 'Marketing',
