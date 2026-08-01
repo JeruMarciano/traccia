@@ -4,6 +4,10 @@
 //! `#[tauri::command]`s this app will ever register are `open_project` and `save_project`,
 //! which arrive with `commands.rs`.
 
+// `pub` because Task 3's stated interface — `Decision`, `DenyReason`, `decide` — is only an
+// interface if it is reachable from the crate root. `proxy` is the only caller in this crate.
+pub mod admission;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
