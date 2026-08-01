@@ -11,5 +11,6 @@
     "skipLibCheck": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests"],
+  "exclude": ["dist", "out", "src-tauri", "node_modules"]
 }
