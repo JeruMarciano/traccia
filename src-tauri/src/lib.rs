@@ -7,6 +7,9 @@
 // `pub` because Task 3's stated interface — `Decision`, `DenyReason`, `decide` — is only an
 // interface if it is reachable from the crate root. `proxy` is the only caller in this crate.
 pub mod admission;
+// `pub` for the same reason `admission` is: Task 5's stated interface is only an interface if it
+// is reachable from the crate root. `commands` is the only caller in this crate.
+pub mod project_file;
 pub mod proxy;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
