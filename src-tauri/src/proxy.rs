@@ -181,11 +181,17 @@ async fn handle(
             ledger.note_denied(host, port, reason);
             let _ = client.write_all(REFUSED).await;
         }
-        Decision::Allow { origin } => {
+        Decision::Allow { host: approved, origin: _ } => {
             // Recorded at the moment of admission, not at the moment of success. An upstream that
             // then refuses the connection must not vanish from the record.
-            ledger.note_allowed(origin, port);
-            match connect(host, port).await {
+            //
+            // Both the record and the connect use `approved` — the host the guard normalised and
+            // vetted — never the raw authority off the request line and never the scan origin it
+            // matched. Recording the origin would collapse every subdomain of a scan target into
+            // the apex, losing the vendors the map exists to show; connecting to the raw string
+            // would hand the resolver a name the guard never saw.
+            ledger.note_allowed(approved.clone(), port);
+            match connect(approved, port).await {
                 Err(_) => {
                     let _ = client.write_all(UPSTREAM_FAILED).await;
                 }
@@ -404,6 +410,85 @@ mod tests {
             vec![("rossi-editore.it".to_string(), 443)],
             "the positive control was not recorded — the allow path is a dead sensor and the \
              three denials above mean nothing"
+        );
+        assert_sensor_alive(&p.ledger);
+    }
+
+    /// Records every host the connector was handed, so a test can assert on the exact string
+    /// that would have reached the OS resolver.
+    fn recording_connector(addr: SocketAddr) -> (Connector, Arc<Mutex<Vec<String>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let c: Connector = Arc::new(move |host: String, _port: u16| {
+            if let Ok(mut v) = sink.lock() {
+                v.push(host);
+            }
+            Box::pin(async move { TcpStream::connect(addr).await })
+                as BoxFuture<'static, std::io::Result<TcpStream>>
+        });
+        (c, seen)
+    }
+
+    #[tokio::test]
+    async fn the_ledger_records_each_subdomain_contacted_not_the_scan_origin() {
+        // Audit finding F1. Before the fix all three of these were recorded as
+        // `rossi-editore.it`, so a third-party vendor served from `analytics.` — the exact thing
+        // the map exists to surface — was indistinguishable from the site's own apex.
+        let upstream = fake_upstream(b"pong").await;
+        let p = start(origins(&["rossi-editore.it"]), connector_to(upstream)).await.unwrap();
+
+        for host in ["www.rossi-editore.it", "analytics.rossi-editore.it", "rossi-editore.it"] {
+            let mut s = TcpStream::connect(p.addr).await.unwrap();
+            s.write_all(format!("CONNECT {host}:443 HTTP/1.1\r\n\r\n").as_bytes()).await.unwrap();
+            let mut head = [0u8; 39];
+            s.read_exact(&mut head).await.unwrap();
+            drop(s);
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut recorded: Vec<String> = p.ledger.allowed().into_iter().map(|(h, _)| h).collect();
+        recorded.sort();
+        assert_eq!(
+            recorded,
+            vec![
+                "analytics.rossi-editore.it".to_string(),
+                "rossi-editore.it".to_string(),
+                "www.rossi-editore.it".to_string(),
+            ]
+        );
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn the_connector_is_handed_the_host_the_guard_vetted_not_the_raw_authority() {
+        // Audit finding F3. `str::trim` strips the whole Unicode `White_Space` set, so the raw
+        // authority `decide` was asked about and the string it approved are not the same bytes.
+        // Only the approved one may reach a resolver.
+        let upstream = fake_upstream(b"pong").await;
+        let (connector, seen) = recording_connector(upstream);
+        let p = start(origins(&["rossi-editore.it"]), connector).await.unwrap();
+
+        for authority in ["WWW.RoSSi-EDITORE.IT", "rossi-editore.it.", "\u{a0}rossi-editore.it"] {
+            let mut s = TcpStream::connect(p.addr).await.unwrap();
+            s.write_all(format!("CONNECT {authority}:443 HTTP/1.1\r\n\r\n").as_bytes())
+                .await
+                .unwrap();
+            let mut head = [0u8; 39];
+            let _ = s.read_exact(&mut head).await;
+            drop(s);
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut got = seen.lock().unwrap().clone();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "rossi-editore.it".to_string(),
+                "rossi-editore.it".to_string(),
+                "www.rossi-editore.it".to_string(),
+            ],
+            "the connector was given a string the guard never vetted"
         );
         assert_sensor_alive(&p.ledger);
     }
