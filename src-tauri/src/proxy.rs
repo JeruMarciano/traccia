@@ -33,6 +33,9 @@ pub type Connector =
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 /// A client that opens a connection and then says nothing must not hold a task open.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long the accept loop waits after a failed `accept` before trying again. Long enough that
+/// a persistently failing listener cannot saturate a core, short enough to be invisible.
+const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(50);
 
 /// RFC 1035's cap on a domain name. `admission::vet_host` refuses anything longer, so a recorded
 /// authority above this length is by definition one the guard rejected, and there is no reason to
@@ -112,7 +115,10 @@ impl Ledger {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
-    pub fn note_accepted(&self) {
+    /// Private, and paired with the outcome counters below. A caller able to move `accepted`
+    /// without recording an outcome could pin `healthy()` false — or, worse, be used to pad it
+    /// true — from outside the one loop that is supposed to own the pairing.
+    fn note_accepted(&self) {
         self.accepted.fetch_add(1, Ordering::SeqCst);
     }
     fn note_completed(&self) {
@@ -300,8 +306,11 @@ pub async fn start(
             let Ok((stream, _peer)) = listener.accept().await else {
                 // A per-connection accept error (a client that vanished between the SYN and the
                 // accept, a momentary descriptor exhaustion) is not a reason to stop guarding.
-                // Yield first so a persistently failing listener cannot spin a core.
-                tokio::task::yield_now().await;
+                // This was `yield_now`, which only reschedules: under the sustained descriptor
+                // exhaustion the comment names, the loop reran immediately and spun a core at
+                // 100%. A short sleep both yields and throttles, and costs nothing in the normal
+                // case because the normal case never reaches this arm.
+                tokio::time::sleep(ACCEPT_ERROR_BACKOFF).await;
                 continue;
             };
             accept_ledger.note_accepted();
@@ -440,6 +449,13 @@ fn parse_connect_authority(head: &str) -> Option<(String, u16)> {
     // host and is rejected by `admission::decide`'s character allowlist rather than being
     // silently re-split into something that looks admissible.
     let (host, port) = authority.rsplit_once(':')?;
+    // `u16::from_str` accepts a leading `+`, so `host:+443` would parse to 443. Nothing downstream
+    // is harmed by that — the port used is the port validated — but an authority the guard would
+    // not have written is an authority it should not accept, and the digits-only rule costs
+    // nothing.
+    if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
     let port: u16 = port.parse().ok()?;
     Some((host.to_string(), port))
 }
@@ -775,6 +791,24 @@ mod tests {
         assert!(!ledger.healthy());
         assert_eq!(ledger.accepted(), 1);
         assert_eq!(ledger.completed(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_authority_whose_port_is_not_plain_digits_is_refused() {
+        // Advisory from the audit: u16::from_str accepts a leading '+', so `host:+443` parsed to
+        // 443. The port used matched the port validated, so nothing escaped — but an authority
+        // the guard would never write is one it should not read either.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        for authority in ["rossi-editore.it:+443", "rossi-editore.it: 443", "rossi-editore.it:"] {
+            let reply = send(p.addr, &format!("CONNECT {authority} HTTP/1.1\r\n\r\n")).await;
+            assert!(reply.starts_with("HTTP/1.1 403"), "{authority} got {reply:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_eq!(p.ledger.refused(), 3);
+        assert_sensor_alive(&p.ledger);
     }
 
     // ---- audit finding F9 --------------------------------------------------
