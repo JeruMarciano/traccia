@@ -333,7 +333,7 @@ async fn handle(
     connect: Connector,
     ledger: Arc<Ledger>,
 ) {
-    let Some(head) = read_head(&mut client).await else {
+    let Some((head, early)) = read_head(&mut client).await else {
         // A timeout, an oversized preamble, bytes that were not UTF-8, or a client that closed
         // without speaking. Nothing was contacted, so there is no host to record — but the
         // connection is still counted, or `accepted` reconciles against nothing.
@@ -374,7 +374,12 @@ async fn handle(
                     let _ = client.write_all(UPSTREAM_FAILED).await;
                 }
                 Ok(mut upstream) => {
-                    if client.write_all(ESTABLISHED).await.is_ok() {
+                    // Anything the client pipelined behind the CONNECT belongs to the tunnel and
+                    // is replayed before the copy starts, in order, ahead of anything else it
+                    // goes on to send.
+                    if client.write_all(ESTABLISHED).await.is_ok()
+                        && upstream.write_all(&early).await.is_ok()
+                    {
                         let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
                     }
                 }
@@ -386,11 +391,22 @@ async fn handle(
 /// Read the request line and headers, bounded in both bytes and time. Returns None on a timeout,
 /// on an oversized header block, on a closed connection, or on bytes that are not UTF-8 — every
 /// one of which is a refusal, never a longer read.
-async fn read_head(client: &mut TcpStream) -> Option<String> {
+/// Returns the preamble and any bytes that arrived behind it in the same read.
+///
+/// A client may pipeline: `CONNECT host:443\r\n\r\n` immediately followed by a TLS ClientHello,
+/// in one segment. Those trailing bytes used to be read into the buffer and then dropped on the
+/// floor when only the parsed string was returned, so the handshake stalled until something timed
+/// out — a hang rather than a diagnosable error. They are handed back here and replayed upstream
+/// once the tunnel is up.
+///
+/// Splitting at the terminator also means only the preamble has to be UTF-8. Early data is
+/// binary by nature, and running `from_utf8` over it would have refused exactly the clients that
+/// pipelined correctly.
+async fn read_head(client: &mut TcpStream) -> Option<(String, Vec<u8>)> {
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     let deadline = tokio::time::Instant::now() + HEADER_READ_TIMEOUT;
-    loop {
+    let end = loop {
         let n = tokio::time::timeout_at(deadline, client.read(&mut chunk)).await.ok()?.ok()?;
         if n == 0 {
             return None;
@@ -399,11 +415,13 @@ async fn read_head(client: &mut TcpStream) -> Option<String> {
         if buf.len() > MAX_HEADER_BYTES {
             return None;
         }
-        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-            break;
+        if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break at + 4;
         }
-    }
-    String::from_utf8(buf).ok()
+    };
+    let head = String::from_utf8(buf.get(..end)?.to_vec()).ok()?;
+    let early = buf.get(end..)?.to_vec();
+    Some((head, early))
 }
 
 /// Only `CONNECT host:port HTTP/x.y` produces an authority. Everything else — origin-form,
@@ -757,6 +775,60 @@ mod tests {
         assert!(!ledger.healthy());
         assert_eq!(ledger.accepted(), 1);
         assert_eq!(ledger.completed(), 0);
+    }
+
+    // ---- audit finding F9 --------------------------------------------------
+
+    /// An upstream that keeps everything it is sent, so a test can assert on order as well as
+    /// content. `fake_upstream` reads once and replies, which cannot show a lost first write.
+    async fn recording_upstream() -> (SocketAddr, Arc<Mutex<Vec<u8>>>) {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = l.accept().await {
+                let sink = Arc::clone(&sink);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    while let Ok(n) = s.read(&mut buf).await {
+                        if n == 0 {
+                            break;
+                        }
+                        if let Ok(mut v) = sink.lock() {
+                            v.extend_from_slice(&buf[..n]);
+                        }
+                    }
+                });
+            }
+        });
+        (addr, seen)
+    }
+
+    #[tokio::test]
+    async fn data_pipelined_behind_the_connect_reaches_the_upstream_in_order() {
+        // F9. A client may send the CONNECT and its first payload — a TLS ClientHello — in one
+        // segment. read_head consumed those bytes into its buffer and returned only the parsed
+        // string, so they were dropped: the handshake then stalled until something timed out,
+        // which reads as a hang rather than as a diagnosable error.
+        let (upstream, seen) = recording_upstream().await;
+        let p = start(origins(&["rossi-editore.it"]), connector_to(upstream)).await.unwrap();
+
+        let mut s = TcpStream::connect(p.addr).await.unwrap();
+        s.write_all(b"CONNECT rossi-editore.it:443 HTTP/1.1\r\n\r\nEARLY").await.unwrap();
+        let mut head = [0u8; 39];
+        s.read_exact(&mut head).await.unwrap();
+        s.write_all(b"LATE").await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let got = seen.lock().unwrap().clone();
+        assert_eq!(
+            String::from_utf8_lossy(&got),
+            "EARLYLATE",
+            "the pipelined bytes were dropped or reordered"
+        );
+        assert_sensor_alive(&p.ledger);
+        drop(s);
     }
 
     // ---- audit finding F4 --------------------------------------------------
