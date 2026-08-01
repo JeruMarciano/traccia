@@ -30,3 +30,24 @@ describe('saveNotice', () => {
     expect(shown).not.toContain('/Users')
   })
 })
+
+// Tauri rejects an invoke with a plain string, not an Error — unlike Electron, which wrapped the
+// main process's message in its own "Error invoking remote method ..." text. saveNotice must map
+// both shapes back onto one of the renderer's own two constants. The text that arrived is matched
+// against, never displayed.
+describe('saveNotice — Tauri string rejections', () => {
+  it('reports the actionable message when the rejection is the bare string', () => {
+    expect(saveNotice(STRINGS.saveBlocked)).toBe(STRINGS.saveBlocked)
+  })
+
+  it('reports the generic message for the other string rejection', () => {
+    expect(saveNotice(STRINGS.saveFailed)).toBe(STRINGS.saveFailed)
+  })
+
+  it('still shows one of its own two constants, never the string it was handed', () => {
+    const shown = saveNotice("EACCES: permission denied, open '/Users/x/secret.json'")
+    expect(shown).toBe(STRINGS.saveFailed)
+    expect(shown).not.toContain('secret.json')
+    expect(shown).not.toContain('/Users')
+  })
+})
