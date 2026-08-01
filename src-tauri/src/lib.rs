@@ -7,6 +7,7 @@
 // `pub` because Task 3's stated interface — `Decision`, `DenyReason`, `decide` — is only an
 // interface if it is reachable from the crate root. `proxy` is the only caller in this crate.
 pub mod admission;
+pub mod proxy;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
