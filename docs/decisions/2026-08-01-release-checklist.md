@@ -1,8 +1,22 @@
 # Release checklist — what is distribution-gated, and why it is not blocking code
 
 **Date:** 2026-08-01
-**Status:** open. Every item below needs an answer before a public release, and none of them
-needs one before the next feature lands.
+**Status:** decided 2026-08-02, by the author, except signing. Item by item:
+
+1. **LICENSE — decided.** MIT, `LICENSE` at the repository root.
+2. **README — done.** Includes the privacy promise, the scan's stated limits, and the
+   Gatekeeper/SmartScreen consequence stated honestly with the right-click → Open workaround.
+3. **macOS signing — deferred.** No Apple Developer account yet; the README states the
+   consequence honestly. Revisit before putting the app in front of non-technical users.
+4. **Windows signing — deferred**, same terms as item 3.
+5. **MPL-2.0 — decided: constraint kept, scoped explicitly.** The rule's intent — never take
+   on a copyleft obligation by choice — stands; the five transitively-inherited, unmodified
+   MPL-2.0 crates are an accepted, named exception, recorded with their upstream sources in
+   `THIRD-PARTY-LICENSES.md`. The licence sweep re-run 2026-08-02 (`cargo tree`, full npm
+   walk) found no other copyleft string in either tree; `lightningcss` (MPL-2.0) is
+   build-time only and is not conveyed.
+
+The reasoning below is kept as written, for the record.
 
 ---
 
