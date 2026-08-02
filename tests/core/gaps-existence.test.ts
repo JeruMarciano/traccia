@@ -54,4 +54,48 @@ describe('existenceGaps', () => {
     )
     expect(g?.why).not.toMatch(/violation|breach|non-compliant|risk/i)
   })
+
+  it('asserts no internal-function expectations against a scan-only project', () => {
+    // A website scan produces observed places and a visitors subject group and
+    // nothing else. It is not evidence about payroll, accounting or backups,
+    // and a first-checkup map must not ask about them as if it were.
+    // The assertion is exact rather than five `not.toContain` checks: an
+    // empty register would satisfy those trivially, which is not the claim
+    // being tested. `exist:hosting` is expected to fire — a scanned site is
+    // genuine evidence of website hosting.
+    const scanOnly = {
+      ...emptyProject(),
+      subjectGroups: [{ id: 'sg-1', name: 'Website visitors' }],
+      places: [
+        { ...place({ name: 'rossi-editore.it', kind: 'collection', confidence: 'observed', holder: 'you' }), id: 'pl-1' },
+        { ...place({ name: 'Google Analytics', confidence: 'observed' }), id: 'pl-2' },
+      ],
+    }
+    expect(existenceGaps(scanOnly).map((g) => g.id)).toEqual(['exist:hosting'])
+  })
+
+  it('asserts them again once a document has declared something', () => {
+    const withDocument = {
+      ...emptyProject(),
+      subjectGroups: [{ id: 'sg-1', name: 'Website visitors' }],
+      places: [
+        { ...place({ name: 'rossi-editore.it', confidence: 'observed', holder: 'you' }), id: 'pl-1' },
+        { ...place({ name: 'Acme Srl', confidence: 'declared' }), id: 'pl-2' },
+      ],
+    }
+    expect(existenceGaps(withDocument).map((g) => g.id)).toContain('exist:accounting')
+  })
+
+  it('still expects website analytics once a site has been observed', () => {
+    // The scanned site is a collection point the organisation holds. That is a
+    // website whatever it is named, so the site-triggered expectations apply.
+    const scanOnly = {
+      ...emptyProject(),
+      subjectGroups: [{ id: 'sg-1', name: 'Website visitors' }],
+      places: [
+        { ...place({ name: 'rossi-editore.it', kind: 'collection', holder: 'you', confidence: 'observed' }), id: 'pl-1' },
+      ],
+    }
+    expect(existenceGaps(scanOnly).map((g) => g.id)).toContain('exist:analytics')
+  })
 })

@@ -1,0 +1,4 @@
+# The dev watcher restarts the app when anything under src-tauri changes. gen/ is written by
+# the build itself (schema/ACL bookkeeping), so watching it makes the app close and reopen
+# once or twice right after `npm run dev` launches it. Not part of the shipped app.
+/gen

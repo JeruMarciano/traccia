@@ -1,14 +1,22 @@
 import { useMemo, useState } from 'react'
 import { createEmptyProject } from '../core/project'
-import { computeGaps } from '../core/gaps'
 import { computeLayout } from '../core/layout'
-import { initHistory, undo, redo, canUndo, canRedo } from '../core/history'
+import { initHistory, push, undo, redo, canUndo, canRedo } from '../core/history'
+import { ingestScan } from '../core/scan'
+import type { VendorDictionary } from '../core/types'
+import vendorsJson from '../data/vendors.json'
+import { DetailPanel } from './components/DetailPanel'
 import { MapView } from './components/MapView'
-import { RegisterPanel } from './components/RegisterPanel'
-import { openProject as openViaShell, saveProject as saveViaShell } from './bridge'
+import { ScanBar } from './components/ScanBar'
+import { openProject as openViaShell, saveProject as saveViaShell, startScan, cancelScan, scanNotice } from './bridge'
 import { saveNotice } from './saveNotice'
+import { scanResultNotice } from './scanResultNotice'
+import type { LastScan } from './printGapsNotice'
+import { printGapsNotice } from './printGapsNotice'
 import { STRINGS } from './strings'
 import { STYLESHEET } from './theme'
+
+const VENDORS = vendorsJson as VendorDictionary
 
 export function App() {
   const [history, setHistory] = useState(() =>
@@ -17,15 +25,22 @@ export function App() {
   const project = history.present
   const [selected, setSelected] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [scanning, setScanning] = useState(false)
+  // What the printed sheet says about possible gaps, if anything. Not part of the project: a
+  // scan's completeness belongs to the session that ran it, not to the file, so opening a
+  // different project clears it rather than carrying a stale claim onto someone else's map.
+  const [lastScan, setLastScan] = useState<LastScan | null>(null)
 
   const layout = useMemo(() => computeLayout(project, { width: 800, height: 500 }), [project])
-  const gaps = useMemo(() => computeGaps(project), [project])
 
   async function openProject(): Promise<void> {
     try {
       const p = await openViaShell()
       setNotice(null)
-      if (p) setHistory(initHistory(p))
+      if (p) {
+        setHistory(initHistory(p))
+        setLastScan(null)
+      }
     } catch {
       // Rust deliberately throws a short, neutral sentence carrying no filesystem path and
       // nothing out of the map, so that nothing sensitive reaches the system log. The same
@@ -46,9 +61,33 @@ export function App() {
     }
   }
 
+  async function runScan(url: string): Promise<void> {
+    setScanning(true)
+    try {
+      const result = await startScan(url)
+      setHistory((h) => push(h, ingestScan(h.present, result, VENDORS, { prefix: `scan${h.past.length + 1}` })))
+      setNotice(scanResultNotice(result))
+      setLastScan({ possibleGaps: result.possibleGaps, stoppedEarly: result.stoppedEarly })
+    } catch (e) {
+      setNotice(scanNotice(e))
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  async function stopScan(): Promise<void> {
+    try {
+      await cancelScan()
+    } catch {
+      // The scan's own completion path already reports whatever happened; a rejection here
+      // has nothing further for the user to act on.
+    }
+  }
+
   // The title block dates the sheet, which matters once it is printed and left with a client.
   // A project file is only checked for a string, so the date is shown only when it reads as one.
   const started = /^\d{4}-\d{2}-\d{2}/.test(project.createdAt) ? project.createdAt.slice(0, 10) : null
+  const printGaps = printGapsNotice(lastScan)
 
   return (
     <>
@@ -68,8 +107,10 @@ export function App() {
               <button className="action" disabled={!canRedo(history)} onClick={() => setHistory(redo)}>
                 {STRINGS.redo}
               </button>
+              <button className="action" onClick={() => window.print()}>{STRINGS.print}</button>
             </div>
           </header>
+          <ScanBar scanning={scanning} onScan={(url) => void runScan(url)} onCancel={() => void stopScan()} />
           {notice === null ? null : (
             <p className="notice" role="status">
               {notice}
@@ -77,8 +118,14 @@ export function App() {
             </p>
           )}
           <MapView layout={layout} selected={selected} onSelect={setSelected} />
+          <div className="print-only">
+            <p className="print-limits">{STRINGS.printLimits}</p>
+            {printGaps === null ? null : <p className="print-gaps">{printGaps}</p>}
+          </div>
         </main>
-        <RegisterPanel gaps={gaps} onHover={setSelected} />
+        {selected === null ? null : (
+          <DetailPanel project={project} selected={selected} dictionary={VENDORS} />
+        )}
       </div>
     </>
   )

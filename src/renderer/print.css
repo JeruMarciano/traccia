@@ -1,0 +1,34 @@
+/*
+ * The printed sheet. On screen the app is a working tool: a scan control, a title-block full of
+ * actions, a session notice, and a bar showing whatever point is clicked. On paper it is a
+ * document a consultant leaves with a client, so only the title block and the map survive the
+ * change of medium -- the detail bar is a working view, not part of what gets handed over.
+ *
+ * `.print-only` carries `printLimits` and, when there is one, the possible-gaps sentence. Both
+ * are ordinary text in the DOM at all times -- theme.ts keeps them off the screen -- so what
+ * prints can never say something the app is not also showing, or fail to say something it is.
+ *
+ * Nothing here needs a rule for colour: every distinction the map makes is already carried by
+ * shape, weight or label (see theme.ts), so switching to a monochrome printer loses nothing but
+ * the one accent hue.
+ */
+@media print {
+  :root { --sheet: #FFFFFF; }
+
+  .sheet { display: block; height: auto; }
+  .plate { padding: 0; }
+
+  /* The scan control, the title-block actions, any session notice and the detail bar are all
+     for this screen -- none of them leaves the room on paper. */
+  .scanbar, .actions, .notice, .detail { display: none; }
+
+  .map-svg { height: auto; }
+  .dim { opacity: 1; }
+
+  /* The map is one drawing, purpose groups and all, not a page each. */
+  .map { break-inside: avoid; }
+
+  .print-only { display: block; }
+  .print-limits { margin: 11px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--ink-soft); }
+  .print-gaps { margin: 5px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--ink); }
+}
