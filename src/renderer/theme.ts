@@ -126,6 +126,7 @@ export const STYLESHEET = `
 
 .link{stroke:var(--ink);stroke-width:1;fill:none;}
 .crossing{stroke:var(--ink);stroke-width:1.25;fill:none;}
+.subject{cursor:pointer;}
 .disc{fill:var(--person);}
 .disc-label{
   fill:var(--sheet);
@@ -169,13 +170,14 @@ export const STYLESHEET = `
 }
 .key-gloss{display:block;margin:2px 0 0;font-size:11px;line-height:1.35;color:var(--ink-soft);}
 
-/* The register */
+/* The register: the open questions, a section under the map rather than a panel of its own --
+   the right-hand panel now shows the content of whatever is selected (see .detail below). */
 .register{
-  width:322px;
+  width:auto;
   flex:none;
-  border-left:1px solid var(--rule);
-  padding:16px 22px 18px;
-  overflow-y:auto;
+  border-top:1px solid var(--rule);
+  margin-top:14px;
+  padding:16px 0 0;
 }
 .register-head{
   display:flex;
@@ -216,9 +218,74 @@ export const STYLESHEET = `
 .entry-q{margin:0;font-size:13px;line-height:1.4;}
 .entry-why{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
 
+/* The detail panel: what the selected point holds. Same right-hand position the register used
+   to occupy, so the sheet still reads as two regions -- the drawing on the left, one thing about
+   it on the right. */
+.detail{
+  width:322px;
+  flex:none;
+  border-left:1px solid var(--rule);
+  padding:16px 22px 18px;
+  overflow-y:auto;
+}
+.detail-head{
+  margin:0;
+  font-family:var(--mono);
+  font-size:10px;
+  font-weight:400;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+}
+.detail-empty{margin:9px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
+.detail-subjects{list-style:none;margin:14px 0 0;padding:0;}
+.detail-subject-name{margin:0;font-size:13px;}
+.detail-subject-notes{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
+.detail-place{padding:14px 0;border-bottom:1px dashed var(--rule);}
+.detail-place:first-of-type{padding-top:14px;}
+.detail-place-name{margin:0;font-size:14px;font-weight:400;}
+.detail-purpose{
+  margin:2px 0 0;
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:.11em;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+}
+.detail-facts{
+  margin:10px 0 0;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px 10px;
+}
+.detail-facts>div{min-width:0;}
+.detail-facts dt{
+  margin:0;
+  font-family:var(--mono);
+  font-size:8.5px;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+}
+.detail-facts dd{margin:2px 0 0;font-size:12px;line-height:1.35;}
+.detail-sub{
+  margin:14px 0 0;
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:.11em;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+  border-top:1px solid var(--rule);
+  padding-top:9px;
+}
+.detail-flows,.detail-observations{list-style:none;margin:8px 0 0;padding:0;}
+.detail-flows li{margin:0 0 8px;}
+.detail-flow-data{margin:0;font-size:12.5px;line-height:1.4;}
+.detail-flow-purpose{margin:2px 0 0;font-size:11px;color:var(--ink-soft);}
+.detail-observations li{margin:0 0 4px;font-family:var(--mono);font-size:10.5px;}
+
 @media (max-width:900px){
   .sheet{display:block;height:auto;}
-  .register{width:auto;border-left:0;border-top:1px solid var(--rule);padding:16px 22px 22px;}
+  .detail{width:auto;border-left:0;border-top:1px solid var(--rule);padding:16px 22px 22px;}
   .map-svg{height:auto;}
 }
 @media (max-width:620px){

@@ -103,7 +103,17 @@ export function MapView({ layout, selected, onSelect }: Props) {
           if (n.kind === 'subject') {
             const count = n.count ?? 0
             return (
-              <g key={n.id} className={`subject${dim(n.id)}`}>
+              <g key={n.id} className={`subject${dim(n.id)}`} role="button" tabIndex={0}
+                 onClick={(ev) => {
+                   ev.stopPropagation()
+                   onSelect(n.id)
+                 }}
+                 onKeyDown={(ev) => {
+                   if (ev.key !== 'Enter' && ev.key !== ' ') return
+                   ev.preventDefault()
+                   ev.stopPropagation()
+                   onSelect(n.id)
+                 }}>
                 <circle className="disc" cx={n.x} cy={n.y} r={DISC_R} />
                 <text className="disc-label" x={n.x} y={count > 0 ? n.y - 1 : n.y + 4}
                       textAnchor="middle">
