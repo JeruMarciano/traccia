@@ -8,6 +8,10 @@
 name: build
 
 on:
+  # A push to a feature branch not named here (e.g. this one, v0.1-external-map) does not
+  # trigger this workflow directly — it relies on the paired `pull_request` trigger below,
+  # which runs on every PR regardless of source branch name. Direct-push coverage is
+  # intentionally narrow; PR coverage is what every branch actually gets.
   push:
     branches: [main, tauri-port]
   pull_request:
@@ -49,7 +53,21 @@ jobs:
           workspaces: src-tauri
       - name: cargo test
         working-directory: src-tauri
-        run: cargo test --locked
+        # `--test-threads=1`: `tests/egress.rs` launches a real, ephemeral Chrome/Edge per test,
+        # several of them concurrently under the default scheduler contends for the launcher's
+        # DevToolsActivePort wait and was observed to fail one test in five spuriously with
+        # SCAN_FAILED under -j (the runtime worker pool sharing CPU with a launch that blocks for
+        # up to ten seconds). Serial execution was reliable across repeated local runs; the whole
+        # Rust suite still finishes in well under a minute.
+        #
+        # No browser is installed by this workflow: macos-latest and windows-latest ship Google
+        # Chrome and Microsoft Edge pre-installed (github/actions/runner-images). If that ever
+        # stops being true, `browser::discover` returns `SCAN_NO_BROWSER`, every scan-dependent
+        # test in `tests/egress.rs` panics on `.expect("scan should complete")` rather than being
+        # skipped, and this step fails outright — a hard failure, not a silent absence, which is
+        # the property this line exists to keep. (`ubuntu-latest` is not in this matrix at all;
+        # ubuntu-latest is not built here, per the header comment above.)
+        run: cargo test --locked -- --test-threads=1
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --locked --all-targets -- -D warnings
