@@ -62,7 +62,7 @@ export const STRINGS = {
   suggestionFoundIn: (names: string): string => `Found in ${names}`,
   suggestionInternal: 'Internal',
   suggestionExternal: 'Supplier',
-  declaredIn: (names: string): string => `Declared in ${names}`,
+  detailDeclaredHeading: 'Declared in documents',
 
   detailHeading: 'What is here',
   detailPeopleHeading: 'People',

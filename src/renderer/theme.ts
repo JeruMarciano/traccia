@@ -224,7 +224,10 @@ export const STYLESHEET = `
   text-transform:uppercase;
 }
 .detail-none{margin:8px 0 0;font-size:11.5px;color:var(--ink-soft);}
-.detail-declared{margin:8px 0 0;font-size:11px;color:var(--ink-soft);font-style:italic;}
+.detail-declared-list{list-style:none;margin:8px 0 0;padding:0;}
+.detail-declared-list li{margin:0 0 7px;}
+.detail-declared-doc{margin:0;font-family:var(--mono);font-size:9.5px;color:var(--ink);}
+.detail-declared-quote{margin:2px 0 0;font-size:11px;line-height:1.4;color:var(--ink-soft);}
 .detail-subjects{list-style:none;margin:14px 0 0;padding:0;}
 .detail-subject-name{margin:0;font-size:13px;}
 .detail-subject-notes{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}

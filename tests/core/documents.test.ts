@@ -89,7 +89,11 @@ describe('ingestDocument', () => {
     expect(added?.name).toBe('Payroll system')
     expect(added?.kind).toBe('internal')
     expect(added?.confidence).toBe('declared')
-    expect(added?.sources).toEqual([{ documentId: 'contract.pdf', documentName: 'contract.pdf' }])
+    // The passage the match was found in outlives the document — it is the only answer to
+    // "why is this on the map?" once the file is gone.
+    expect(added?.sources).toEqual([
+      { documentId: 'contract.pdf', documentName: 'contract.pdf', locator: 'the payroll run' },
+    ])
   })
 
   it('enriches an existing place instead of duplicating it, and never downgrades what a scan observed', () => {
@@ -106,6 +110,7 @@ describe('ingestDocument', () => {
     expect(out.places[0]?.sources).toContainEqual({
       documentId: 'contract.pdf',
       documentName: 'contract.pdf',
+      locator: 'the payroll run',
     })
     expect(out.places[0]?.sources.length).toBe((p.places[0]?.sources.length ?? 0) + 1)
   })
@@ -119,5 +124,34 @@ describe('ingestDocument', () => {
   it('leaves the project untouched for an empty confirmation', () => {
     const p = emptyProject()
     expect(ingestDocument(p, [])).toEqual(p)
+  })
+})
+
+describe('trackers and cookies named in prose', () => {
+  const TRACKING: InternalSystemDictionary = {
+    'facebook pixel': { name: 'Meta Pixel', purposeGroup: 'Marketing', layer: 'external', holder: 'supplier' },
+    cookies: { name: 'Cookies', purposeGroup: 'Website tracking', layer: 'external', holder: 'supplier' },
+    hotjar: { name: 'Hotjar', purposeGroup: 'Marketing', layer: 'external', holder: 'supplier' },
+  }
+
+  it('finds a tracker named in a sentence, with no domain and no scan', () => {
+    const docs = [
+      {
+        name: 'privacy-policy.docx',
+        text: 'We use profiling cookies and a Facebook Pixel, plus Hotjar for session replay.',
+      },
+    ]
+    const out = extractCandidates(docs, VENDORS, TRACKING)
+    expect(out.map((c) => c.name).sort()).toEqual(['Cookies', 'Hotjar', 'Meta Pixel'])
+    expect(out.every((c) => c.layer === 'external')).toBe(true)
+  })
+
+  it('carries the sentence through to the place, so the map can say why it is there', () => {
+    const docs = [{ name: 'policy.pdf', text: 'The site sets profiling cookies on first visit.' }]
+    const [candidate] = extractCandidates(docs, VENDORS, TRACKING)
+    if (candidate === undefined) throw new Error('expected a candidate')
+    const p = ingestDocument(emptyProject(), [candidate])
+    expect(p.places[0]?.name).toBe('Cookies')
+    expect(p.places[0]?.sources[0]?.locator).toContain('profiling cookies')
   })
 })
