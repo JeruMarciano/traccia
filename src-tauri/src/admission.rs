@@ -69,7 +69,11 @@ pub enum DenyReason {
 /// whitespace and control characters all fall out of this for free.
 /// Returns a borrowed slice of the caller's input, never a copy — comparison is done
 /// case-insensitively rather than by lowercasing, so nothing is allocated to reach a `Deny`.
-fn vet_host(raw: &str) -> Option<&str> {
+/// `pub(crate)` for `scan::parse_target`, which must refuse any host this
+/// would refuse: a scan origin the proxy cannot read the same way as the
+/// module that stored it is a scan origin that means two different things.
+/// Visibility only — the rule itself is unchanged and lives here.
+pub(crate) fn vet_host(raw: &str) -> Option<&str> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_HOST_LEN {
         return None;

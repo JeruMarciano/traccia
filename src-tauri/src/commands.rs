@@ -1,6 +1,8 @@
-//! The only two commands the renderer can invoke.
+//! The four commands the renderer can invoke.
 //!
-//! Everything a command returns as an error is one of three compile-time literals. Nothing is
+//! Everything the two project commands return as an error is one of three compile-time literals.
+//! The two scan commands answer with one of `scan.rs`'s four tokens, under the same rule and for
+//! the same reason. Nothing is
 //! formatted, nothing carries a `source`, and no filesystem path or map content can travel with
 //! any of them: an error thrown out of here is written to the process console, which on a
 //! Finder-launched macOS build lands in the system log, which sysdiagnose collects and hands to
@@ -13,6 +15,8 @@ use crate::project_file::{
     read_project_file, write_project_file, ReadError, WriteError, MAX_PROJECT_BYTES,
     SAVE_BLOCKED_BY_LOCK,
 };
+use crate::scan::{self, ScanState};
+use std::sync::Arc;
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 
@@ -89,6 +93,26 @@ pub async fn save_project(app: AppHandle, project_json: String) -> Result<bool, 
     let path = picked.into_path().map_err(|_| SAVE_FAILED.to_string())?;
     write_project_file(&path, &project_json).map_err(|e| save_error(e).to_string())?;
     Ok(true)
+}
+
+/// Runs one scan of the address the user typed. Returns `ScanResult` as JSON.
+///
+/// Refused with `SCAN_BUSY` while another scan is running, so two invocations
+/// can never both be inside `scan::run` widening what one proxy admits.
+#[tauri::command]
+pub async fn start_scan(
+    state: tauri::State<'_, Arc<ScanState>>,
+    url: String,
+) -> Result<String, String> {
+    scan::run(Arc::clone(&state), url).await
+}
+
+/// Stops the running scan. Nothing running is not an error: the user pressed
+/// stop as the scan was already finishing.
+#[tauri::command]
+pub async fn cancel_scan(state: tauri::State<'_, Arc<ScanState>>) -> Result<(), String> {
+    scan::cancel(&state);
+    Ok(())
 }
 
 #[cfg(test)]
