@@ -1515,9 +1515,11 @@ mod tests {
         ] {
             let _ = send(p.addr, &line).await;
         }
-        // Reaching here without the process aborting is the assertion; under panic = "abort" a
-        // panic in the spawned task would take the suite with it. The connector is a tripwire, so
-        // nothing above may reach an upstream either.
+        // Reaching here without the test task's panic taking the whole suite down is the
+        // assertion: a spawned tokio task that panics does not otherwise fail the test harness,
+        // so this line only proves nothing panicked if something downstream depends on the task
+        // having run to completion, which `assert_sensor_alive` below does. The connector is a
+        // tripwire, so nothing above may reach an upstream either.
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(p.ledger.allowed().is_empty());
         assert_sensor_alive(&p.ledger);

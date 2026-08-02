@@ -204,15 +204,17 @@ tauri-build = { version = "2", features = [] }
 #   A custom decompression  `zip`'s `deflate` feature already routes through `flate2`, which
 #   backend for zip          this build graph carries regardless (`png` → `muda` → `tauri`),
 #                             so there was no smaller-footprint alternative to reach for.
-#   A per-entry streaming    Only DOCX is parsed via this crate's own `zip` dependency, and
-#   decompression cap for    only one entry (`word/document.xml`) is ever read — bounded by
-#   XLSX                     `read_capped` in extract.rs, streaming. XLSX is handed to
-#                             `calamine`, which does its own zip decompression with no hook to
-#                             bound it mid-stream; extract.rs instead sums the archive's
-#                             *declared* uncompressed sizes (cheap — no decompression) and
-#                             refuses before calling into `calamine` if that total exceeds
-#                             `MAX_DECOMPRESSED_BYTES`. See extract.rs's module docs and
-#                             `declared_uncompressed_total` for the reasoning and its limits.
+#
+# v0.2 security audit, Finding 2 (IMPORTANT), superseding a claim this comment used to make:
+# XLSX's zip-bomb guard used to sum the archive's *declared* uncompressed sizes (cheap, no
+# decompression) and refuse before calling into `calamine` if that total exceeded
+# `MAX_DECOMPRESSED_BYTES`. That trusted a number the `zip` crate does not itself enforce during
+# inflation — a forged small declared size wrapping a highly compressible stream sailed through.
+# The fix (extract.rs's `true_uncompressed_total_exceeds_cap`) decompresses every entry itself,
+# streaming, through this crate's own `zip` dependency and the same `read_capped` ceiling DOCX
+# already used, and sums the bytes actually produced. `calamine` still does its own separate zip
+# decompression afterwards to read cells — this module cannot hook into that to bound it — so an
+# honest XLSX is now decompressed twice. Accepted cost for a bound that is actually true.
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -250,5 +252,21 @@ test-support = []
 opt-level = "z"
 lto = true
 codegen-units = 1
-panic = "abort"
+# v0.2 security audit, Finding 1 (CRITICAL): this used to abort on panic instead of unwinding.
+# With no unwinding at all in the shipped binary, two things were false at once. First,
+# `extract.rs`'s `catch_unwind` around a hostile document's parse (lopdf/calamine/zip/
+# quick-xml — none of it `unsafe`, but none of it proof against a panic either) was inert:
+# the panic would abort the whole process instead of being caught, and only the *test*
+# profile's unwind made the test at extract.rs's `catch_unwind` call site pass — false
+# assurance, since the release build behaved differently from the test that was supposed to
+# prove it safe. Second, and independently, it meant `Drop` never ran on a panic, which is
+# `browser::Launched`'s teardown: a panicked scan orphaned headless Chrome and left the
+# scanned site's cookies sitting in a 0700 temp profile dir that nothing then removed (see
+# browser.rs's `Drop for Launched`, and the Task 6/8 notes this closes). `panic = "unwind"`
+# fixes both: `catch_unwind` actually catches, and `Drop::drop` actually runs. It does NOT
+# make cleanup unconditional — `std::process::exit` and a hard `abort()` (e.g. from a double
+# panic, or from Rust's own guard against unwinding across an FFI boundary) still run no
+# destructors; see browser.rs's `Drop for Launched` doc comment for what remains true there.
+# tests/cargo_toml_profile.rs pins this so the setting cannot silently regress back to abort.
+panic = "unwind"
 strip = true
