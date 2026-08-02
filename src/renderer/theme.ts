@@ -16,7 +16,12 @@
  * Colour is used once, for people, and never for anything that could be read as a fault. Every
  * distinction above survives greyscale, because it is carried by line style and shape; the one
  * hue only reinforces the thing it marks.
+ *
+ * Print is the one exception to "held as a string": `./print.css` is an ordinary stylesheet, so
+ * Vite bundles it rather than this file having to grow a second string nobody can lint. This
+ * import is the only thing that makes it reach the page.
  */
+import './print.css'
 
 export const STYLESHEET = `
 :root{
@@ -220,16 +225,8 @@ export const STYLESHEET = `
   .legend{grid-template-columns:repeat(2,minmax(0,1fr));}
 }
 
-/* On paper the sheet is the paper, the controls are gone, and nothing is greyed out: a printed
-   map has no cursor to isolate anything with. */
-@media print{
-  :root{--sheet:#FFFFFF;}
-  .sheet{display:block;height:auto;}
-  .plate{padding:0;}
-  .actions,.notice{display:none;}
-  .register{width:auto;border-left:0;border-top:1px solid var(--rule);padding:14px 0 0;}
-  .map-svg{height:auto;}
-  .dim{opacity:1;}
-  .entry{break-inside:avoid;}
-}
+/* The limits statement and the possible-gaps line: real text in the DOM at all times, so what
+   prints can never drift from what the app knows, but of no use on this screen. print.css turns
+   it back on inside @media print. */
+.print-only{display:none;}
 `
