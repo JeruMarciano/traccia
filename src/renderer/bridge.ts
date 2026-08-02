@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { validateProject } from '../core/project'
-import type { ObservedHost, Project, ScanResult } from '../core/types'
+import type { DocumentText, ObservedHost, Project, ScanResult } from '../core/types'
 import { STRINGS } from './strings'
 
 /**
@@ -75,6 +75,60 @@ export async function startScan(url: string): Promise<ScanResult> {
 
 export async function cancelScan(): Promise<void> {
   await invoke<void>('cancel_scan')
+}
+
+/** What the document picker produced, sorted for the caller: readable text, and the rest. */
+export interface ExtractedDocuments {
+  documents: DocumentText[]
+  /** File names that could not be read. Names only — no path ever crosses this boundary. */
+  unreadable: string[]
+  /** File names whose text hit a cap and was cut short. */
+  truncated: string[]
+  /**
+   * File names that were read but held no text at all — a scanned or photographed PDF is the
+   * usual case. Distinct from `unreadable`: nothing went wrong, there was simply nothing to
+   * read, and silently contributing nothing is how a user concludes the tool missed something.
+   */
+  noText: string[]
+}
+
+interface RawExtract {
+  name: string
+  text?: unknown
+  truncated?: unknown
+  error?: unknown
+}
+
+function isRawExtract(v: unknown): v is RawExtract {
+  return typeof v === 'object' && v !== null && typeof (v as Record<string, unknown>).name === 'string'
+}
+
+/**
+ * Opens the native multi-select dialog (Rust side, like `open_project`) and returns the
+ * extracted text of every picked file. The text lives in memory for this session only —
+ * nothing here is stored, and the caller passes it straight to `extractCandidates`.
+ */
+export async function pickAndExtractDocuments(): Promise<ExtractedDocuments> {
+  const raw = await invoke<unknown>('pick_and_extract_documents')
+  if (!Array.isArray(raw) || !raw.every(isRawExtract)) throw new Error(STRINGS.documentsFailed)
+
+  const documents: DocumentText[] = []
+  const unreadable: string[] = []
+  const truncated: string[] = []
+  const noText: string[] = []
+  for (const entry of raw) {
+    if (typeof entry.error === 'string' || typeof entry.text !== 'string') {
+      unreadable.push(entry.name)
+      continue
+    }
+    if (entry.text.trim() === '') {
+      noText.push(entry.name)
+      continue
+    }
+    documents.push({ name: entry.name, text: entry.text })
+    if (entry.truncated === true) truncated.push(entry.name)
+  }
+  return { documents, unreadable, truncated, noText }
 }
 
 function messageOf(error: unknown): string {

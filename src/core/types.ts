@@ -73,6 +73,47 @@ export interface VendorEntry {
 
 export type VendorDictionary = Readonly<Record<string, VendorEntry>>
 
+/**
+ * One entry in the bundled internal-systems dictionary. Data only; never fetched. Keys of the
+ * dictionary are the terms matched in document text, case-insensitively on word boundaries.
+ */
+export interface InternalSystemEntry {
+  /** The place name a match produces, e.g. "Payroll system" or "Salesforce". */
+  name: string
+  purposeGroup: string
+  /** 'internal': the company's own operation (inner ring). 'external': a named supplier. */
+  layer: 'internal' | 'external'
+  /** Who holds the data: 'you' for generic internal systems, 'supplier' for named products. */
+  holder: 'you' | 'supplier'
+}
+
+export type InternalSystemDictionary = Readonly<Record<string, InternalSystemEntry>>
+
+/** One document's extracted text, as returned by the Rust side. The text is session-only. */
+export interface DocumentText {
+  name: string
+  text: string
+}
+
+/**
+ * One thing a document appears to describe, offered for confirmation — nothing lands on the
+ * map without the user accepting it. Produced by extractCandidates, consumed (once confirmed)
+ * by ingestDocument.
+ */
+export interface Candidate {
+  /** Stable within one extraction run: derived from the name. */
+  id: string
+  name: string
+  layer: 'internal' | 'external'
+  purposeGroup: string
+  holder: Holder
+  kind: PlaceKind
+  /** A short passage around the first match, so the user can judge it. */
+  evidence: string
+  /** Every document (by name) this candidate was found in. */
+  sourceNames: string[]
+}
+
 /** One host seen during a scan, before it is named. */
 export interface ObservedHost {
   host: string

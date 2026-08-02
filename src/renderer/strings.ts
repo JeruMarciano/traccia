@@ -32,12 +32,16 @@ export const STRINGS = {
   groupTitle: (name: string, places: number): string => `${name}: ${places} places`,
   mapEmpty: 'Open a project to draw the map.',
 
+  leavingCount: (n: number): string => `${n} outside the EEA`,
+
   keyPeople: 'People',
   keyPeopleGloss: 'Every line starts here.',
-  keyRecorded: 'Recorded',
-  keyRecordedGloss: 'A document or a scan says so.',
+  keyInternal: 'Your systems',
+  keyInternalGloss: 'Run by the organisation itself.',
+  keyExternal: 'Suppliers',
+  keyExternalGloss: 'Run by somebody else.',
   keyOpen: 'Not yet identified',
-  keyOpenGloss: 'Waiting on an answer.',
+  keyOpenGloss: 'The dashed share of a ring.',
   keyCrossing: 'Leaves the EEA',
   keyCrossingGloss: 'Data comes to rest outside the area.',
 
@@ -46,6 +50,28 @@ export const STRINGS = {
   dismiss: 'Dismiss',
   openFailed: 'This file could not be read as a project.',
   saveFailed: 'The project could not be saved.',
+
+  addDocuments: 'Add documents',
+  documentsFailed: 'The documents could not be read.',
+  documentsNothingFound:
+    'Nothing describing a data-processing activity was found in those documents.',
+  documentsUnreadable: (names: string): string => `Could not read: ${names}.`,
+  documentsTruncated: (names: string): string =>
+    `Read only partially (very large file): ${names}.`,
+  documentsNoText: (names: string): string =>
+    `No text to read in: ${names}. A scanned or photographed page holds a picture of text, not text.`,
+  suggestionsRead: (count: number, names: string): string =>
+    `Read ${count} ${count === 1 ? 'document' : 'documents'}: ${names}`,
+  suggestionsHeading: 'Found in the documents',
+  suggestionsCaption:
+    'Tick what belongs on the map. The documents themselves are not kept — only what you confirm.',
+  suggestionsConfirm: 'Add to map',
+  suggestionsCancel: 'Discard all',
+  suggestionFoundIn: (names: string): string => `Found in ${names}`,
+  suggestionInternal: 'Internal',
+  suggestionExternal: 'Supplier',
+  detailPurpose: 'Purpose',
+  declaredIn: (names: string): string => `Declared: ${names}`,
 
   detailHeading: 'What is here',
   detailPeopleHeading: 'People',

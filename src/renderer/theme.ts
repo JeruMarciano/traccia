@@ -5,43 +5,49 @@
  * tsconfig, and injected as a single <style> element, which the renderer's CSP allows
  * (`style-src 'self' 'unsafe-inline'`). No font is fetched or bundled: system stacks only.
  *
- * The notation the whole interface is built from, and the reason each token exists:
+ * The look owes itself to Olivetti — Pintori's posters, the pale enamel of a Lettera 22.
+ * That lineage is the point rather than a flourish: this is an Italian instrument for reading
+ * machines, and Olivetti is what happens when someone decides a machine's output deserves to
+ * be looked at. The map is a constellation, not a schematic.
  *
- *   solid stroke      a fact somebody recorded
- *   dashed stroke     an open item -- nobody has answered it yet
- *   break mark        the data crosses out of the EEA
- *   filled disc       people, the origin of every line
- *   filled cells      how soon a question is worth answering
+ * The notation the whole interface is built from, and the reason each mark exists:
  *
- * Colour is used once, for people, and never for anything that could be read as a fault. Every
- * distinction above survives greyscale, because it is carried by line style and shape; the one
- * hue only reinforces the thing it marks.
+ *   cobalt disc       people, the origin of every line
+ *   green ring        a system the organisation runs itself
+ *   ochre ring        a supplier outside it
+ *   dashed arc        the share of a group nobody has identified yet
+ *   vermilion break   the data crosses out of the EEA
  *
- * Print is the one exception to "held as a string": `./print.css` is an ordinary stylesheet, so
- * Vite bundles it rather than this file having to grow a second string nobody can lint. This
- * import is the only thing that makes it reach the page.
+ * Colour reinforces; it never carries a distinction alone. Ring against orbit says internal
+ * or external before any hue does, a dashed stroke is dashed in greyscale, and the break mark
+ * is a shape. The sheet prints in black and white without losing a single reading.
  */
 import './print.css'
 
 export const STYLESHEET = `
 :root{
-  --sheet:#EEEFF1;
-  --ink:#15171C;
-  --ink-soft:#5A5F69;
-  --rule:#C4C8CF;
-  --person:#2A3D8F;
+  /* Pale enamel, the grey-green of a Lettera 22 — cool where every default is cream. */
+  --paper:#E4E7E1;
+  --paper-lift:#EDEFEA;
+  --ink:#191B19;
+  --ink-soft:#5F665F;
+  --rule:#C2C8C0;
+  --person:#2648C8;
+  --internal:#1F6F4A;
+  --external:#B4791A;
+  --crossing:#CE3B22;
+  --sans:"Avenir Next",Avenir,Futura,"Century Gothic","URW Gothic","Segoe UI",system-ui,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
-  --serif:Georgia,"Times New Roman","Liberation Serif",serif;
 }
 
-/* One field, one dividing rule: the map and the register are two regions of the same sheet,
-   not two panels. */
+*{box-sizing:border-box;}
+
 .sheet{
   display:flex;
   height:100vh;
-  background:var(--sheet);
+  background:var(--paper);
   color:var(--ink);
-  font-family:var(--serif);
+  font-family:var(--sans);
   -webkit-font-smoothing:antialiased;
 }
 .plate{
@@ -50,198 +56,258 @@ export const STYLESHEET = `
   flex:1;
   min-width:0;
   min-height:0;
-  padding:0 22px 18px;
+  padding:0 26px 20px;
 }
 
-:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+:focus-visible{outline:2px solid var(--person);outline-offset:2px;}
 
 /* Title block. A sheet a consultant leaves behind has to say what it is and when it was begun. */
 .titleblock{
   display:flex;
   align-items:baseline;
-  gap:14px;
-  padding:16px 0 10px;
+  gap:16px;
+  padding:20px 0 13px;
   border-bottom:1px solid var(--rule);
 }
-.wordmark{font-family:var(--mono);font-size:10px;letter-spacing:.28em;text-transform:uppercase;}
-.project{font-size:15px;font-weight:400;margin:0;min-width:0;}
-.drawn{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;color:var(--ink-soft);}
-.actions{margin-left:auto;display:flex;gap:6px;}
-.action{
-  font-family:var(--mono);
-  font-size:9.5px;
-  letter-spacing:.12em;
+.wordmark{
+  font-size:12px;
+  font-weight:600;
+  letter-spacing:.42em;
   text-transform:uppercase;
+  color:var(--person);
+}
+.project{font-size:19px;font-weight:400;letter-spacing:-.01em;margin:0;min-width:0;}
+.drawn{font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;color:var(--ink-soft);}
+.actions{margin-left:auto;display:flex;gap:7px;}
+.action{
+  font-family:var(--sans);
+  font-size:11px;
+  font-weight:500;
+  letter-spacing:.04em;
   color:var(--ink);
   background:none;
   border:1px solid var(--ink);
-  border-radius:0;
-  padding:5px 9px;
+  border-radius:999px;
+  padding:6px 14px;
   cursor:pointer;
+  transition:background .12s ease,color .12s ease;
 }
-.action:hover:enabled{background:var(--ink);color:var(--sheet);}
+.action:hover:enabled{background:var(--ink);color:var(--paper);}
 .action:disabled{border-color:var(--rule);color:var(--ink-soft);cursor:default;}
 
-/* The scan control: a plain field and one button, styled like the title-block actions it sits
-   beside rather than as a form of its own. */
-.scanbar{display:flex;gap:6px;padding:10px 0 0;}
+/* The scan control: one field, one button, the field carrying the accent so the eye starts
+   where the work starts. */
+.scanbar{display:flex;gap:7px;padding:14px 0 0;}
 .scan-input{
   flex:1;
   min-width:0;
   font-family:var(--mono);
-  font-size:11px;
+  font-size:12px;
   color:var(--ink);
-  background:none;
+  background:var(--paper-lift);
   border:1px solid var(--rule);
-  border-radius:0;
-  padding:6px 9px;
+  border-radius:999px;
+  padding:8px 15px;
 }
+.scan-input::placeholder{color:var(--ink-soft);}
 .scan-input:disabled{color:var(--ink-soft);}
-.scan-input:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.scan-input:focus-visible{outline:2px solid var(--person);outline-offset:1px;border-color:transparent;}
 
-/* A message about this session, not about the client's data: heavier left rule, no colour. */
+/* A message about this session, not about the client's data. */
 .notice{
   display:flex;
-  gap:14px;
+  gap:16px;
   justify-content:space-between;
   align-items:baseline;
-  margin:12px 0 0;
-  padding:9px 12px;
-  border:1px solid var(--ink);
-  border-left-width:3px;
-  font-size:12.5px;
-  line-height:1.4;
+  margin:13px 0 0;
+  padding:11px 15px;
+  background:var(--paper-lift);
+  border-left:3px solid var(--person);
+  font-size:13px;
+  line-height:1.45;
 }
 
 /* The map */
 .map{flex:1;display:flex;flex-direction:column;min-height:0;margin:0;}
 .map-svg{flex:1;min-height:0;width:100%;height:100%;display:block;}
 .map-empty{
-  margin:0;
-  padding:11px 0 0;
-  border-top:1px solid var(--rule);
-  font-size:12px;
+  margin:auto;
+  padding:0 0 8vh;
+  font-size:14px;
   color:var(--ink-soft);
+  text-align:center;
 }
 
-.link{stroke:var(--ink);stroke-width:1;fill:none;}
-.crossing{stroke:var(--ink);stroke-width:1.25;fill:none;}
+.orbit{fill:none;stroke:var(--rule);stroke-width:1;stroke-dasharray:1 5;stroke-linecap:round;}
+.link{stroke:var(--rule);stroke-width:1.25;fill:none;}
+.link--internal{stroke:var(--internal);opacity:.5;}
+.link--external{stroke:var(--external);opacity:.5;}
+.crossing{stroke:var(--crossing);stroke-width:2;stroke-linecap:round;fill:none;}
+
 .subject{cursor:pointer;}
 .disc{fill:var(--person);}
+.disc-halo{fill:none;stroke:var(--person);stroke-width:1;opacity:.28;}
 .disc-label{
-  fill:var(--sheet);
-  font-family:var(--mono);
-  font-size:11px;
-  letter-spacing:.16em;
+  fill:var(--paper);
+  font-size:12px;
+  font-weight:600;
+  letter-spacing:.2em;
 }
-.disc-count{fill:var(--sheet);font-family:var(--mono);font-size:8.5px;}
-.tile{cursor:pointer;}
-/* The tile is filled with the sheet so a connector stops cleanly at its edge. The fill is
-   masking, not decoration, which is why it is exactly the background. */
-.tile-box{fill:var(--sheet);stroke:var(--ink);stroke-width:1;}
-.tile:hover .tile-box{stroke-width:2;}
-.tile-name{font-family:var(--mono);font-size:9px;letter-spacing:.06em;fill:var(--ink);}
-.tile-count{font-family:var(--mono);font-size:9px;fill:var(--ink-soft);}
-.tile-div{stroke:var(--rule);stroke-width:1;}
-.tile-row{font-family:var(--mono);font-size:8.5px;fill:var(--ink);}
-.cell{fill:none;stroke:var(--ink);stroke-width:1;}
-.cell--open{stroke-dasharray:2.5 2;}
-.cell-figure{font-family:var(--mono);font-size:8.5px;fill:var(--ink);}
-.dim{opacity:.22;}
+.disc-count{fill:var(--paper);font-family:var(--mono);font-size:9px;opacity:.85;}
+
+.node{cursor:pointer;}
+.node-fill{fill:var(--paper-lift);}
+.node-arc{fill:none;stroke-width:2.5;stroke-linecap:butt;}
+.node--internal .node-arc{stroke:var(--internal);}
+.node--external .node-arc{stroke:var(--external);}
+.node-arc--open{stroke-dasharray:3 4;opacity:.75;}
+.node-count{font-size:17px;font-weight:500;fill:var(--ink);}
+.node-label{
+  font-size:10.5px;
+  font-weight:500;
+  letter-spacing:.05em;
+  fill:var(--ink);
+}
+.node-eea{font-family:var(--mono);font-size:8.5px;fill:var(--crossing);letter-spacing:.02em;}
+.node:hover .node-fill{fill:var(--paper);}
+.node:hover .node-arc{stroke-width:3.5;}
+.dim{opacity:.16;}
 
 /* The key. The notation is not common knowledge, and the sheet is read by someone seeing it
    for the first time, often on paper. */
 .legend{
   margin:0;
-  padding:11px 0 0;
+  padding:13px 0 0;
   border-top:1px solid var(--rule);
   display:grid;
-  grid-template-columns:repeat(4,minmax(0,1fr));
-  gap:14px;
+  grid-template-columns:repeat(5,minmax(0,1fr));
+  gap:16px;
 }
 .key{display:flex;gap:9px;align-items:flex-start;}
 .key-mark{flex:none;margin-top:1px;}
-.key-term{
-  display:block;
-  font-family:var(--mono);
-  font-size:9px;
-  letter-spacing:.11em;
+.key-term{display:block;font-size:10.5px;font-weight:600;letter-spacing:.02em;}
+.key-gloss{display:block;margin:1px 0 0;font-size:10.5px;line-height:1.35;color:var(--ink-soft);}
+
+/* Found-in-documents suggestions: a working list. Nothing here is on the map until it is
+   ticked onto it, so it reads as a proposal, not a finding. */
+.suggestions{
+  margin:14px 0 0;
+  padding:14px 16px;
+  background:var(--paper-lift);
+  border-left:3px solid var(--internal);
+  max-height:62vh;
+  overflow-y:auto;
+}
+.suggestions-head{
+  display:flex;
+  align-items:baseline;
+  gap:9px;
+  margin:0;
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:.14em;
   text-transform:uppercase;
 }
-.key-gloss{display:block;margin:2px 0 0;font-size:11px;line-height:1.35;color:var(--ink-soft);}
+.suggestions-count{margin-left:auto;font-size:15px;letter-spacing:0;}
+.suggestions-read{margin:7px 0 0;font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);}
+.suggestions-caption{margin:5px 0 0;font-size:12px;line-height:1.45;color:var(--ink-soft);}
+.suggestions-list{list-style:none;margin:12px 0 0;padding:0;}
+.suggestion{padding:9px 0;border-bottom:1px solid var(--rule);}
+.suggestion-row{display:flex;gap:10px;align-items:baseline;cursor:pointer;}
+.suggestion-name{font-size:13.5px;}
+.suggestion-tag{
+  font-size:9px;
+  font-weight:600;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  border-radius:999px;
+  padding:2px 8px;
+  color:var(--paper-lift);
+  background:var(--external);
+}
+.suggestion-tag--internal{background:var(--internal);}
+.suggestion-group{font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);}
+.suggestion-evidence{margin:5px 0 0 27px;font-size:12px;line-height:1.4;color:var(--ink-soft);}
+.suggestion-sources{margin:2px 0 0 27px;font-family:var(--mono);font-size:9px;color:var(--ink-soft);}
+.suggestions-actions{display:flex;gap:7px;margin:13px 0 0;}
 
 /* The detail bar: what the clicked point holds. Present only while something is selected, so
    the sheet is the drawing alone until a click asks a question of it. */
 .detail{
-  width:322px;
+  width:338px;
   flex:none;
+  background:var(--paper-lift);
   border-left:1px solid var(--rule);
-  padding:16px 22px 18px;
+  padding:20px 24px 22px;
   overflow-y:auto;
 }
 .detail-head{
   margin:0;
-  font-family:var(--mono);
-  font-size:10px;
-  font-weight:400;
-  letter-spacing:.16em;
-  text-transform:uppercase;
-}
-.detail-none{margin:8px 0 0;font-size:11.5px;color:var(--ink-soft);}
-.detail-subjects{list-style:none;margin:14px 0 0;padding:0;}
-.detail-subject-name{margin:0;font-size:13px;}
-.detail-subject-notes{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
-.detail-place{padding:14px 0;border-bottom:1px dashed var(--rule);}
-.detail-place:first-of-type{padding-top:14px;}
-.detail-place-name{margin:0;font-size:14px;font-weight:400;}
-.detail-purpose{
-  margin:2px 0 0;
-  font-family:var(--mono);
-  font-size:9px;
-  letter-spacing:.11em;
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:.14em;
   text-transform:uppercase;
   color:var(--ink-soft);
 }
+.detail-subjects{list-style:none;margin:16px 0 0;padding:0;}
+.detail-subject-name{margin:0;font-size:14px;}
+.detail-subject-notes{margin:3px 0 0;font-size:12px;line-height:1.45;color:var(--ink-soft);}
+.detail-place{padding:16px 0;border-bottom:1px solid var(--rule);}
+.detail-place-name{margin:0;font-size:16px;font-weight:500;letter-spacing:-.01em;}
 .detail-facts{
-  margin:10px 0 0;
+  margin:12px 0 0;
   display:grid;
   grid-template-columns:1fr 1fr;
-  gap:8px 10px;
+  gap:10px 12px;
 }
 .detail-facts>div{min-width:0;}
 .detail-facts dt{
   margin:0;
-  font-family:var(--mono);
-  font-size:8.5px;
+  font-size:9px;
+  font-weight:600;
   letter-spacing:.1em;
   text-transform:uppercase;
   color:var(--ink-soft);
 }
-.detail-facts dd{margin:2px 0 0;font-size:12px;line-height:1.35;}
+.detail-facts dd{margin:3px 0 0;font-size:13px;line-height:1.35;}
 .detail-sub{
-  margin:14px 0 0;
-  font-family:var(--mono);
+  margin:16px 0 0;
   font-size:9px;
-  letter-spacing:.11em;
+  font-weight:600;
+  letter-spacing:.1em;
   text-transform:uppercase;
   color:var(--ink-soft);
   border-top:1px solid var(--rule);
-  padding-top:9px;
+  padding-top:11px;
 }
-.detail-observations{list-style:none;margin:8px 0 0;padding:0;}
-.detail-observations li{margin:0 0 4px;font-family:var(--mono);font-size:10.5px;}
+.detail-none{margin:8px 0 0;font-size:12px;color:var(--ink-soft);}
+.detail-declared{margin:10px 0 0;font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);}
+.detail-observations{list-style:none;margin:9px 0 0;padding:0;}
+.detail-observations li{margin:0 0 5px;font-family:var(--mono);font-size:11px;}
+
+/* The map settles rather than appears: rings first, then what sits on them. A scan is the one
+   moment this tool has to show something happening, and a drawing that arrives all at once
+   reads as a picture instead of a reading. */
+@keyframes trace-in{from{stroke-dashoffset:var(--dash);}to{stroke-dashoffset:0;}}
+@keyframes settle{from{opacity:0;transform:scale(.9);}to{opacity:1;transform:scale(1);}}
+.link{stroke-dasharray:var(--dash);animation:trace-in .5s ease-out both;}
+.node,.subject{animation:settle .32s ease-out both;transform-box:fill-box;transform-origin:center;}
+
+@media (prefers-reduced-motion:reduce){
+  .link,.node,.subject{animation:none;stroke-dashoffset:0;}
+}
 
 @media (max-width:900px){
   .sheet{display:block;height:auto;}
-  .detail{width:auto;border-left:0;border-top:1px solid var(--rule);padding:16px 22px 22px;}
+  .detail{width:auto;border-left:0;border-top:1px solid var(--rule);padding:20px 24px 24px;}
   .map-svg{height:auto;}
 }
-@media (max-width:620px){
+@media (max-width:680px){
   .legend{grid-template-columns:repeat(2,minmax(0,1fr));}
 }
 
 /* The limits statement and the possible-gaps line: real text in the DOM at all times, so what
-   prints can never drift from what the app knows, but of no use on this screen. print.css turns
-   it back on inside @media print. */
+   prints can never drift from what the app knows, but of no use on this screen. print.css
+   turns it back on inside @media print. */
 .print-only{display:none;}
 `
