@@ -21,7 +21,7 @@ const VISITORS = 'Website visitors'
  * Analytics. An unrecognised host keeps its full name and collapses with
  * nothing.
  */
-function displayName(host: string, dictionary: VendorDictionary): string {
+export function displayName(host: string, dictionary: VendorDictionary): string {
   const hit = identify(host, dictionary)
   return hit === null ? host : `${hit.owner} ${titleCase(hit.category)}`
 }
