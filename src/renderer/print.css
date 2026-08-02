@@ -20,7 +20,7 @@
 
   /* The scan control, the title-block actions, any session notice and the detail bar are all
      for this screen -- none of them leaves the room on paper. */
-  .scanbar, .actions, .notice, .detail { display: none; }
+  .scanbar, .actions, .notice, .detail, .suggestions { display: none; }
 
   .map-svg { height: auto; }
   .dim { opacity: 1; }

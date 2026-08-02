@@ -3,12 +3,22 @@ import { createEmptyProject } from '../core/project'
 import { computeLayout } from '../core/layout'
 import { initHistory, push, undo, redo, canUndo, canRedo } from '../core/history'
 import { ingestScan } from '../core/scan'
-import type { VendorDictionary } from '../core/types'
+import { extractCandidates, ingestDocument } from '../core/documents'
+import type { Candidate, InternalSystemDictionary, VendorDictionary } from '../core/types'
 import vendorsJson from '../data/vendors.json'
+import internalSystemsJson from '../data/internalSystems.json'
 import { DetailPanel } from './components/DetailPanel'
 import { MapView } from './components/MapView'
 import { ScanBar } from './components/ScanBar'
-import { openProject as openViaShell, saveProject as saveViaShell, startScan, cancelScan, scanNotice } from './bridge'
+import { SuggestionsPanel } from './components/SuggestionsPanel'
+import {
+  openProject as openViaShell,
+  saveProject as saveViaShell,
+  startScan,
+  cancelScan,
+  scanNotice,
+  pickAndExtractDocuments,
+} from './bridge'
 import { saveNotice } from './saveNotice'
 import { scanResultNotice } from './scanResultNotice'
 import type { LastScan } from './printGapsNotice'
@@ -17,6 +27,7 @@ import { STRINGS } from './strings'
 import { STYLESHEET } from './theme'
 
 const VENDORS = vendorsJson as VendorDictionary
+const INTERNAL_SYSTEMS = internalSystemsJson as InternalSystemDictionary
 
 export function App() {
   const [history, setHistory] = useState(() =>
@@ -30,6 +41,9 @@ export function App() {
   // scan's completeness belongs to the session that ran it, not to the file, so opening a
   // different project clears it rather than carrying a stale claim onto someone else's map.
   const [lastScan, setLastScan] = useState<LastScan | null>(null)
+  // What the documents appear to describe, awaiting the user's tick. The extracted text
+  // behind these candidates is already gone — only the evidence snippets survive to here.
+  const [suggestions, setSuggestions] = useState<Candidate[] | null>(null)
 
   const layout = useMemo(() => computeLayout(project, { width: 800, height: 500 }), [project])
 
@@ -75,6 +89,32 @@ export function App() {
     }
   }
 
+  async function addDocuments(): Promise<void> {
+    try {
+      const { documents, unreadable, truncated } = await pickAndExtractDocuments()
+      const notes: string[] = []
+      if (unreadable.length > 0) notes.push(STRINGS.documentsUnreadable(unreadable.join(', ')))
+      if (truncated.length > 0) notes.push(STRINGS.documentsTruncated(truncated.join(', ')))
+      if (documents.length === 0) {
+        // The picker was cancelled, or nothing was readable.
+        setNotice(notes.length > 0 ? notes.join(' ') : null)
+        return
+      }
+      const found = extractCandidates(documents, VENDORS, INTERNAL_SYSTEMS)
+      if (found.length === 0) notes.push(STRINGS.documentsNothingFound)
+      setNotice(notes.length > 0 ? notes.join(' ') : null)
+      setSuggestions(found.length > 0 ? found : null)
+    } catch {
+      setNotice(STRINGS.documentsFailed)
+    }
+  }
+
+  function confirmSuggestions(chosen: Candidate[]): void {
+    setSuggestions(null)
+    if (chosen.length === 0) return
+    setHistory((h) => push(h, ingestDocument(h.present, chosen)))
+  }
+
   async function stopScan(): Promise<void> {
     try {
       await cancelScan()
@@ -107,6 +147,7 @@ export function App() {
               <button className="action" disabled={!canRedo(history)} onClick={() => setHistory(redo)}>
                 {STRINGS.redo}
               </button>
+              <button className="action" onClick={() => void addDocuments()}>{STRINGS.addDocuments}</button>
               <button className="action" onClick={() => window.print()}>{STRINGS.print}</button>
             </div>
           </header>
@@ -116,6 +157,13 @@ export function App() {
               {notice}
               <button className="action" onClick={() => setNotice(null)}>{STRINGS.dismiss}</button>
             </p>
+          )}
+          {suggestions === null ? null : (
+            <SuggestionsPanel
+              candidates={suggestions}
+              onConfirm={confirmSuggestions}
+              onCancel={() => setSuggestions(null)}
+            />
           )}
           <MapView layout={layout} selected={selected} onSelect={setSelected} />
           <div className="print-only">
