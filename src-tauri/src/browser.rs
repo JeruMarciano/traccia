@@ -637,16 +637,16 @@ impl Launched {
 /// Child`'s own `Drop` deliberately does not kill the process, so without
 /// this those paths would leave the browser running.
 ///
-/// This does **not** cover everything that can end the process early. A
-/// panic in the caller does not run this `Drop` at all: `panic = "abort"`
-/// in the release profile means there is no unwinding, and unwinding is
-/// what `Drop` relies on to run. `std::process::exit` likewise runs no
-/// destructors. In either case what is actually left behind is an orphaned
-/// headless Chrome whose only egress path is `--proxy-server=http://
-/// 127.0.0.1:<port>` pointing at a proxy that died with the process, with
-/// QUIC and non-proxied UDP already disabled — so it cannot reach the
-/// network — but whose ephemeral profile, holding the scanned site's
-/// cookies, sits in a 0700 temp directory that nothing removes.
+/// This does **not** cover everything that can end the process early. The release profile
+/// is `panic = "unwind"` (v0.2 security audit Finding 1), specifically so that a panic in
+/// the caller *does* unwind through this scope and run this `Drop` — but `std::process::
+/// exit` still runs no destructors, and neither does a hard `abort()` (e.g. a double panic,
+/// or Rust's own guard against unwinding across an FFI boundary). In either of those cases
+/// what is actually left behind is an orphaned headless Chrome whose only egress path is
+/// `--proxy-server=http://127.0.0.1:<port>` pointing at a proxy that died with the process,
+/// with QUIC and non-proxied UDP already disabled — so it cannot reach the network — but
+/// whose ephemeral profile, holding the scanned site's cookies, sits in a 0700 temp
+/// directory that nothing removes.
 ///
 /// Errors here are unobservable — `Drop::drop` cannot return a `Result` —
 /// so cleanup is best-effort; `tear_down` remains the path that can report

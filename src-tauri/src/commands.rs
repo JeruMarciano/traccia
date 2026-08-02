@@ -23,6 +23,10 @@ use tauri_plugin_dialog::DialogExt;
 
 pub const OPEN_FAILED: &str = "This file could not be read as a project.";
 pub const SAVE_FAILED: &str = "The project could not be saved.";
+/// Only reachable if the `spawn_blocking` task itself panicked or was cancelled — `extract_text`
+/// has no fallible return of its own, one bad file becomes that file's `ExtractResult::Err`
+/// entry rather than failing the call. See Finding 3 in the v0.2 security audit.
+pub const EXTRACT_FAILED: &str = "The selected documents could not be read.";
 
 const FILTER_NAME: &str = "Traccia project";
 const FILTER_EXT: &str = "json";
@@ -142,7 +146,15 @@ pub async fn pick_and_extract_documents(app: AppHandle) -> Result<Vec<ExtractRes
         .into_iter()
         .filter_map(|p| p.into_path().ok())
         .collect();
-    Ok(extract::extract_text(&paths))
+    // v0.2 security audit, Finding 3 (MINOR). `extract_text` parses whatever the user picked —
+    // PDF/DOCX/XLSX/CSV/TXT, up to 50 MB each — synchronously. Running that on a tokio worker
+    // thread blocks it for the duration, starving every other task sharing that worker (a
+    // running scan's proxy included). `spawn_blocking` moves it to a thread meant for exactly
+    // this, the same pattern `scan.rs` uses for `browser::discover` and `browser::launch`.
+    match tokio::task::spawn_blocking(move || extract::extract_text(&paths)).await {
+        Ok(results) => Ok(results),
+        Err(_) => Err(EXTRACT_FAILED.to_string()),
+    }
 }
 
 #[cfg(test)]

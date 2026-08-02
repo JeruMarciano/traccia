@@ -72,6 +72,40 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --locked --all-targets -- -D warnings
 
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.97.1'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo install cargo-audit --locked
+      # A real gate: `cargo audit` exits non-zero (failing this job) on any advisory of type
+      # "vulnerability" found in Cargo.lock, whether direct or transitive — the whole reason
+      # this step exists. It exits zero on advisories of type "unmaintained"/"unsound" ("notice"
+      # in RustSec's own taxonomy), which today includes ~17 gtk-rs GTK3-binding advisories
+      # (RUSTSEC-2024-0411 through -0420 and others) reached transitively through Tauri's Linux
+      # windowing stack (tao/rfd/muda) — present in Cargo.lock because Cargo resolves one
+      # dependency graph across every platform, even though this workflow's own `rust`/`bundle`
+      # jobs only ever build macOS and Windows (see this file's header comment). Those are
+      # unfixable from this project's side (no Linux build to drop the GTK3 feature from, and no
+      # newer gtk-rs release exists to move to) and are not CVEs, so they are left as the
+      # warnings `cargo audit` already treats them as rather than escalated with `--deny warnings`
+      # and then blanket-ignored — that would silence this gate for a real future vulnerability
+      # in the same crates. As of this job's addition, `cargo audit` finds zero vulnerabilities
+      # in this tree: nothing is pinned with `--ignore` below. If a genuinely unfixable
+      # *vulnerability* (not a mere "unmaintained" notice) ever appears, pin its RUSTSEC id here
+      # with `--ignore RUSTSEC-XXXX-XXXX` and a comment naming it and why it cannot be fixed —
+      # never widen this to a blanket ignore, or the gate stops meaning anything for every other
+      # advisory.
+      - name: cargo audit
+        working-directory: src-tauri
+        run: cargo audit
+
   bundle:
     name: bundle (${{ matrix.os }})
     needs: [check, rust]

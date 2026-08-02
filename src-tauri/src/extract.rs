@@ -19,12 +19,14 @@ use serde::Serialize;
 pub const MAX_INPUT_FILE_BYTES: u64 = 50 * 1024 * 1024;
 
 /// The zip-bomb guard. For DOCX this bounds the decompressed bytes actually pulled out of
-/// `word/document.xml` while streaming it; for XLSX (parsed by `calamine`, which manages its own
-/// zip decompression with no hook to bound it mid-stream) this bounds the *declared* uncompressed
-/// size read from the archive's central directory before any entry is decompressed at all — a
-/// real zip bomb reports its true (huge) uncompressed size there, since that is what actually
-/// exists in the deflate stream, so this catches it without decompressing a single byte. For PDF
-/// it is passed straight through to `lopdf`'s own per-page decompression-limit API.
+/// `word/document.xml` while streaming it. For XLSX (parsed by `calamine`, which manages its own
+/// zip decompression with no hook to bound it mid-stream) this module runs its own streaming
+/// decompression pass over every entry first — via `true_uncompressed_total_exceeds_cap`, using
+/// this same cap — and only hands the bytes to `calamine` if that real inflated total stays
+/// within it (v0.2 security audit, Finding 2: the archive's central directory *declares* an
+/// uncompressed size that the `zip` crate does not enforce during inflation, so trusting it
+/// without decompressing was bypassable). For PDF it is passed straight through to `lopdf`'s own
+/// per-page decompression-limit API.
 pub const MAX_DECOMPRESSED_BYTES: usize = 100 * 1024 * 1024;
 
 /// The text returned to the renderer is capped independently of how it was produced, so one
@@ -185,14 +187,28 @@ fn cap_text(mut text: String) -> (String, bool) {
 fn parse_pdf(bytes: &[u8]) -> Result<(String, bool), ()> {
     let doc = lopdf::Document::load_mem(bytes).map_err(|_| ())?;
     let page_numbers: Vec<u32> = doc.get_pages().keys().copied().collect();
-    let chunks = doc.extract_text_chunks_with_limit(&page_numbers, MAX_DECOMPRESSED_BYTES);
 
+    // v0.2 security audit, Finding 4 (MINOR). Passing every page number to
+    // `extract_text_chunks_with_limit` at once means it accumulates every page's text into its
+    // own `Vec<Result<String>>` before returning, so peak memory was the sum of all pages'
+    // extracted text rather than `MAX_TEXT_BYTES` — `cap_text` only trims the final `String`
+    // after all of that was already held at once. Calling it one page at a time instead, and
+    // stopping once the running total reaches the cap, bounds peak memory to roughly one page's
+    // text plus the cap: later pages are never decompressed at all rather than being extracted
+    // and then discarded by `cap_text`.
     let mut text = String::new();
     let mut truncated = false;
-    for chunk in chunks {
-        match chunk {
-            Ok(s) => text.push_str(&s),
-            Err(_) => truncated = true,
+    for page_number in page_numbers {
+        if text.len() >= MAX_TEXT_BYTES {
+            truncated = true;
+            break;
+        }
+        let chunks = doc.extract_text_chunks_with_limit(&[page_number], MAX_DECOMPRESSED_BYTES);
+        for chunk in chunks {
+            match chunk {
+                Ok(s) => text.push_str(&s),
+                Err(_) => truncated = true,
+            }
         }
     }
     Ok((text, truncated))
@@ -295,12 +311,20 @@ fn xml_to_paragraph_text(
 /// archive to `calamine`, which does its own zip decompression with no bound this module can set
 /// mid-stream.
 fn parse_xlsx(bytes: &[u8]) -> Result<(String, bool), ()> {
-    // Not a well-formed zip at all: `calamine` would fail identically, so fail the same way here
-    // rather than paying for a doomed parse attempt.
-    let declared_total = declared_uncompressed_total(bytes).ok_or(())?;
-    if declared_total > MAX_DECOMPRESSED_BYTES as u64 {
-        // A real zip bomb reports its true (huge) uncompressed size honestly — see the module
-        // docs on `MAX_DECOMPRESSED_BYTES` — so this catches it without decompressing anything.
+    // v0.2 security audit, Finding 2 (IMPORTANT). This used to trust the archive's central
+    // directory to *declare* its uncompressed size honestly, then only decompress if that
+    // declared number passed the cap. The `zip` crate does not enforce the declared size during
+    // inflation, so a forged small declared size wrapping a highly compressible deflate stream
+    // sailed through this check and inflated to gigabytes inside `calamine`, whose CRC check only
+    // fires after the fact. The fix decompresses every entry itself, streaming, through the same
+    // `read_capped` ceiling DOCX already uses, and sums the *actual* inflated bytes — the number
+    // the old check assumed but never verified. That means an honest XLSX now gets decompressed
+    // twice (once here to prove the bound, once by `calamine` to read cells): an acceptable cost
+    // for a bound that is actually true, versus one that only looked true.
+    if true_uncompressed_total_exceeds_cap(bytes, MAX_DECOMPRESSED_BYTES).ok_or(())? {
+        // Same convention as before: an honest zip bomb is reported as an empty, truncated
+        // result rather than UNREADABLE, since the file was readable — it just could not be
+        // safely decompressed in full.
         return Ok((String::new(), true));
     }
 
@@ -322,17 +346,27 @@ fn parse_xlsx(bytes: &[u8]) -> Result<(String, bool), ()> {
     Ok((out, false))
 }
 
-/// Sums the uncompressed size the archive's central directory declares for every entry, without
-/// decompressing any of them. `None` if the bytes are not readable as a zip at all.
-fn declared_uncompressed_total(bytes: &[u8]) -> Option<u64> {
+/// Streams every entry in the archive through `read_capped`, decompressing for real, and reports
+/// whether the true cumulative inflated size exceeds `cap`. `None` if the bytes are not readable
+/// as a zip at all — `parse_xlsx` treats that the same as any other malformed archive.
+///
+/// This stops reading (and returns `Some(true)`) as soon as the running total would cross `cap`,
+/// so a genuine bomb is never decompressed past the bound even though it spans many entries —
+/// each entry's own read is capped to whatever room is left, not to `cap` itself.
+fn true_uncompressed_total_exceeds_cap(bytes: &[u8], cap: usize) -> Option<bool> {
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor).ok()?;
-    let mut total: u64 = 0;
+    let mut total: usize = 0;
     for i in 0..archive.len() {
-        let entry = archive.by_index(i).ok()?;
-        total = total.saturating_add(entry.size());
+        let mut entry = archive.by_index(i).ok()?;
+        let remaining = cap.saturating_sub(total);
+        let (data, more_beyond_cap) = read_capped(&mut entry, remaining);
+        total += data.len();
+        if more_beyond_cap || total > cap {
+            return Some(true);
+        }
     }
-    Some(total)
+    Some(false)
 }
 
 #[cfg(test)]
@@ -353,6 +387,28 @@ mod tests {
             writer.finish().unwrap();
         }
         buf
+    }
+
+    /// Forges the "uncompressed size" field the zip central directory declares for the first
+    /// entry whose local/central file headers this finds, leaving the actual compressed data
+    /// (and therefore what it really inflates to) untouched. This is v0.2 security audit Finding
+    /// 2's exact attack shape: a small declared size wrapping a stream that decompresses to
+    /// something much larger. Field offsets are from the ZIP spec (§4.3.7 local file header,
+    /// §4.3.12 central directory file header); this only works for archives without Zip64
+    /// extensions, which `write_zip`'s small fixtures never trigger.
+    fn forge_declared_uncompressed_size(zip_bytes: &mut [u8], forged_size: u32) {
+        const LOCAL_HEADER_SIG: [u8; 4] = [0x50, 0x4b, 0x03, 0x04];
+        const CENTRAL_HEADER_SIG: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
+        let local_pos = zip_bytes
+            .windows(4)
+            .position(|w| w == LOCAL_HEADER_SIG)
+            .expect("no local file header found");
+        zip_bytes[local_pos + 22..local_pos + 26].copy_from_slice(&forged_size.to_le_bytes());
+        let central_pos = zip_bytes
+            .windows(4)
+            .position(|w| w == CENTRAL_HEADER_SIG)
+            .expect("no central directory header found");
+        zip_bytes[central_pos + 24..central_pos + 28].copy_from_slice(&forged_size.to_le_bytes());
     }
 
     fn minimal_document_xml(paragraphs: &[&str]) -> String {
@@ -414,6 +470,56 @@ mod tests {
                 ("Type", "Pages".into()),
                 ("Kids", vec![page_id.into()].into()),
                 ("Count", 1.into()),
+                ("Resources", resources_id.into()),
+            ])),
+        );
+        let catalog_id = doc.add_object(lopdf::Object::Dictionary(dict(&[
+            ("Type", "Catalog".into()),
+            ("Pages", pages_id.into()),
+        ])));
+        doc.trailer.set("Root", catalog_id);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    /// Same shape as `minimal_pdf_with_text`, generalised to one text per page — for exercising
+    /// Finding 4's stop-accumulating-at-the-cap behaviour across multiple pages.
+    fn minimal_pdf_with_page_texts(texts: &[&str]) -> Vec<u8> {
+        let mut doc = lopdf::Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(lopdf::Object::Dictionary(dict(&[
+            ("Type", "Font".into()),
+            ("Subtype", "Type1".into()),
+            ("BaseFont", "Helvetica".into()),
+        ])));
+        let mut fonts = lopdf::Dictionary::new();
+        fonts.set("F1", font_id);
+        let resources_id =
+            doc.add_object(lopdf::Object::Dictionary(dict(&[("Font", fonts.into())])));
+        let mut page_ids = Vec::new();
+        for text in texts {
+            let content = format!("BT /F1 24 Tf 100 700 Td ({text}) Tj ET");
+            let content_id = doc.add_object(lopdf::Stream::new(
+                lopdf::Dictionary::new(),
+                content.into_bytes(),
+            ));
+            let page_id = doc.add_object(lopdf::Object::Dictionary(dict(&[
+                ("Type", "Page".into()),
+                ("Parent", pages_id.into()),
+                ("Contents", content_id.into()),
+            ])));
+            page_ids.push(page_id);
+        }
+        doc.objects.insert(
+            pages_id,
+            lopdf::Object::Dictionary(dict(&[
+                ("Type", "Pages".into()),
+                (
+                    "Kids",
+                    page_ids.into_iter().map(Into::into).collect::<Vec<_>>().into(),
+                ),
+                ("Count", (texts.len() as i64).into()),
                 ("Resources", resources_id.into()),
             ])),
         );
@@ -570,6 +676,31 @@ mod tests {
     }
 
     #[test]
+    fn a_pdf_stops_reading_pages_once_the_text_cap_is_already_reached() {
+        // v0.2 security audit, Finding 4 (MINOR). Page one alone already exceeds MAX_TEXT_BYTES;
+        // page two carries a marker string that must never appear in the result if extraction
+        // truly stops accumulating (and stops calling into lopdf for further pages) once the cap
+        // is reached, rather than extracting every page and only trimming the sum afterwards.
+        let page_one = "A".repeat(MAX_TEXT_BYTES + 1000);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi.pdf");
+        std::fs::write(
+            &path,
+            minimal_pdf_with_page_texts(&[&page_one, "PAGE_TWO_MARKER"]),
+        )
+        .unwrap();
+        let result = extract_text(&[path]);
+        let f = ok_of(&result[0]);
+        assert_eq!(f.kind, "pdf");
+        assert!(f.truncated);
+        assert_eq!(f.text.len(), MAX_TEXT_BYTES);
+        assert!(
+            !f.text.contains("PAGE_TWO_MARKER"),
+            "page two must never be read once the cap was already reached by page one"
+        );
+    }
+
+    #[test]
     fn a_scanned_pdf_with_no_text_operators_yields_empty_text_not_an_error() {
         let mut doc = lopdf::Document::with_version("1.5");
         let pages_id = doc.new_object_id();
@@ -667,17 +798,16 @@ mod tests {
     }
 
     #[test]
-    fn an_xlsx_entry_declaring_size_past_the_cap_is_refused_without_decompressing() {
-        // Builds a zip whose central directory honestly declares a large uncompressed size for a
-        // highly compressible entry — the classic zip-bomb shape — and checks the guard catches
-        // it from the declared size alone, before `calamine` ever sees the archive.
+    fn an_xlsx_entry_with_a_large_real_uncompressed_size_is_refused() {
+        // Builds a zip whose entry honestly decompresses past the cap — the classic zip-bomb
+        // shape — and checks the real streaming check (Finding 2's fix) catches it.
         let mut buf = Vec::new();
         {
             let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
             let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
             writer.start_file("xl/worksheets/sheet1.xml", options).unwrap();
-            // Highly compressible: a run of the same byte, well past the cap once "declared".
+            // Highly compressible: a run of the same byte, well past the cap once inflated.
             writer
                 .write_all(&vec![b'a'; MAX_DECOMPRESSED_BYTES + 1])
                 .unwrap();
@@ -685,6 +815,40 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bomb.xlsx");
+        std::fs::write(&path, &buf).unwrap();
+        let result = extract_text(&[path]);
+        let f = ok_of(&result[0]);
+        assert_eq!(f.text, "");
+        assert!(f.truncated);
+    }
+
+    #[test]
+    fn an_xlsx_with_a_forged_small_declared_size_is_still_refused() {
+        // v0.2 security audit, Finding 2 (IMPORTANT). The archive's central directory declares a
+        // small uncompressed size for this entry — well under the cap — but the actual deflate
+        // stream it wraps inflates to well past it. Against the old code (which trusted that
+        // declared field instead of decompressing to check it) this file's declared size would
+        // have passed the cap unexamined, the call would have reached `calamine` (which, given
+        // only a bare `xl/worksheets/sheet1.xml` with no other package parts, fails to open the
+        // workbook) and the result would have come back `ExtractResult::Err` — so `ok_of` below
+        // panics on the old code, which is what "fails against the old code" means here. Against
+        // the fix, the real streaming decompression pass catches the true size regardless of what
+        // the archive claims, and the archive is refused before `calamine` ever sees it.
+        let mut buf = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            writer.start_file("xl/worksheets/sheet1.xml", options).unwrap();
+            writer
+                .write_all(&vec![b'a'; MAX_DECOMPRESSED_BYTES + 1])
+                .unwrap();
+            writer.finish().unwrap();
+        }
+        forge_declared_uncompressed_size(&mut buf, 10);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("forged.xlsx");
         std::fs::write(&path, &buf).unwrap();
         let result = extract_text(&[path]);
         let f = ok_of(&result[0]);
