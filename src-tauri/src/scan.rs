@@ -349,6 +349,17 @@ async fn run_pipeline(
     let origins = Arc::new(Mutex::new(target.origins.clone()));
     let _origins_guard = OriginsGuard(Arc::clone(&origins));
 
+    // Test-support only: a generic SCAN_FAILED is right for the renderer, but on a CI platform
+    // nobody can attach a debugger to it hides which stage died. This names the stage on stderr
+    // in test builds and compiles to an empty function without the feature — the renderer never
+    // sees any of it, and no error Display gets any closer to production output than before.
+    #[cfg(feature = "test-support")]
+    fn scan_trace(stage: &str, detail: &dyn std::fmt::Debug) {
+        eprintln!("egress-trace: {stage} failed: {detail:?}");
+    }
+    #[cfg(not(feature = "test-support"))]
+    fn scan_trace(_stage: &str, _detail: &dyn std::fmt::Debug) {}
+
     // Armed here, before a browser exists to make a request.
     //
     // HONESTLY: `proxy::start` has no shutdown, so this listener task outlives
@@ -358,13 +369,19 @@ async fn run_pipeline(
     // `Arc`. A real shutdown signal is Phase 2 work.
     let proxy_handle = proxy::start(Arc::clone(&origins), connect)
         .await
-        .map_err(|_| SCAN_FAILED.to_string())?;
+        .map_err(|e| {
+            scan_trace("proxy start", &e);
+            SCAN_FAILED.to_string()
+        })?;
     let proxy_port = proxy_handle.addr.port();
 
     let found = match tokio::task::spawn_blocking(browser::discover).await {
         Ok(Ok(found)) => found,
         Ok(Err(DiscoveryError::NoneFound { searched })) => return Err(no_browser_message(&searched)),
-        Err(_) => return Err(SCAN_FAILED.to_string()),
+        Err(e) => {
+            scan_trace("discover join", &e);
+            return Err(SCAN_FAILED.to_string());
+        }
     };
 
     // `launch` blocks for up to ten seconds waiting for `DevToolsActivePort`;
@@ -377,7 +394,14 @@ async fn run_pipeline(
     {
         Ok(Ok(launched)) => launched,
         // `launch` removes the profile directory itself on every failing path.
-        _ => return Err(SCAN_FAILED.to_string()),
+        Ok(Err(e)) => {
+            scan_trace("launch", &e);
+            return Err(SCAN_FAILED.to_string());
+        }
+        Err(e) => {
+            scan_trace("launch join", &e);
+            return Err(SCAN_FAILED.to_string());
+        }
     };
 
     let child_pid = launched.child.id();
@@ -407,10 +431,14 @@ async fn run_pipeline(
     let _ = poison_ledger_for_test;
 
     let result = (|| {
-        let observation = observed.map_err(|_| SCAN_FAILED.to_string())?;
+        let observation = observed.map_err(|e| {
+            scan_trace("observe", &e);
+            SCAN_FAILED.to_string()
+        })?;
         if !matches!(torn_down, Ok(Ok(()))) {
             // A browser that would not die is a browser that could still be making
             // requests behind the ledger read below.
+            scan_trace("tear down", &torn_down);
             return Err(SCAN_FAILED.to_string());
         }
 
@@ -420,6 +448,14 @@ async fn run_pipeline(
             &proxy_handle.ledger.allowed(),
             &target.origins,
         ) {
+            scan_trace(
+                "ledger assertion",
+                &(
+                    proxy_handle.ledger.healthy(),
+                    proxy_handle.ledger.dropped_records(),
+                    proxy_handle.ledger.allowed().len(),
+                ),
+            );
             return Err(SCAN_FAILED.to_string());
         }
         // Explicit, in the order the plan fixes; `OriginsGuard` repeats it on every
