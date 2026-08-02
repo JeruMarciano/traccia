@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 //! App setup. The scaffold's `greet` command and its opener plugin are gone: the only
-//! `#[tauri::command]`s this app registers are `open_project`, `save_project`, `start_scan` and
-//! `cancel_scan`.
+//! `#[tauri::command]`s this app registers are `open_project`, `save_project`, `start_scan`,
+//! `cancel_scan` and `pick_and_extract_documents`.
 
 // `pub` because Task 3's stated interface — `Decision`, `DenyReason`, `decide` — is only an
 // interface if it is reachable from the crate root. `proxy` is the only caller in this crate.
@@ -10,6 +10,9 @@ pub mod admission;
 pub mod browser;
 pub mod cdp;
 pub mod commands;
+// `pub` for the same reason `admission` is: v0.2 Task 1's `extract_text` is only an interface if
+// it is reachable from the crate root. `commands` is the only caller in this crate.
+pub mod extract;
 pub mod log;
 // `pub` for the same reason `admission` is: Task 5's stated interface is only an interface if it
 // is reachable from the crate root. `commands` is the only caller in this crate.
@@ -39,7 +42,8 @@ pub fn run() {
             commands::open_project,
             commands::save_project,
             commands::start_scan,
-            commands::cancel_scan
+            commands::cancel_scan,
+            commands::pick_and_extract_documents
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

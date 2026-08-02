@@ -11,6 +11,7 @@
 //! The dialog is opened from Rust, not from the renderer, so no filesystem path ever crosses the
 //! boundary in either direction.
 
+use crate::extract::{self, ExtractResult};
 use crate::project_file::{
     read_project_file, write_project_file, ReadError, WriteError, MAX_PROJECT_BYTES,
     SAVE_BLOCKED_BY_LOCK,
@@ -25,6 +26,9 @@ pub const SAVE_FAILED: &str = "The project could not be saved.";
 
 const FILTER_NAME: &str = "Traccia project";
 const FILTER_EXT: &str = "json";
+
+const DOCUMENT_FILTER_NAME: &str = "Documents";
+const DOCUMENT_FILTER_EXTS: &[&str] = &["pdf", "docx", "xlsx", "csv", "txt", "log"];
 
 fn open_error(_e: ReadError) -> &'static str {
     OPEN_FAILED
@@ -113,6 +117,32 @@ pub async fn start_scan(
 pub async fn cancel_scan(state: tauri::State<'_, Arc<ScanState>>) -> Result<(), String> {
     scan::cancel(&state);
     Ok(())
+}
+
+/// Opens the native multi-select file picker, filtered to the five document kinds
+/// `extract.rs` understands, then extracts text from whatever was picked.
+///
+/// The dialog is opened from Rust, exactly like `open_project`'s, so a filesystem path never
+/// crosses into the renderer in either direction: only `ExtractResult`, keyed by file name, does.
+/// Cancelling the picker is not an error — it returns an empty list, the same way `open_project`
+/// returns `None`.
+#[tauri::command]
+pub async fn pick_and_extract_documents(app: AppHandle) -> Result<Vec<ExtractResult>, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter(DOCUMENT_FILTER_NAME, DOCUMENT_FILTER_EXTS)
+        .pick_files(move |picked| {
+            let _ = tx.send(picked);
+        });
+    let Ok(Some(picked)) = rx.await else {
+        return Ok(Vec::new());
+    };
+    let paths: Vec<std::path::PathBuf> = picked
+        .into_iter()
+        .filter_map(|p| p.into_path().ok())
+        .collect();
+    Ok(extract::extract_text(&paths))
 }
 
 #[cfg(test)]
