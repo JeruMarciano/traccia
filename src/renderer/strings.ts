@@ -55,7 +55,6 @@ export const STRINGS = {
 
   scanPlaceholder: 'Website address',
   scan: 'Scan',
-  scanning: (page: number, of: number): string => `Scanning — page ${page} of ${of}`,
   scanCancel: 'Stop',
   scanNoBrowser: 'Traccia could not find Chrome or Edge on this computer.',
   scanBadUrl:

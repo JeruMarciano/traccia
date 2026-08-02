@@ -31,7 +31,7 @@ pub fn run() {
         // not a guard, it is dead weight — and it made the resting state ambiguous, because a
         // listener existing said nothing about whether anything was being watched.
         .manage(Arc::new(scan::ScanState::default()))
-        .setup(move |app| {
+        .setup(|app| {
             install_panic_hook(app.handle().clone());
             Ok(())
         })
