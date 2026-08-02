@@ -272,7 +272,89 @@ const PROFILE_REMOVE_RETRY_DELAY: Duration = Duration::from_millis(100);
 ///   carried here — `OptimizationGuideModelDownloading`,
 ///   `OptimizationHintsFetching`, `CertificateTransparencyComponentUpdater`
 ///   — do not exist in the pinned browser and were removed rather than left
-///   as dead strings.
+///   as dead strings. A sixth name, `NetworkTimeServiceQuerying`, was added
+///   after `tests/egress.rs` caught a real gap this list left open:
+///   Chrome's `NetworkTimeTracker` makes a plain-HTTP (port 80, not 443 —
+///   deliberately, so it is unaffected by a clock skewed enough to break
+///   TLS validation) request to `http://clients2.google.com/time/1/current`
+///   on launch, to sanity-check the system clock ahead of certificate-
+///   validity checks. None of the flags above stop it, and the admission
+///   decision denies the connection attempt (it is not the scan target)
+///   rather than preventing the attempt from being made, exactly the gap
+///   this flag group exists to close. Verified present as the literal
+///   string `NetworkTimeServiceQuerying` in the pinned browser's binary —
+///   its `base::Feature` name, matching Chromium's
+///   `network_time_tracker.cc` — the same verification standard as every
+///   other name in this list. Two more, `PreconnectToSearch` and
+///   `PreconnectToSearchDesktop`, were added after a security-audit
+///   instrumented run of `tests/egress.rs` showed 12 repeated denied
+///   attempts to `www.google.com:443` in one scan — `SearchEnginePreconnector`
+///   (the file `navigation_predictor/search_engine_preconnector.cc` is
+///   present in the pinned binary) periodically preconnects to the default
+///   search engine while the browser is idle. Adding both names is a
+///   **verified partial fix, not a closure**: the same instrumented ledger
+///   read, repeated three times, went from 12 attempts to a stable 5 —
+///   real and reproducible, but not zero. The remaining, still-open gap,
+///   recorded here rather than silently dropped: a scan's denied ledger
+///   still shows `www.google.com:443` (~5×), `accounts.google.com:443`
+///   (2×, almost certainly `AccountReconcilor`'s unconditional GAIA
+///   `ListAccounts` check — signin/account-consistency infrastructure that
+///   runs on profile startup independent of any signed-in account),
+///   `android.clients.google.com:443` (1×, almost certainly the legacy GCM
+///   checkin endpoint, used by browser-level `GCMProfileService` regardless
+///   of which feature ultimately consumes it), and `www.gstatic.com:443`
+///   (1×, host also used for the same connectivity-check/search-choice
+///   family of requests). None of these four is stopped by any of the
+///   flags above. Candidates tried and rejected because they measurably
+///   did nothing to this ledger, confirmed by the same instrumented
+///   run — `--enable-features=NavigationPredictorPreconnectHoldback`,
+///   `--disable-search-engine-choice-screen`, `--enable-automation` — are
+///   deliberately **not** in the list below: adding a flag that does not
+///   move the needle would be exactly the "verified present in a string
+///   table, unverified in effect" failure mode this file's own history
+///   (Task 6, then the `NetworkTimeServiceQuerying` addendum) already
+///   warns against. No `--disable-features=` name for GAIA account
+///   reconciliation or GCM checkin was found searched for in the pinned
+///   binary's string table under any of the naming patterns Chromium uses
+///   for comparable subsystems (`account-consistency`, `AccountReconcilor`,
+///   `GCM*`, `checkin`). This remains open, tracked by the security-audit
+///   ledger evidence rather than by a comment claiming a closure that was
+///   not verified.
+///
+/// **A second, bounded suppression attempt** (controller-directed) tried
+/// `--metrics-recording-only`, `--use-mock-keychain`, `--mute-audio`,
+/// `--disable-hang-monitor`, `--disable-prompt-on-repost`, and
+/// `AvoidAutoTriggerListAccountsOnStale` (the one plausibly-relevant feature
+/// name found searching the pinned binary's string table for
+/// `ListAccounts`/`checkin`-adjacent patterns). Five of these six are
+/// verified present in Chrome 151.0.7922.72; `--password-store=basic` is
+/// not — its literal string is absent from the macOS binary entirely (it
+/// selects a Linux keyring backend and appears to be compiled out on this
+/// platform), so it is not shipped, on the same "verified present" standard
+/// as everything else in this list. Of the five that are present, an
+/// instrumented, repeated ledger read (identical method to the
+/// `PreconnectToSearch` measurement above) showed **zero change** to the
+/// denied set from any of them, alone or combined — the residual four-host
+/// group below is unaffected by all five. Only `--use-mock-keychain` is
+/// shipped anyway: it suppresses a macOS Keychain-access prompt in a
+/// headless, non-interactive launch, which is a real problem distinct from
+/// egress, so it earns its place on that basis and not on any ledger
+/// effect — recorded honestly rather than implied to close a gap it does
+/// not touch. The other four, including `AvoidAutoTriggerListAccountsOnStale`,
+/// are not shipped: verified present, verified to do nothing to this
+/// ledger, so keeping them would be exactly the no-op-as-protection failure
+/// mode this file's own history (Task 6) already removed once.
+///
+/// **Status for the Task 13 handover:** the residual four hosts
+/// (`www.gstatic.com`, `accounts.google.com`, `www.google.com`,
+/// `android.clients.google.com`) are *attempted and denied* — distinct from
+/// *unverified* — every one of them reaches the proxy and is refused by the
+/// same admission decision as anything else that is not the scan target, so
+/// nothing leaves the machine. What remains unsuppressed, after two
+/// genuine, evidence-based search rounds, is the *attempt itself*.
+/// `tests/egress.rs`'s `KNOWN_DENIED_BROWSER_SERVICE_HOSTS` carries the
+/// same four hosts with the same per-host reasoning, asserted as the
+/// exhaustive documented-exception list rather than silently tolerated.
 pub fn launch_flags(profile_dir: &Path, proxy_port: u16) -> Vec<String> {
     vec![
         "--headless=new".to_string(),
@@ -288,8 +370,10 @@ pub fn launch_flags(profile_dir: &Path, proxy_port: u16) -> Vec<String> {
         "--no-pings".to_string(),
         "--disable-quic".to_string(),
         "--webrtc-ip-handling-policy=disable_non_proxied_udp".to_string(),
+        "--use-mock-keychain".to_string(),
         "--disable-features=Translate,MediaRouter,DialMediaRouteProvider,OptimizationHints,\
-         AutofillServerCommunication,DnsOverHttpsUpgrade"
+         AutofillServerCommunication,DnsOverHttpsUpgrade,NetworkTimeServiceQuerying,\
+         PreconnectToSearch,PreconnectToSearchDesktop"
             .to_string(),
         format!("--proxy-server=http://127.0.0.1:{proxy_port}"),
         "--proxy-bypass-list=<-loopback>".to_string(),
@@ -665,6 +749,9 @@ mod tests {
             "OptimizationHints",
             "AutofillServerCommunication",
             "DnsOverHttpsUpgrade",
+            "NetworkTimeServiceQuerying",
+            "PreconnectToSearch",
+            "PreconnectToSearchDesktop",
         ] {
             assert!(names.contains(&present), "missing {present}: {names:?}");
         }

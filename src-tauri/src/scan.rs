@@ -276,11 +276,68 @@ pub fn cancel(state: &ScanState) {
     }
 }
 
-/// Run one scan and return its result as JSON.
-pub async fn run(state: Arc<ScanState>, url: String) -> Result<String, String> {
-    let target = parse_target(&url).map_err(str::to_string)?;
+/// Called once the browser is up, before observation starts, with the child's pid and its
+/// profile directory. `run` never installs one. It exists so `tests/egress.rs` — spec §9.3's
+/// executable promise — can capture a live pid and path and drive `cancel` through the same
+/// public entry point the renderer uses, rather than needing its own route into a running scan.
+///
+/// `pub` only under the `test-support` feature (off by default, so `cargo build --release`
+/// never carries it — see `Cargo.toml`'s `[features]`). `run_pipeline` below still needs the
+/// type regardless of the feature, so the `not(feature = ...)` arm keeps it crate-visible.
+#[cfg(feature = "test-support")]
+pub type LaunchHook = Box<dyn FnOnce(u32, &Path) + Send>;
+#[cfg(not(feature = "test-support"))]
+type LaunchHook = Box<dyn FnOnce(u32, &Path) + Send>;
 
-    let cancel_token = CancellationToken::new();
+/// What the test-support entry points below return: everything `run` already asserted, plus the
+/// evidence a test needs to check its own work. `run` never constructs one.
+///
+/// `pub`, and its fields `pub`, only under the `test-support` feature — same reasoning as
+/// `LaunchHook` above. `run_pipeline` and `run` read these fields from inside this module
+/// either way, which needs no visibility at all.
+#[cfg(feature = "test-support")]
+pub struct ScanRun {
+    /// This scan's own ledger, readable after teardown — exactly what the ledger assertion below
+    /// already read to decide `result`.
+    pub ledger: Arc<proxy::Ledger>,
+    pub profile_dir: PathBuf,
+    pub child_pid: u32,
+    /// What `run` would have serialised, or the same bare token `run` would have returned.
+    pub result: Result<ScanOutput, String>,
+}
+// Without `test-support`, only `.result` is ever read (by `run`, below) — `.ledger`,
+// `.profile_dir` and `.child_pid` exist solely for the test-support entry points this build
+// does not compile in. `dead_code` would otherwise flag exactly that, correctly; allowed here
+// rather than restructured, since the two `ScanRun` definitions must stay field-for-field
+// identical for `run_pipeline`'s single construction site to compile under both cfgs.
+#[cfg_attr(not(feature = "test-support"), allow(dead_code))]
+#[cfg(not(feature = "test-support"))]
+struct ScanRun {
+    ledger: Arc<proxy::Ledger>,
+    profile_dir: PathBuf,
+    child_pid: u32,
+    result: Result<ScanOutput, String>,
+}
+
+/// The whole of `run`'s pipeline — order, teardown, the ledger assertion — behind two seams a
+/// production scan never uses: the connector, and an optional post-launch hook. `run` calls this
+/// with `proxy::real_connector()` and no hook, and discards everything but `result`.
+///
+/// `real_connector` resolves a name for real and then refuses to dial anywhere the resolved
+/// address turns out to be loopback or private (`is_permitted_upstream`, in this module's own
+/// file) — which is exactly what a test fixture necessarily is. A test cannot exercise this
+/// pipeline through `real_connector` without either performing a real DNS lookup or being refused
+/// by the very check that makes the proxy safe, so the connector is the one thing `tests/
+/// egress.rs` is allowed to substitute. Admission, teardown order and the ledger assertion are
+/// unchanged and unreachable from outside this module.
+async fn run_pipeline(
+    state: Arc<ScanState>,
+    target: Target,
+    connect: proxy::Connector,
+    cancel_token: CancellationToken,
+    on_launched: Option<LaunchHook>,
+    poison_ledger_for_test: bool,
+) -> Result<ScanRun, String> {
     let Some(_running) = RunningGuard::acquire(&state, cancel_token.clone()) else {
         return Err(SCAN_BUSY.to_string());
     };
@@ -299,7 +356,7 @@ pub async fn run(state: Arc<ScanState>, url: String) -> Result<String, String> {
     // `OriginsGuard` has run, holds an empty origins vector, so it admits
     // nothing and no later scan can re-arm it — each scan allocates a fresh
     // `Arc`. A real shutdown signal is Phase 2 work.
-    let proxy_handle = proxy::start(Arc::clone(&origins), proxy::real_connector())
+    let proxy_handle = proxy::start(Arc::clone(&origins), connect)
         .await
         .map_err(|_| SCAN_FAILED.to_string())?;
     let proxy_port = proxy_handle.addr.port();
@@ -323,6 +380,12 @@ pub async fn run(state: Arc<ScanState>, url: String) -> Result<String, String> {
         _ => return Err(SCAN_FAILED.to_string()),
     };
 
+    let child_pid = launched.child.id();
+    let profile_dir = launched.profile_dir.clone();
+    if let Some(hook) = on_launched {
+        hook(child_pid, &profile_dir);
+    }
+
     let observed = cdp::observe(&launched, &target.url, MAX_PAGES, cancel_token).await;
 
     // Unconditional, and before the observation is unwrapped: the browser must
@@ -330,33 +393,109 @@ pub async fn run(state: Arc<ScanState>, url: String) -> Result<String, String> {
     // cancelled — and before anything reads the ledger.
     let torn_down = tokio::task::spawn_blocking(move || browser::tear_down(launched)).await;
 
-    let observation = observed.map_err(|_| SCAN_FAILED.to_string())?;
-    if !matches!(torn_down, Ok(Ok(()))) {
-        // A browser that would not die is a browser that could still be making
-        // requests behind the ledger read below.
-        return Err(SCAN_FAILED.to_string());
+    // Test-support only: poisons the ledger `run` would otherwise assert clean, so
+    // `tests/egress.rs` can prove the assertion below actually fires rather than assuming it
+    // would. Never set by `run`. `poison_ledger_for_test` is always `false` on the path `run`
+    // takes, so this whole block — gated on the same `test-support` feature as
+    // `Ledger::poison_for_test` itself — compiles out entirely from a release build; nothing
+    // here is reachable from production code either way.
+    #[cfg(feature = "test-support")]
+    if poison_ledger_for_test {
+        proxy_handle.ledger.poison_for_test();
     }
+    #[cfg(not(feature = "test-support"))]
+    let _ = poison_ledger_for_test;
 
-    if !ledger_is_consistent(
-        proxy_handle.ledger.healthy(),
-        proxy_handle.ledger.dropped_records(),
-        &proxy_handle.ledger.allowed(),
-        &target.origins,
-    ) {
-        return Err(SCAN_FAILED.to_string());
-    }
-    // Explicit, in the order the plan fixes; `OriginsGuard` repeats it on every
-    // path that never reaches this line.
-    lock(&origins).clear();
+    let result = (|| {
+        let observation = observed.map_err(|_| SCAN_FAILED.to_string())?;
+        if !matches!(torn_down, Ok(Ok(()))) {
+            // A browser that would not die is a browser that could still be making
+            // requests behind the ledger read below.
+            return Err(SCAN_FAILED.to_string());
+        }
 
-    serde_json::to_string(&ScanOutput {
-        scanned_host: target.host,
-        hosts: observation.hosts,
-        pages_visited: observation.pages_visited,
-        possible_gaps: observation.possible_gaps,
-        stopped_early: observation.stopped_early,
+        if !ledger_is_consistent(
+            proxy_handle.ledger.healthy(),
+            proxy_handle.ledger.dropped_records(),
+            &proxy_handle.ledger.allowed(),
+            &target.origins,
+        ) {
+            return Err(SCAN_FAILED.to_string());
+        }
+        // Explicit, in the order the plan fixes; `OriginsGuard` repeats it on every
+        // path that never reaches this line.
+        lock(&origins).clear();
+
+        Ok(ScanOutput {
+            scanned_host: target.host.clone(),
+            hosts: observation.hosts,
+            pages_visited: observation.pages_visited,
+            possible_gaps: observation.possible_gaps,
+            stopped_early: observation.stopped_early,
+        })
+    })();
+
+    Ok(ScanRun {
+        ledger: proxy_handle.ledger,
+        profile_dir,
+        child_pid,
+        result,
     })
-    .map_err(|_| SCAN_FAILED.to_string())
+}
+
+/// Run one scan and return its result as JSON.
+pub async fn run(state: Arc<ScanState>, url: String) -> Result<String, String> {
+    let target = parse_target(&url).map_err(str::to_string)?;
+    let cancel_token = CancellationToken::new();
+    let run = run_pipeline(state, target, proxy::real_connector(), cancel_token, None, false).await?;
+    run.result
+        .and_then(|output| serde_json::to_string(&output).map_err(|_| SCAN_FAILED.to_string()))
+}
+
+/// Test-support entry point for `tests/egress.rs` (spec §9.3's executable promise). Runs exactly
+/// `run`'s pipeline — admission, teardown order, the ledger assertion — against `connect` rather
+/// than a real resolver. See `run_pipeline`'s doc comment for why the connector is the one thing
+/// a test may substitute.
+///
+/// Gated behind the non-default `test-support` feature (see `Cargo.toml`) so this — and the two
+/// functions below it, and `proxy::Ledger::poison_for_test` — do not ship in the release rlib.
+/// `cargo build --release` compiles this crate without the feature, so none of the three exist
+/// as symbols in that build; `tests/egress.rs` enables it through the self dev-dependency in
+/// `Cargo.toml`.
+#[cfg(feature = "test-support")]
+pub async fn run_scan_for_test(
+    state: Arc<ScanState>,
+    target: Target,
+    connect: proxy::Connector,
+) -> Result<ScanRun, String> {
+    run_pipeline(state, target, connect, CancellationToken::new(), None, false).await
+}
+
+/// As [`run_scan_for_test`], but calls `hook` with the launched browser's pid and profile
+/// directory before observation starts — the only way a test can learn either value while the
+/// scan can still be reached through the public [`cancel`], since `run`'s pipeline does not
+/// expose them until after teardown has already run.
+#[cfg(feature = "test-support")]
+pub async fn run_scan_for_test_with_launch_hook(
+    state: Arc<ScanState>,
+    target: Target,
+    connect: proxy::Connector,
+    hook: LaunchHook,
+) -> Result<ScanRun, String> {
+    run_pipeline(state, target, connect, CancellationToken::new(), Some(hook), false).await
+}
+
+/// As [`run_scan_for_test`], but poisons this scan's ledger after teardown and before the ledger
+/// assertion, so a test can prove `run.result` is `Err` when the ledger dropped a record — the
+/// stricter rule `ledger_is_consistent`'s doc comment describes — without needing to fill
+/// `MAX_LEDGER_ENTRIES` for real.
+#[cfg(feature = "test-support")]
+pub async fn run_scan_for_test_with_poisoned_ledger(
+    state: Arc<ScanState>,
+    target: Target,
+    connect: proxy::Connector,
+) -> Result<ScanRun, String> {
+    run_pipeline(state, target, connect, CancellationToken::new(), None, true).await
 }
 
 /// The environment variables that can name a directory belonging to the user's

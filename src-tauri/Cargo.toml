@@ -145,6 +145,21 @@ futures-core = "0.3"
 [dev-dependencies]
 # Dev only. Never shipped.
 tempfile = "3"
+# Self dependency, `test-support` feature only: `tests/egress.rs` links this crate as an
+# external integration test and needs `scan::run_scan_for_test*`, `scan::LaunchHook`,
+# `scan::ScanRun` and `proxy::Ledger::poison_for_test` — real `pub` seams, but ones a
+# release build must not carry (see [features] below). Without this line those seams
+# would either have to be `pub` unconditionally (shipping in every build, including the
+# release rlib) or invisible to `tests/egress.rs` (which cannot see a `#[cfg(test)]` item
+# in the crate it links against). This is the standard pattern for exposing test-only `pub`
+# surface to an integration test without shipping it.
+traccia = { path = ".", features = ["test-support"] }
+
+[features]
+# Off by default, so `cargo build --release` (and every other default build) never carries
+# the seams below. On for `tests/egress.rs` via the self dev-dependency above, and can be
+# turned on explicitly for any other integration test that needs the same seams.
+test-support = []
 
 [profile.release]
 opt-level = "z"

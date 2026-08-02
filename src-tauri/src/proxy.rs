@@ -197,6 +197,22 @@ impl Ledger {
     pub fn healthy(&self) -> bool {
         self.handler_panics.load(Ordering::SeqCst) == 0 && self.accepted() == self.outcomes()
     }
+    /// Test-support only, and deliberately not `#[cfg(test)]`: `tests/egress.rs` links this crate
+    /// as an external crate, so a `#[cfg(test)]` item built for this crate's own unit tests is not
+    /// reachable from it. Forces `dropped_records` above zero without going through the capped
+    /// detail vectors, so `scan.rs`'s stricter rule — a scan whose ledger dropped anything must not
+    /// report success, which `healthy()` deliberately does not enforce on its own (see the doc
+    /// comment above) — can be exercised end to end without driving `MAX_LEDGER_ENTRIES` real
+    /// connections through a live proxy to fill the record for real. Never called from production
+    /// code; `healthy()` and every other observable above are unaffected by it.
+    ///
+    /// Gated behind the non-default `test-support` feature (see `Cargo.toml`'s `[features]`), so
+    /// this symbol does not exist in `cargo build --release`'s rlib. `tests/egress.rs` reaches it
+    /// through the self dev-dependency in `Cargo.toml` that enables the feature.
+    #[cfg(feature = "test-support")]
+    pub fn poison_for_test(&self) {
+        self.dropped_records.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 pub struct ProxyHandle {
