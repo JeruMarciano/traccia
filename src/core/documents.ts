@@ -147,7 +147,7 @@ export function ingestDocument(project: Project, confirmed: Candidate[]): Projec
       const known = new Set(existing.sources.map((s) => s.documentName))
       const fresh = candidate.sourceNames
         .filter((n) => !known.has(n))
-        .map((n) => ({ documentId: n, documentName: n }))
+        .map((n) => ({ documentId: n, documentName: n, locator: candidate.evidence }))
       if (fresh.length === 0) continue
       working = {
         ...working,
@@ -169,7 +169,14 @@ export function ingestDocument(project: Project, confirmed: Candidate[]): Projec
       purposeGroup: candidate.purposeGroup,
       holder: candidate.holder,
       leavesEEA: 'unknown',
-      sources: candidate.sourceNames.map((s) => ({ documentId: s, documentName: s })),
+      // `locator` carries the passage the match was found in — the one fragment of a document
+      // that outlives it, because "why is this on the map?" is unanswerable without it. A
+      // sentence, not the file: the document itself is still never stored.
+      sources: candidate.sourceNames.map((s) => ({
+        documentId: s,
+        documentName: s,
+        locator: candidate.evidence,
+      })),
       confidence: 'declared',
     }
     working = addPlace(working, place, id)
