@@ -93,8 +93,45 @@
   "iubenda": { "name": "Iubenda", "purposeGroup": "Website tracking", "layer": "external", "holder": "supplier" },
   "usercentrics": { "name": "Usercentrics", "purposeGroup": "Website tracking", "layer": "external", "holder": "supplier" },
 
+  "email": { "name": "Email", "purposeGroup": "Office & Email", "layer": "internal", "holder": "you" },
+  "online payments": { "name": "Online payments", "purposeGroup": "Payments", "layer": "external", "holder": "supplier" },
+  "digital signature": { "name": "Digital signature", "purposeGroup": "IT & Infrastructure", "layer": "internal", "holder": "you" },
+  "customer support": { "name": "Customer support", "purposeGroup": "Customer Support", "layer": "internal", "holder": "you" },
+
   "video surveillance": { "name": "Video surveillance", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
   "cctv": { "name": "Video surveillance", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
   "badge": { "name": "Access control", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
-  "access control": { "name": "Access control", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" }
+  "access control": { "name": "Access control", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
+
+  "buste paga": { "name": "Payroll system", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
+  "busta paga": { "name": "Payroll system", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
+  "libro paga": { "name": "Payroll system", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
+  "cedolino": { "name": "Payroll system", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
+  "cedolini": { "name": "Payroll system", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
+  "stipendi": { "name": "Payroll system", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
+  "risorse umane": { "name": "HR management", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
+  "gestione del personale": { "name": "HR management", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
+  "selezione del personale": { "name": "Recruiting", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
+  "curriculum": { "name": "Recruiting", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
+
+  "contabilità": { "name": "Accounting system", "purposeGroup": "Finance & Accounting", "layer": "internal", "holder": "you" },
+  "fatturazione": { "name": "Invoicing", "purposeGroup": "Finance & Accounting", "layer": "internal", "holder": "you" },
+  "pagamenti online": { "name": "Online payments", "purposeGroup": "Payments", "layer": "external", "holder": "supplier" },
+
+  "anagrafica clienti": { "name": "Customer database", "purposeGroup": "Sales & CRM", "layer": "internal", "holder": "you" },
+  "gestione clienti": { "name": "CRM", "purposeGroup": "Sales & CRM", "layer": "internal", "holder": "you" },
+
+  "posta elettronica": { "name": "Email", "purposeGroup": "Office & Email", "layer": "internal", "holder": "you" },
+  "assistenza clienti": { "name": "Customer support", "purposeGroup": "Customer Support", "layer": "internal", "holder": "you" },
+  "copia di sicurezza": { "name": "Backup", "purposeGroup": "IT & Infrastructure", "layer": "internal", "holder": "you" },
+  "firma digitale": { "name": "Digital signature", "purposeGroup": "IT & Infrastructure", "layer": "internal", "holder": "you" },
+
+  "traccianti": { "name": "Trackers", "purposeGroup": "Website tracking", "layer": "external", "holder": "supplier" },
+  "pixel di tracciamento": { "name": "Trackers", "purposeGroup": "Website tracking", "layer": "external", "holder": "supplier" },
+  "gestione del consenso": { "name": "Consent management", "purposeGroup": "Website tracking", "layer": "internal", "holder": "you" },
+  "banner cookie": { "name": "Cookie banner", "purposeGroup": "Website tracking", "layer": "internal", "holder": "you" },
+
+  "videosorveglianza": { "name": "Video surveillance", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
+  "telecamere": { "name": "Video surveillance", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
+  "controllo accessi": { "name": "Access control", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" }
 }

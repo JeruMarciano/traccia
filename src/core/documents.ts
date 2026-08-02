@@ -53,6 +53,29 @@ function escapeRegExp(s: string): string {
 }
 
 /**
+ * A dictionary term, anchored so it matches a whole word and never part of one.
+ *
+ * `\b` cannot do this job. It is defined against `[A-Za-z0-9_]`, so every accented letter
+ * counts as a boundary character — which gets Italian exactly backwards. `\bcontabilità\b`
+ * fails on "la contabilità aziendale" (the closing boundary wants a letter-to-non-letter
+ * step and finds "à" against " ", neither of them a word character to `\b`) and succeeds on
+ * "contabilitàaziendale" (there the "à"-to-"a" step reads as a boundary). A dictionary of
+ * Italian terms matched that way would look complete and find nothing.
+ *
+ * Unicode classes say what was meant all along: no letter or digit either side, whatever
+ * alphabet it is written in. Punctuation, spaces and line breaks remain boundaries.
+ *
+ * The opening side is a capture group rather than a lookbehind, which would read better.
+ * Lookbehind needs Safari 16.4, the build targets es2022 (Safari 15.4), and no minimum
+ * system version is declared — so on an older Mac the pattern would throw where it is built,
+ * which is inside document ingestion, and the only thing the user would see is "the documents
+ * could not be read". A capture group costs one offset at the call site and nothing else.
+ */
+function wholeWord(term: string): RegExp {
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, 'u')
+}
+
+/**
  * Every candidate the given documents suggest, deduplicated by name across documents (a
  * system named in three files is one candidate carrying three source names). Order:
  * first appearance across the documents, in the order given.
@@ -63,6 +86,15 @@ export function extractCandidates(
   internal: InternalSystemDictionary,
 ): Candidate[] {
   const byKey = new Map<string, Candidate>()
+
+  // The dictionary is fixed for the whole call, so its patterns are compiled once here rather
+  // than once per document. None carries the global flag, so none holds a lastIndex to reset
+  // between documents.
+  const terms = Object.entries(internal).map(([term, entry]) => ({
+    entry,
+    length: term.length,
+    pattern: wholeWord(term.toLowerCase()),
+  }))
 
   const add = (candidate: Omit<Candidate, 'id' | 'sourceNames'>, sourceName: string): void => {
     const key = candidate.name.toLowerCase()
@@ -78,11 +110,13 @@ export function extractCandidates(
     const text = doc.text
     const lower = text.toLowerCase()
 
-    // 1. Internal-systems dictionary: term match on word boundaries, case-insensitive.
-    for (const [term, entry] of Object.entries(internal)) {
-      const re = new RegExp(`\\b${escapeRegExp(term.toLowerCase())}\\b`)
-      const m = re.exec(lower)
+    // 1. Internal-systems dictionary: whole-word term match, case-insensitive.
+    for (const { entry, length, pattern } of terms) {
+      const m = pattern.exec(lower)
       if (m === null) continue
+      // The match starts after whatever the opening group swallowed: one character mid-text,
+      // nothing at all at the very start of the document.
+      const at = m.index + (m[1]?.length ?? 0)
       add(
         {
           name: entry.name,
@@ -90,7 +124,7 @@ export function extractCandidates(
           purposeGroup: entry.purposeGroup,
           holder: entry.holder,
           kind: entry.layer === 'internal' ? 'internal' : 'processor',
-          evidence: evidenceAround(text, m.index, term.length),
+          evidence: evidenceAround(text, at, length),
         },
         doc.name,
       )

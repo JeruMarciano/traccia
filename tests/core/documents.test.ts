@@ -67,6 +67,51 @@ describe('extractCandidates', () => {
   })
 })
 
+// A term is matched on letter boundaries, not on ASCII word boundaries. `\b` treats every
+// accented letter as a non-letter, so `\bcontabilità\b` never matches anything at all: the
+// trailing boundary asks for a letter-to-non-letter transition and finds non-letter on both
+// sides. That silently disables every Italian term ending in a vowel with an accent -- the
+// dictionary would look right and match nothing.
+describe('matching terms that are not ASCII', () => {
+  const ACCENTED: InternalSystemDictionary = {
+    contabilità: {
+      name: 'Accounting system',
+      purposeGroup: 'Finance & Accounting',
+      layer: 'internal',
+      holder: 'you',
+    },
+    videosorveglianza: {
+      name: 'Video surveillance',
+      purposeGroup: 'Facilities & Security',
+      layer: 'internal',
+      holder: 'you',
+    },
+  }
+
+  it('finds a term ending in an accented letter', () => {
+    const docs = [{ name: 'nota.pdf', text: 'La contabilità è tenuta internamente.' }]
+    const out = extractCandidates(docs, VENDORS, ACCENTED)
+    expect(out.map((c) => c.name)).toEqual(['Accounting system'])
+  })
+
+  it('still refuses a term that is only part of a longer word', () => {
+    const docs = [{ name: 'a.txt', text: 'contabilitàaziendale videosorveglianzaX' }]
+    expect(extractCandidates(docs, VENDORS, ACCENTED)).toHaveLength(0)
+  })
+
+  it('treats an accented letter next to the term as part of a longer word', () => {
+    // "è" is a letter, so "èvideosorveglianza" is one word and holds no term.
+    const docs = [{ name: 'a.txt', text: 'èvideosorveglianza' }]
+    expect(extractCandidates(docs, VENDORS, ACCENTED)).toHaveLength(0)
+  })
+
+  it('matches a term sitting against punctuation', () => {
+    const docs = [{ name: 'a.txt', text: 'Impianti: videosorveglianza, badge.' }]
+    const out = extractCandidates(docs, VENDORS, ACCENTED)
+    expect(out.map((c) => c.name)).toEqual(['Video surveillance'])
+  })
+})
+
 function confirmed(over: Partial<Candidate>): Candidate {
   return {
     id: 'payroll-system',
