@@ -9,6 +9,8 @@ export interface LayoutNode {
   count?: number
   leavesEEA?: number
   unexplained?: number
+  /** True for a group the organisation runs itself — the inner orbit. */
+  internal?: boolean
 }
 
 export interface LayoutEdge {
@@ -72,12 +74,13 @@ export function computeLayout(
       count: inGroup.length,
       leavesEEA: inGroup.filter((p) => p.leavesEEA === true).length,
       unexplained: inGroup.filter((p) => p.kind === 'unknown').length,
+      internal: isInternal(group),
     })
     edges.push({ from: 'centre', to: `group:${group}` })
   }
 
   outer.forEach((group, i) => place(group, i, outer.length, 1))
-  // Offset half a step so an inner tile does not sit directly under an outer connector.
+  // Offset half a step so an inner node does not sit directly under an outer connector.
   inner.forEach((group, i) => place(group, i + 0.5, Math.max(inner.length, 2), 0.52))
 
   return { nodes, edges }

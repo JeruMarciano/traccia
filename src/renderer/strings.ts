@@ -32,12 +32,16 @@ export const STRINGS = {
   groupTitle: (name: string, places: number): string => `${name}: ${places} places`,
   mapEmpty: 'Open a project to draw the map.',
 
+  leavingCount: (n: number): string => `${n} outside the EEA`,
+
   keyPeople: 'People',
   keyPeopleGloss: 'Every line starts here.',
-  keyRecorded: 'Recorded',
-  keyRecordedGloss: 'A document or a scan says so.',
+  keyInternal: 'Your systems',
+  keyInternalGloss: 'Run by the organisation itself.',
+  keyExternal: 'Suppliers',
+  keyExternalGloss: 'Run by somebody else.',
   keyOpen: 'Not yet identified',
-  keyOpenGloss: 'Waiting on an answer.',
+  keyOpenGloss: 'The dashed share of a ring.',
   keyCrossing: 'Leaves the EEA',
   keyCrossingGloss: 'Data comes to rest outside the area.',
 
