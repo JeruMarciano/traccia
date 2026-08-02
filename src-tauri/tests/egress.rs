@@ -393,7 +393,17 @@ const FIXTURE_IP_LITERALS: [&str; 3] = ["192.0.2.10", "198.51.100.20", "203.0.11
 /// not a claim that any of it is acceptable to leave unsuppressed forever. A host
 /// appearing in a scan's denied set that is **not** in this list is the finding this
 /// test exists to catch.
-const KNOWN_DENIED_BROWSER_SERVICE_HOSTS: [(&str, &str); 4] = [
+const KNOWN_DENIED_BROWSER_SERVICE_HOSTS: [(&str, &str); 5] = [
+    (
+        "safebrowsingohttpgateway.googleapis.com",
+        "Safe Browsing hash-prefix lookups routed through Google's Oblivious HTTP \
+         gateway — attempted by the GitHub Actions runner's Chrome (newer than the \
+         locally verified 151, which never attempts it) on first navigation; no \
+         --disable-features name or switch verified present for it, and the \
+         historical --safebrowsing-* switches were already found absent from \
+         Chrome 151 in the Task 6 audit. Denied by the proxy like every host in \
+         this list; nothing leaves the machine",
+    ),
     (
         "www.gstatic.com",
         "connectivity/search-choice-family request; no distinct switch found beyond \
