@@ -44,4 +44,21 @@ export const STRINGS = {
   dismiss: 'Dismiss',
   openFailed: 'This file could not be read as a project.',
   saveFailed: 'The project could not be saved.',
+
+  scanPlaceholder: 'Website address',
+  scan: 'Scan',
+  scanning: (page: number, of: number): string => `Scanning — page ${page} of ${of}`,
+  scanCancel: 'Stop',
+  scanNoBrowser: 'Traccia could not find Chrome or Edge on this computer.',
+  scanBadUrl:
+    'That does not look like a website address Traccia can scan. Paste the plain address, without a port number such as ":443".',
+  scanBusy: 'A scan is already running. Let it finish, or stop it, before starting another.',
+  scanFailed: 'The scan could not be completed.',
+  scanFoundNothing: 'The scan finished without observing any third party.',
+  scanIncomplete: (n: number): string =>
+    `Scan complete — ${n} ${n === 1 ? 'place' : 'places'} where the map may be incomplete.`,
+  scanStopped: (n: number): string =>
+    n === 0
+      ? 'Scan stopped before it finished.'
+      : `Scan stopped before it finished — ${n} ${n === 1 ? 'place' : 'places'} where the map may be incomplete.`,
 } as const

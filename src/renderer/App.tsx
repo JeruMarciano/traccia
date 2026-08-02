@@ -2,13 +2,20 @@ import { useMemo, useState } from 'react'
 import { createEmptyProject } from '../core/project'
 import { computeGaps } from '../core/gaps'
 import { computeLayout } from '../core/layout'
-import { initHistory, undo, redo, canUndo, canRedo } from '../core/history'
+import { initHistory, push, undo, redo, canUndo, canRedo } from '../core/history'
+import { ingestScan } from '../core/scan'
+import type { VendorDictionary } from '../core/types'
+import vendorsJson from '../data/vendors.json'
 import { MapView } from './components/MapView'
 import { RegisterPanel } from './components/RegisterPanel'
-import { openProject as openViaShell, saveProject as saveViaShell } from './bridge'
+import { ScanBar } from './components/ScanBar'
+import { openProject as openViaShell, saveProject as saveViaShell, startScan, cancelScan, scanNotice } from './bridge'
 import { saveNotice } from './saveNotice'
+import { scanResultNotice } from './scanResultNotice'
 import { STRINGS } from './strings'
 import { STYLESHEET } from './theme'
+
+const VENDORS = vendorsJson as VendorDictionary
 
 export function App() {
   const [history, setHistory] = useState(() =>
@@ -17,6 +24,7 @@ export function App() {
   const project = history.present
   const [selected, setSelected] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [scanning, setScanning] = useState(false)
 
   const layout = useMemo(() => computeLayout(project, { width: 800, height: 500 }), [project])
   const gaps = useMemo(() => computeGaps(project), [project])
@@ -46,6 +54,28 @@ export function App() {
     }
   }
 
+  async function runScan(url: string): Promise<void> {
+    setScanning(true)
+    try {
+      const result = await startScan(url)
+      setHistory((h) => push(h, ingestScan(h.present, result, VENDORS, { prefix: `scan${h.past.length + 1}` })))
+      setNotice(scanResultNotice(result))
+    } catch (e) {
+      setNotice(scanNotice(e))
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  async function stopScan(): Promise<void> {
+    try {
+      await cancelScan()
+    } catch {
+      // The scan's own completion path already reports whatever happened; a rejection here
+      // has nothing further for the user to act on.
+    }
+  }
+
   // The title block dates the sheet, which matters once it is printed and left with a client.
   // A project file is only checked for a string, so the date is shown only when it reads as one.
   const started = /^\d{4}-\d{2}-\d{2}/.test(project.createdAt) ? project.createdAt.slice(0, 10) : null
@@ -70,6 +100,7 @@ export function App() {
               </button>
             </div>
           </header>
+          <ScanBar scanning={scanning} onScan={(url) => void runScan(url)} onCancel={() => void stopScan()} />
           {notice === null ? null : (
             <p className="notice" role="status">
               {notice}
