@@ -53,6 +53,34 @@ export const STRINGS = {
   openFailed: 'This file could not be read as a project.',
   saveFailed: 'The project could not be saved.',
 
+  detailHeading: 'What is here',
+  detailEmpty: 'Click a point on the map to see what it holds.',
+  detailPeopleHeading: 'People',
+  detailHolder: 'Held by',
+  detailKind: 'Role',
+  detailConfidence: 'Confidence',
+  detailJurisdiction: 'Jurisdiction',
+  detailLeavesEEA: 'EEA',
+  detailRetention: 'Retention',
+  detailFlowsHeading: 'What flows in',
+  detailFlowFrom: (from: string, purpose: string): string => `${from} — ${purpose}`,
+  detailObservationsHeading: 'Observed',
+  detailObservation: (domain: string, requestCount: number, beforeConsent: boolean): string => {
+    const requests = `${requestCount} ${requestCount === 1 ? 'request' : 'requests'}`
+    return beforeConsent ? `${domain} — ${requests}, before consent` : `${domain} — ${requests}`
+  },
+
+  holderYou: 'Held by you',
+  holderSupplier: 'Held by a supplier',
+  kindCollection: 'Collects data directly',
+  kindInternal: 'Used internally',
+  kindProcessor: 'Processes data on your behalf',
+  confidenceObserved: 'Observed by a scan',
+  confidenceDeclared: 'Declared in a document',
+  confidenceInferred: 'Inferred',
+  leavesEEAYes: 'Leaves the EEA',
+  leavesEEANo: 'Stays inside the EEA',
+
   scanPlaceholder: 'Website address',
   scan: 'Scan',
   scanCancel: 'Stop',

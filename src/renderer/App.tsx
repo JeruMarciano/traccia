@@ -6,6 +6,7 @@ import { initHistory, push, undo, redo, canUndo, canRedo } from '../core/history
 import { ingestScan } from '../core/scan'
 import type { VendorDictionary } from '../core/types'
 import vendorsJson from '../data/vendors.json'
+import { DetailPanel } from './components/DetailPanel'
 import { MapView } from './components/MapView'
 import { RegisterPanel } from './components/RegisterPanel'
 import { ScanBar } from './components/ScanBar'
@@ -124,8 +125,9 @@ export function App() {
             <p className="print-limits">{STRINGS.printLimits}</p>
             {printGaps === null ? null : <p className="print-gaps">{printGaps}</p>}
           </div>
+          <RegisterPanel gaps={gaps} onHover={setSelected} />
         </main>
-        <RegisterPanel gaps={gaps} onHover={setSelected} />
+        <DetailPanel project={project} selected={selected} dictionary={VENDORS} />
       </div>
     </>
   )
