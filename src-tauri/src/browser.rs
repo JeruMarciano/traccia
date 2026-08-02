@@ -149,7 +149,11 @@ pub enum LaunchError {
 /// headless start (well under a second on this machine) so a slow CI runner
 /// does not produce a false failure, but finite so a browser that never
 /// opens its debugging port cannot hang the caller forever.
-const DEVTOOLS_READY_TIMEOUT: Duration = Duration::from_secs(10);
+// Thirty seconds, not ten: a cold Chrome on a loaded Windows machine (observed on the
+// GitHub Actions runner) can take longer than ten to write DevToolsActivePort. The wait
+// still ends the moment the file appears or the process dies; only the failure case
+// waits this long.
+const DEVTOOLS_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const DEVTOOLS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Right after `kill()`, a child's own children (e.g. Chrome's renderer
@@ -524,6 +528,13 @@ fn wait_for_devtools_port(
 ) -> Result<u16, LaunchError> {
     let deadline = Instant::now() + timeout;
     let port_file = profile_dir.join("DevToolsActivePort");
+    // The last thing that went wrong, reported only if the deadline passes. A file that is
+    // mid-write is indistinguishable from a broken one until Chrome finishes: on Windows a
+    // read during the write fails with a sharing violation (os error 32, observed on the
+    // GitHub Actions runner), and a read between creation and content can parse as
+    // malformed. Both are "not ready yet", not verdicts — the only immediate exits are
+    // success and a dead child.
+    let mut last_error: Option<LaunchError> = None;
     loop {
         if let Ok(Some(status)) = child.try_wait() {
             return Err(LaunchError::ProcessExitedBeforeReady {
@@ -531,12 +542,15 @@ fn wait_for_devtools_port(
             });
         }
         match std::fs::read_to_string(&port_file) {
-            Ok(contents) => return parse_devtools_port(&contents),
+            Ok(contents) => match parse_devtools_port(&contents) {
+                Ok(port) => return Ok(port),
+                Err(e) => last_error = Some(e),
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(LaunchError::DevToolsPortUnreadable(e)),
+            Err(e) => last_error = Some(LaunchError::DevToolsPortUnreadable(e)),
         }
         if Instant::now() >= deadline {
-            return Err(LaunchError::DevToolsPortTimeout);
+            return Err(last_error.unwrap_or(LaunchError::DevToolsPortTimeout));
         }
         std::thread::sleep(DEVTOOLS_POLL_INTERVAL);
     }
