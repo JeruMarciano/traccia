@@ -288,4 +288,94 @@ describe('ingestScan', () => {
     )
     expect(JSON.stringify(before)).toBe(snapshot)
   })
+
+  describe('own-subdomain skipping', () => {
+    // Rust admission (src-tauri/src/scan.rs, src-tauri/src/admission.rs)
+    // deliberately admits label-boundary subdomains of the scan origin as
+    // part of the site itself, not as a third party. ingestScan must mirror
+    // that rule exactly, or a site served from a subdomain (e.g.
+    // www.rossi-editore.it) turns its own delivery host into a fabricated
+    // third-party supplier.
+    it('skips an observed host equal to the scanned host', () => {
+      const p = ingestScan(
+        emptyProject(),
+        result({
+          scannedHost: 'rossi-editore.it',
+          hosts: [{ host: 'rossi-editore.it', requestCount: 12 }],
+        }),
+        DICT,
+        IDS,
+      )
+      expect(p.places.some((pl) => pl.holder === 'supplier')).toBe(false)
+    })
+
+    it('skips a www. subdomain of the scanned host', () => {
+      const p = ingestScan(
+        emptyProject(),
+        result({
+          scannedHost: 'rossi-editore.it',
+          hosts: [
+            { host: 'rossi-editore.it', requestCount: 12 },
+            { host: 'www.rossi-editore.it', requestCount: 4 },
+          ],
+        }),
+        DICT,
+        IDS,
+      )
+      expect(p.places.some((pl) => pl.holder === 'supplier')).toBe(false)
+      expect(p.places.some((pl) => pl.name === 'www.rossi-editore.it')).toBe(false)
+    })
+
+    it('skips a deeper subdomain of the scanned host', () => {
+      const p = ingestScan(
+        emptyProject(),
+        result({
+          scannedHost: 'rossi-editore.it',
+          hosts: [
+            { host: 'rossi-editore.it', requestCount: 12 },
+            { host: 'static.assets.rossi-editore.it', requestCount: 2 },
+          ],
+        }),
+        DICT,
+        IDS,
+      )
+      expect(p.places.some((pl) => pl.holder === 'supplier')).toBe(false)
+    })
+
+    it('does NOT skip a host that merely contains the scanned host without a label boundary', () => {
+      const p = ingestScan(
+        emptyProject(),
+        result({
+          scannedHost: 'rossi-editore.it',
+          hosts: [
+            { host: 'rossi-editore.it', requestCount: 12 },
+            { host: 'evil-rossi-editore.it', requestCount: 2 },
+          ],
+        }),
+        DICT,
+        IDS,
+      )
+      const supplier = p.places.find((pl) => pl.name === 'evil-rossi-editore.it')
+      expect(supplier).toBeDefined()
+      expect(supplier?.holder).toBe('supplier')
+    })
+
+    it('does NOT skip a suffix-trick host where the scanned host appears as a prefix label chain', () => {
+      const p = ingestScan(
+        emptyProject(),
+        result({
+          scannedHost: 'rossi-editore.it',
+          hosts: [
+            { host: 'rossi-editore.it', requestCount: 12 },
+            { host: 'rossi-editore.it.evil.com', requestCount: 2 },
+          ],
+        }),
+        DICT,
+        IDS,
+      )
+      const supplier = p.places.find((pl) => pl.name === 'rossi-editore.it.evil.com')
+      expect(supplier).toBeDefined()
+      expect(supplier?.holder).toBe('supplier')
+    })
+  })
 })
