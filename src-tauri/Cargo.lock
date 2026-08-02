@@ -3843,6 +3843,7 @@ name = "traccia"
 version = "1.0.0"
 dependencies = [
  "chromiumoxide",
+ "futures-core",
  "serde",
  "serde_json",
  "tauri",

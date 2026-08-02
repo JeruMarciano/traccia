@@ -44,6 +44,35 @@ tauri-build = { version = "2", features = [] }
 #                         .dmg, rising to +1,581,216 / +836,366 once
 #                         `Browser::connect` is on a live path. Method and
 #                         caveats: docs/decisions/2026-08-01-v0.1-preflight.md.
+#   futures-core          The `Stream` trait, and nothing else. Task 7's cdp.rs
+#                         drives `chromiumoxide::conn::Connection` directly
+#                         rather than through `Browser` (preflight §1), and
+#                         `Connection` is a `Stream` — polling it means naming
+#                         the trait, and chromiumoxide does not re-export it.
+#                         Deliberately futures-core and not `futures`: the trait
+#                         alone, none of the combinators, none of the executor.
+#
+#                         SHIPPED BYTES: zero. This adds no package to
+#                         Cargo.lock — the only change there is one line in
+#                         traccia's own dependency list. futures-core 0.3.33 is
+#                         already compiled into the macOS build graph, three
+#                         ways over. Verified with `cargo tree -e normal -i
+#                         futures-core`, which prints:
+#
+#                             futures-core v0.3.33
+#                             ├── futures v0.3.33
+#                             │   └── chromiumoxide v0.7.0
+#                             │       └── traccia v1.0.0
+#                             ├── futures-channel v0.3.33
+#                             │   ├── futures v0.3.33 (*)
+#                             │   ├── futures-util v0.3.33
+#                             │   │   ├── async-tungstenite v0.27.0
+#                             │   │   │   └── chromiumoxide v0.7.0 (*)
+#                             ...
+#
+#                         i.e. it was already reachable through chromiumoxide
+#                         before this line existed. Declaring it changes what
+#                         this crate may name, not what the linker sees.
 #
 # Deliberately NOT taken:
 #   hyper / reqwest / h2  The proxy handles CONNECT only: parse a request line,
@@ -71,6 +100,18 @@ tauri-build = { version = "2", features = [] }
 #                         Fetch first. This is the F2 race the CDP spike proved
 #                         must not happen, so the interception loop cannot be
 #                         delegated to `Browser`. See the preflight doc §1.
+#   tokio-util            The obvious home for a CancellationToken, and the type
+#                         Task 7's brief named. Not taken: unlike futures-core
+#                         it is genuinely absent from this build graph — `cargo
+#                         tree -e normal -i tokio-util` prints "nothing to
+#                         print" on macOS — so taking it would compile and ship
+#                         a new crate. cdp.rs defines its own
+#                         `CancellationToken` over an Arc<AtomicBool> instead:
+#                         set a flag, read a flag, which is the whole of what a
+#                         scan needs to be stoppable. If a later task wants the
+#                         real token's `cancelled()` future to await on, that is
+#                         a dependency decision to take then, with bytes
+#                         measured — not a thing to inherit by accident.
 #   uuid                  Temp-file uniqueness comes from pid + a process-local
 #                         counter + nanos since epoch. Same guarantee, no crate.
 #   tokio-tungstenite     CDP is Phase 2. Not added until it is needed.
@@ -99,6 +140,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
+futures-core = "0.3"
 
 [dev-dependencies]
 # Dev only. Never shipped.
