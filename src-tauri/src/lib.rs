@@ -7,6 +7,7 @@
 // interface if it is reachable from the crate root. `proxy` is the only caller in this crate.
 pub mod admission;
 pub mod browser;
+pub mod cdp;
 pub mod commands;
 pub mod log;
 // `pub` for the same reason `admission` is: Task 5's stated interface is only an interface if it
