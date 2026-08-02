@@ -43,7 +43,7 @@ pub struct ObservedHost {
 /// What one scan saw.
 ///
 /// Serialises to
-/// `{ "hosts": [...], "pagesVisited": n, "possibleGaps": n }`.
+/// `{ "hosts": [...], "pagesVisited": n, "possibleGaps": n, "stoppedEarly": bool }`.
 /// `ScanResult`'s remaining field, `scannedHost`, is the caller's — Task 8
 /// knows the URL the user typed and this module deliberately does not decide
 /// what "the scanned host" is.
@@ -2224,13 +2224,10 @@ mod tests {
         // `ScanResult` in src/core/types.ts: hosts[].host, hosts[].requestCount,
         // pagesVisited. `scannedHost` is the caller's to add.
         //
-        // `possibleGaps` is the one key here that `ScanResult` does not yet
-        // have. It leaves `observe` deliberately and is not wired into the
-        // renderer by this task: Task 9 must add it to `ScanResult` and
-        // surface it, and Task 10's printed limits statement must mention it
-        // when it is non-zero. Until then it travels in the JSON and is
-        // ignored by the reader, which is the right way round — the number
-        // exists whether or not anyone is displaying it yet.
+        // `possibleGaps` was the one key here that `ScanResult` did not yet
+        // have when this module was first written. Task 9 has since added it
+        // to `ScanResult` and surfaced it, and Task 10's printed limits
+        // statement mentions it when it is non-zero.
         //
         // The name is load-bearing. It says "places where the map may be
         // incomplete", which is all the number can honestly claim: a failed

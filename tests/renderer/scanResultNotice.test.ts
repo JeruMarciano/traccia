@@ -42,4 +42,27 @@ describe('scanResultNotice', () => {
       scanResultNotice(result({ hosts: [{ host: 'rossi-editore.it', requestCount: 1 }] })),
     ).toBe(STRINGS.scanFoundNothing)
   })
+
+  it('reports the gap count, not "found nothing", when no third party was observed but gaps remain', () => {
+    // A scan that saw no third party but still counted possible gaps is the least
+    // trustworthy map, not the cleanest one -- and the printed sheet does show the
+    // gap count in this situation. The renderer notice must agree with it, rather
+    // than dropping the incompleteness signal because hosts.length <= 1.
+    const notice = scanResultNotice(
+      result({ hosts: [{ host: 'rossi-editore.it', requestCount: 1 }], possibleGaps: 2 }),
+    )
+    expect(notice).toBe(STRINGS.scanIncomplete(2))
+    expect(notice).not.toBe(STRINGS.scanFoundNothing)
+  })
+
+  it('still presents a stopped scan as stopped, even with no third party observed and gaps present', () => {
+    const notice = scanResultNotice(
+      result({
+        hosts: [{ host: 'rossi-editore.it', requestCount: 1 }],
+        possibleGaps: 2,
+        stoppedEarly: true,
+      }),
+    )
+    expect(notice).toBe(STRINGS.scanStopped(2))
+  })
 })
