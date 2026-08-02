@@ -1,9 +1,8 @@
 /*
  * The printed sheet. On screen the app is a working tool: a scan control, a title-block full of
- * actions, a session notice, a section of open questions under the map, and a panel showing
- * whatever point is selected. On paper it is a document a consultant leaves with a client, so
- * only the title block and the map survive the change of medium -- the questions and the
- * selection panel are working views, not part of what gets handed over.
+ * actions, a session notice, and a bar showing whatever point is clicked. On paper it is a
+ * document a consultant leaves with a client, so only the title block and the map survive the
+ * change of medium -- the detail bar is a working view, not part of what gets handed over.
  *
  * `.print-only` carries `printLimits` and, when there is one, the possible-gaps sentence. Both
  * are ordinary text in the DOM at all times -- theme.ts keeps them off the screen -- so what
@@ -19,9 +18,9 @@
   .sheet { display: block; height: auto; }
   .plate { padding: 0; }
 
-  /* The scan control, the title-block actions, any session notice, the open-questions section
-     and the selection panel are all for this screen -- none of them leaves the room on paper. */
-  .scanbar, .actions, .notice, .register, .detail { display: none; }
+  /* The scan control, the title-block actions, any session notice and the detail bar are all
+     for this screen -- none of them leaves the room on paper. */
+  .scanbar, .actions, .notice, .detail { display: none; }
 
   .map-svg { height: auto; }
   .dim { opacity: 1; }

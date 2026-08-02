@@ -41,12 +41,6 @@ export const STRINGS = {
   keyCrossing: 'Leaves the EEA',
   keyCrossingGloss: 'Data comes to rest outside the area.',
 
-  registerHeading: 'Not yet identified',
-  registerCaption: 'Fullest marks first. Answer one and it leaves this list.',
-  registerEmpty: 'No open questions yet. They appear here as the map fills in.',
-  priority: (severity: 1 | 2 | 3): string =>
-    severity === 1 ? 'Answer first' : severity === 2 ? 'Answer next' : 'Answer when you can',
-
   saveBlocked:
     'The project could not be saved because another program is holding the file open. Close it and try again.',
   dismiss: 'Dismiss',
@@ -54,32 +48,16 @@ export const STRINGS = {
   saveFailed: 'The project could not be saved.',
 
   detailHeading: 'What is here',
-  detailEmpty: 'Click a point on the map to see what it holds.',
   detailPeopleHeading: 'People',
-  detailHolder: 'Held by',
-  detailKind: 'Role',
-  detailConfidence: 'Confidence',
-  detailJurisdiction: 'Jurisdiction',
-  detailLeavesEEA: 'EEA',
+  detailWhere: 'Where',
+  detailWhereOutsideEEA: 'Outside the EEA',
+  detailWhereInsideEEA: 'Inside the EEA',
   detailRetention: 'Retention',
-  detailFlowsHeading: 'What flows in',
-  detailFlowFrom: (from: string, purpose: string): string => `${from} — ${purpose}`,
-  detailObservationsHeading: 'Observed',
+  detailObservationsHeading: 'Trackers observed',
   detailObservation: (domain: string, requestCount: number, beforeConsent: boolean): string => {
     const requests = `${requestCount} ${requestCount === 1 ? 'request' : 'requests'}`
     return beforeConsent ? `${domain} — ${requests}, before consent` : `${domain} — ${requests}`
   },
-
-  holderYou: 'Held by you',
-  holderSupplier: 'Held by a supplier',
-  kindCollection: 'Collects data directly',
-  kindInternal: 'Used internally',
-  kindProcessor: 'Processes data on your behalf',
-  confidenceObserved: 'Observed by a scan',
-  confidenceDeclared: 'Declared in a document',
-  confidenceInferred: 'Inferred',
-  leavesEEAYes: 'Leaves the EEA',
-  leavesEEANo: 'Stays inside the EEA',
 
   scanPlaceholder: 'Website address',
   scan: 'Scan',

@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { createEmptyProject } from '../core/project'
-import { computeGaps } from '../core/gaps'
 import { computeLayout } from '../core/layout'
 import { initHistory, push, undo, redo, canUndo, canRedo } from '../core/history'
 import { ingestScan } from '../core/scan'
@@ -8,7 +7,6 @@ import type { VendorDictionary } from '../core/types'
 import vendorsJson from '../data/vendors.json'
 import { DetailPanel } from './components/DetailPanel'
 import { MapView } from './components/MapView'
-import { RegisterPanel } from './components/RegisterPanel'
 import { ScanBar } from './components/ScanBar'
 import { openProject as openViaShell, saveProject as saveViaShell, startScan, cancelScan, scanNotice } from './bridge'
 import { saveNotice } from './saveNotice'
@@ -34,7 +32,6 @@ export function App() {
   const [lastScan, setLastScan] = useState<LastScan | null>(null)
 
   const layout = useMemo(() => computeLayout(project, { width: 800, height: 500 }), [project])
-  const gaps = useMemo(() => computeGaps(project), [project])
 
   async function openProject(): Promise<void> {
     try {
@@ -125,9 +122,10 @@ export function App() {
             <p className="print-limits">{STRINGS.printLimits}</p>
             {printGaps === null ? null : <p className="print-gaps">{printGaps}</p>}
           </div>
-          <RegisterPanel gaps={gaps} onHover={setSelected} />
         </main>
-        <DetailPanel project={project} selected={selected} dictionary={VENDORS} />
+        {selected === null ? null : (
+          <DetailPanel project={project} selected={selected} dictionary={VENDORS} />
+        )}
       </div>
     </>
   )
