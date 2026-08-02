@@ -21,6 +21,11 @@ use std::net::IpAddr;
 
 /// Only the two ports a website scan can legitimately need. Everything else — SSH, SMB, RDP,
 /// SOCKS, a stray debugging port — is denied whatever the host.
+///
+/// **This list has a dependent outside this module.** `proxy.rs`'s plain-HTTP parser can hand
+/// `decide` a port of 0, from an authority whose port is literally `:0`, and relies on this check
+/// to refuse it. Anything that widens this list — a new port, or making it configurable — must
+/// keep 0 out of it; `never_admits_port_zero` holds that. Read it before editing this line.
 const ALLOWED_PORTS: [u16; 2] = [80, 443];
 
 /// RFC 1035 caps a domain name at 253 characters. Anything longer is not a name we could be
@@ -64,7 +69,11 @@ pub enum DenyReason {
 /// whitespace and control characters all fall out of this for free.
 /// Returns a borrowed slice of the caller's input, never a copy — comparison is done
 /// case-insensitively rather than by lowercasing, so nothing is allocated to reach a `Deny`.
-fn vet_host(raw: &str) -> Option<&str> {
+/// `pub(crate)` for `scan::parse_target`, which must refuse any host this
+/// would refuse: a scan origin the proxy cannot read the same way as the
+/// module that stored it is a scan origin that means two different things.
+/// Visibility only — the rule itself is unchanged and lives here.
+pub(crate) fn vet_host(raw: &str) -> Option<&str> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_HOST_LEN {
         return None;
@@ -336,6 +345,19 @@ mod tests {
         }
         assert!(matches!(decide("rossi-editore.it", 80, &o), Decision::Allow { .. }));
         assert!(matches!(decide("rossi-editore.it", 443, &o), Decision::Allow { .. }));
+    }
+
+    #[test]
+    fn never_admits_port_zero() {
+        // Pinned as its own assertion, not left to the table above. Port 0 is not a port a client
+        // can be answered on, and `proxy.rs`'s plain-HTTP parser can produce it from an authority
+        // ending `:0`. A future edit that widens ALLOWED_PORTS fails here rather than in a
+        // component whose job is to be the last line.
+        assert!(!ALLOWED_PORTS.contains(&0));
+        assert_eq!(
+            denied(&decide("rossi-editore.it", 0, &origins(&["rossi-editore.it"]))),
+            &DenyReason::PortNotAllowed
+        );
     }
 
     #[test]

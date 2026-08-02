@@ -11,8 +11,22 @@
 //! and the port and nothing else, which is the correct amount for a tool whose promise is that
 //! the map never leaves the machine.
 //!
-//! Everything that is not a CONNECT to an admitted host:port is refused and recorded.
-//! Plain-HTTP forwarding is deliberately absent until Phase 2 needs it.
+//! Everything that is not a CONNECT to an admitted host:port, or an absolute-form plain-HTTP
+//! request to one, is refused and recorded.
+//!
+//! Plain HTTP is forwarded, under three restrictions that keep this file small enough to audit by
+//! reading. The target must be in absolute form — the `Host:` header is never read, by either
+//! path, so the two can never be played against each other. The request may not carry a body, so
+//! there is no `Content-Length`/`Transfer-Encoding` to disagree about and nothing to smuggle a
+//! second request inside. And exactly one request is forwarded per connection: the write half to
+//! the upstream is shut immediately after the request line and headers go out, so a pipelined
+//! second request cannot ride an admission granted to the first, and a redirect cannot move a
+//! connection onto a host that was never admitted — the browser must open a new connection, which
+//! is a new decision.
+//!
+//! Both paths reach `admission::decide` at one call site in `handle`. There is no second
+//! admission check anywhere in this file; the predecessor's defects came from having the guard's
+//! rules in two places.
 
 use crate::admission::{decide, Decision, DenyReason};
 use std::future::Future;
@@ -183,6 +197,22 @@ impl Ledger {
     pub fn healthy(&self) -> bool {
         self.handler_panics.load(Ordering::SeqCst) == 0 && self.accepted() == self.outcomes()
     }
+    /// Test-support only, and deliberately not `#[cfg(test)]`: `tests/egress.rs` links this crate
+    /// as an external crate, so a `#[cfg(test)]` item built for this crate's own unit tests is not
+    /// reachable from it. Forces `dropped_records` above zero without going through the capped
+    /// detail vectors, so `scan.rs`'s stricter rule — a scan whose ledger dropped anything must not
+    /// report success, which `healthy()` deliberately does not enforce on its own (see the doc
+    /// comment above) — can be exercised end to end without driving `MAX_LEDGER_ENTRIES` real
+    /// connections through a live proxy to fill the record for real. Never called from production
+    /// code; `healthy()` and every other observable above are unaffected by it.
+    ///
+    /// Gated behind the non-default `test-support` feature (see `Cargo.toml`'s `[features]`), so
+    /// this symbol does not exist in `cargo build --release`'s rlib. `tests/egress.rs` reaches it
+    /// through the self dev-dependency in `Cargo.toml` that enables the feature.
+    #[cfg(feature = "test-support")]
+    pub fn poison_for_test(&self) {
+        self.dropped_records.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 pub struct ProxyHandle {
@@ -351,13 +381,39 @@ async fn handle(
         return;
     };
 
-    let Some((host, port)) = parse_connect_authority(&head) else {
-        // Not a CONNECT, or an authority that could not be read. Either way it does not become a
-        // tunnel, and there is no host worth recording against a scan — but see above: counted.
+    let Some(request) = parse_request(&head) else {
+        // A CONNECT whose authority could not be read, a plain-HTTP preamble that is not
+        // well-formed, or a request line that is neither. Either way it does not reach an
+        // upstream, and there is no host worth recording against a scan — but see above: counted.
         ledger.note_refused();
         let _ = client.write_all(REFUSED).await;
         return;
     };
+
+    let (mode, host, port) = match request {
+        Request::Decide { mode, host, port } => (mode, host, port),
+        // A plain-HTTP target that is not in absolute form. It named something, so it is recorded
+        // rather than merely counted — but what it named is not an authority, so `decide` is never
+        // asked about it. Note what goes into the ledger's host field here: the request target as
+        // sent, which may carry a path and a query string. `redact_authority` caps it and strips
+        // it to printable ASCII; it is still not a hostname, and §9.3's report must say so rather
+        // than assume the field always holds one.
+        Request::Reject { target } => {
+            ledger.note_denied(target, 0, DenyReason::MalformedAuthority);
+            let _ = client.write_all(REFUSED).await;
+            return;
+        }
+    };
+
+    // Bytes behind a CONNECT preamble belong to the tunnel and are replayed once it is up. Bytes
+    // behind a plain-HTTP preamble are a second request, which this proxy does not forward: one
+    // request, one admission decision, one connection. Refusing the whole connection is the only
+    // reading that cannot end with an unadmitted request on an admitted socket.
+    if matches!(mode, Mode::Forward) && !early.is_empty() {
+        ledger.note_refused();
+        let _ = client.write_all(REFUSED).await;
+        return;
+    }
 
     // The guard clones the origin list rather than holding the lock across the decision, so a
     // poisoned mutex degrades to an empty list — which `decide` treats as NoScanRunning, i.e.
@@ -382,16 +438,36 @@ async fn handle(
                 Err(_) => {
                     let _ = client.write_all(UPSTREAM_FAILED).await;
                 }
-                Ok(mut upstream) => {
-                    // Anything the client pipelined behind the CONNECT belongs to the tunnel and
-                    // is replayed before the copy starts, in order, ahead of anything else it
-                    // goes on to send.
-                    if client.write_all(ESTABLISHED).await.is_ok()
-                        && upstream.write_all(&early).await.is_ok()
-                    {
-                        let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
+                Ok(mut upstream) => match mode {
+                    Mode::Tunnel => {
+                        // Anything the client pipelined behind the CONNECT belongs to the tunnel
+                        // and is replayed before the copy starts, in order, ahead of anything
+                        // else it goes on to send.
+                        if client.write_all(ESTABLISHED).await.is_ok()
+                            && upstream.write_all(&early).await.is_ok()
+                        {
+                            let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
+                        }
                     }
-                }
+                    Mode::Forward => {
+                        // The preamble is forwarded exactly as it arrived — absolute-form request
+                        // line included, which RFC 9112 §3.2.2 requires an origin server to
+                        // accept. Rewriting it would mean re-serialising attacker-influenced
+                        // header text, which is more parsing in the one file that must stay small.
+                        //
+                        // Then the write half is shut. There is no body to follow (a preamble
+                        // carrying `Content-Length` or `Transfer-Encoding` was refused before the
+                        // decision), so the FIN both tells the upstream the request is complete
+                        // and makes it impossible for the client to put a second request on a
+                        // socket admitted for the first. Nothing more is read from the client;
+                        // only the response is relayed back.
+                        if upstream.write_all(head.as_bytes()).await.is_ok()
+                            && upstream.shutdown().await.is_ok()
+                        {
+                            let _ = tokio::io::copy(&mut upstream, &mut client).await;
+                        }
+                    }
+                },
             }
         }
     }
@@ -431,6 +507,201 @@ async fn read_head(client: &mut TcpStream) -> Option<(String, Vec<u8>)> {
     let head = String::from_utf8(buf.get(..end)?.to_vec()).ok()?;
     let early = buf.get(end..)?.to_vec();
     Some((head, early))
+}
+
+/// What a connection is for, once its request line has been read. The two arms differ only in
+/// what happens *after* `admission::decide` has allowed the host: they share one decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// `CONNECT` — opaque bytes in both directions, nothing decrypted.
+    Tunnel,
+    /// Absolute-form plain HTTP — one request out, one response back.
+    Forward,
+}
+
+/// What the request line turned out to be.
+///
+/// Three outcomes, and only one of them can end in a connection.
+#[derive(Debug, PartialEq, Eq)]
+enum Request {
+    /// A host and port to put to `admission::decide`, and what to do if it says yes. This is the
+    /// only variant that can reach an upstream, and `decide` is the only thing that lets it.
+    Decide { mode: Mode, host: String, port: u16 },
+    /// A request line this proxy will not act on, but which named something worth writing down —
+    /// the target the client sent. Recorded as a deny with a reason.
+    ///
+    /// This is not a second admission decision. It has no allow branch and cannot acquire one:
+    /// the variant carries no port and no mode, so there is nothing for a later edit to widen. It
+    /// exists so that the audited `decide` is never asked about a string that is not an authority
+    /// at all — an earlier version passed the raw target with port 0 and relied on
+    /// `admission::ALLOWED_PORTS` never containing 0, which put a `proxy.rs` safety property in
+    /// another module's constant.
+    Reject { target: String },
+}
+
+/// Read the request line. `None` is a refusal that names nothing: the preamble was not well-formed
+/// enough to produce even a string worth recording.
+fn parse_request(head: &str) -> Option<Request> {
+    let line = head.lines().next()?;
+    if line.split(' ').next()? == "CONNECT" {
+        let (host, port) = parse_connect_authority(head)?;
+        return Some(Request::Decide { mode: Mode::Tunnel, host, port });
+    }
+    parse_plain_request(head)
+}
+
+/// Every byte of a plain-HTTP preamble this proxy is willing to forward.
+///
+/// The preamble is forwarded verbatim to a server that will parse it again, so anything two
+/// parsers could read differently is a refusal here rather than a guess. In order: only printable
+/// ASCII plus SP, HT, CR and LF, which removes NUL and every other control character; CR and LF
+/// only ever as a CRLF pair, so a bare LF cannot end a line for one parser and not for another;
+/// no line beginning with SP or HT, which is obs-fold; every header line a `name: value` with a
+/// non-empty name carrying no space; and no `Content-Length` or `Transfer-Encoding` at all.
+///
+/// HT is legal in a header *value* and illegal anywhere in a request line (RFC 9112 §3), so it is
+/// refused in the first line only. Audit finding M1: the request line splits on SP alone, and
+/// `admission::vet_host` opens with `str::trim`, so `http://\thost/x` was vetted as `host` and
+/// then forwarded with the tab still in it — the admitted host was dialled, so nothing escaped,
+/// but two parsers would read that request line differently, which this function exists to stop.
+///
+/// The last rule is the one that closes request smuggling outright. This proxy forwards no body,
+/// so there is no framing for two parsers to disagree about, and a request that wants one is
+/// refused rather than framed. Duplicate or conflicting framing headers are refused by the same
+/// rule, since it refuses the first occurrence.
+fn plain_head_is_well_formed(head: &str) -> bool {
+    let bytes = head.as_bytes();
+    if !bytes.iter().all(|b| matches!(b, b'\t' | b'\r' | b'\n' | 0x20..=0x7e)) {
+        return false;
+    }
+    for (i, b) in bytes.iter().enumerate() {
+        match b {
+            b'\r' => {
+                if bytes.get(i.saturating_add(1)) != Some(&b'\n') {
+                    return false;
+                }
+            }
+            b'\n' => match i.checked_sub(1).and_then(|p| bytes.get(p)) {
+                Some(b'\r') => {}
+                _ => return false,
+            },
+            _ => {}
+        }
+    }
+    let mut lines = head.split("\r\n");
+    // The request line is parsed by the caller; here only its existence and its freedom from HT
+    // matter.
+    match lines.next() {
+        None => return false,
+        Some(request_line) if request_line.contains('\t') => return false,
+        Some(_) => {}
+    }
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            return false;
+        }
+        let Some((name, _value)) = line.split_once(':') else {
+            return false;
+        };
+        if name.is_empty() || name.contains(' ') || name.contains('\t') {
+            return false;
+        }
+        if name.eq_ignore_ascii_case("content-length")
+            || name.eq_ignore_ascii_case("transfer-encoding")
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// The scheme, assembled: tests/build/noRemoteAssets.test.ts forbids an http(s) URL literal
+/// anywhere under `src-tauri/src`, and that guard is worth more than the convenience of one
+/// string. `concat!` is compile-time, so the comparison is against the same bytes.
+const ABSOLUTE_FORM_PREFIX: &str = concat!("http", "://");
+
+/// The methods a browser loading a page can legitimately send through a proxy in absolute form.
+///
+/// An allowlist, not a token rule: methods are case-sensitive, so `get` is not `GET` and a parser
+/// that accepted both would be inventing a request the client did not make. `TRACE` is absent
+/// deliberately — it echoes the request back and this proxy has no reason to carry it.
+const PLAIN_METHODS: [&str; 7] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+
+/// `METHOD absolute-URI HTTP/1.x` — the only plain-HTTP request line this proxy will forward.
+///
+/// A target in absolute form becomes a `Decide`. A target in any other form becomes a `Reject`
+/// naming the text the client sent — origin-form, authority-form, asterisk-form, another scheme,
+/// userinfo, brackets, an unreadable port. Those never reach `decide`, because none of them is an
+/// authority `decide` could be asked a meaningful question about.
+fn parse_plain_request(head: &str) -> Option<Request> {
+    if !plain_head_is_well_formed(head) {
+        return None;
+    }
+    let line = head.lines().next()?;
+    let mut parts = line.split(' ');
+    if !PLAIN_METHODS.contains(&parts.next()?) {
+        return None;
+    }
+    let target = parts.next()?;
+    let version = parts.next()?;
+    if parts.next().is_some() {
+        // More than three space-separated fields. Where the extra space fell is exactly the kind
+        // of ambiguity two parsers resolve differently.
+        return None;
+    }
+    if version != "HTTP/1.1" && version != "HTTP/1.0" {
+        return None;
+    }
+    if target.is_empty() {
+        return None;
+    }
+    match parse_absolute_form(target) {
+        Some((host, port)) => Some(Request::Decide { mode: Mode::Forward, host, port }),
+        None => Some(Request::Reject { target: target.to_string() }),
+    }
+}
+
+/// Split `http://authority/rest` into host and port, or refuse.
+///
+/// Refused: any other scheme, including `https` — a browser does not send that to a proxy in
+/// absolute form, and guessing what it meant is not a thing a guard may do. An empty authority.
+/// Userinfo, since `user@host` is the authority confusion that broke the predecessor. Brackets,
+/// which are an IPv6 literal, and would need zone-id and scope reasoning to be read safely; the
+/// admission decision refuses IP literals anyway, so refusing them one step earlier costs nothing.
+/// A port that is empty, is not all digits, or does not fit a `u16`.
+fn parse_absolute_form(target: &str) -> Option<(String, u16)> {
+    let prefix = target.get(..ABSOLUTE_FORM_PREFIX.len())?;
+    if !prefix.eq_ignore_ascii_case(ABSOLUTE_FORM_PREFIX) {
+        return None;
+    }
+    let rest = target.get(ABSOLUTE_FORM_PREFIX.len()..)?;
+    let authority = match rest.find(['/', '?', '#']) {
+        Some(at) => rest.get(..at)?,
+        None => rest,
+    };
+    // Belt and braces with the HT rule above: an authority is printable ASCII with no spacing of
+    // any kind. Checked here too so the property survives someone relaxing the preamble rule.
+    if authority.is_empty() || !authority.bytes().all(|b| b.is_ascii_graphic()) {
+        return None;
+    }
+    if authority.contains('@') {
+        return None;
+    }
+    if authority.contains('[') || authority.contains(']') {
+        return None;
+    }
+    // `split_once` cuts at the *first* colon, so the host can never contain one and a second
+    // colon lands in the port, where the digits-only rule rejects it.
+    let Some((host, port)) = authority.split_once(':') else {
+        return Some((authority.to_string(), 80));
+    };
+    if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((host.to_string(), port.parse().ok()?))
 }
 
 /// Only `CONNECT host:port HTTP/x.y` produces an authority. Everything else — origin-form,
@@ -706,16 +977,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn denies_every_method_that_is_not_connect() {
+    async fn denies_every_request_form_that_is_neither_connect_nor_absolute_form_http() {
+        // Task 5 narrowed this test. It previously asserted that *every* method but CONNECT was
+        // refused, including absolute-form GET and POST to the scan target — which is precisely
+        // what this task now forwards, under the restrictions in the module comment. What
+        // survives is the set of forms that still name no authority the guard could vet, or name
+        // it in a way two parsers could read differently.
+        //
+        // The schemes are assembled rather than written out: the remote-asset guard in
+        // tests/build/noRemoteAssets.test.ts forbids an http(s) URL literal anywhere under
+        // src-tauri/src, tests included, and that guard is worth more than the convenience of a
+        // few strings. `concat!` is compile-time, so the bytes on the wire are identical.
         let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called()).await.unwrap();
-        // The absolute-form schemes are assembled rather than written out: the remote-asset guard
-        // in tests/build/noRemoteAssets.test.ts forbids an http(s) URL literal anywhere under
-        // src-tauri/src, tests included, and that guard is worth more than the convenience of two
-        // strings. `concat!` is compile-time, so the bytes on the wire are identical.
         for line in [
-            concat!("GET http", "://", "rossi-editore.it/ HTTP/1.1"),
-            concat!("POST http", "://", "rossi-editore.it/ HTTP/1.1"),
+            // origin-form: the authority would have to come from the Host header
             "GET / HTTP/1.1",
+            // authority-form, which only CONNECT may use
+            "GET rossi-editore.it:80 HTTP/1.1",
+            // asterisk-form
+            "OPTIONS * HTTP/1.1",
+            // https in absolute form is not something a browser sends a proxy
+            concat!("GET https", "://", "rossi-editore.it/ HTTP/1.1"),
+            // a scheme that is not http at all
+            "GET ftp://rossi-editore.it/ HTTP/1.1",
+            // a version this proxy does not speak
+            concat!("GET http", "://", "rossi-editore.it/ HTTP/2.0"),
+            // no version at all
+            concat!("GET http", "://", "rossi-editore.it/"),
+            // a lowercase method is a different method
+            concat!("get http", "://", "rossi-editore.it/ HTTP/1.1"),
         ] {
             let reply = send(p.addr, &format!("{line}\r\nHost: rossi-editore.it\r\n\r\n")).await;
             assert!(reply.starts_with("HTTP/1.1 403"), "{line} got {reply:?}");
@@ -928,8 +1218,11 @@ mod tests {
 
         // an authority with no port at all — `rsplit_once(':')` finds nothing
         let _ = send(p.addr, "CONNECT rossi-editore.it HTTP/1.1\r\n\r\n").await;
-        // a method that is not CONNECT
-        let _ = send(p.addr, "GET / HTTP/1.1\r\nHost: rossi-editore.it\r\n\r\n").await;
+        // a plain-HTTP preamble that is not well-formed enough to name anything. Task 5 replaced
+        // `GET / HTTP/1.1` here: an origin-form target is now recorded as a *deny* carrying the
+        // text the client sent, which is a stronger record than a bare refusal and is asserted by
+        // `refuses_an_origin_form_request_line`. A malformed version line still names nothing.
+        let _ = send(p.addr, "GET / HTTP/9\r\nHost: rossi-editore.it\r\n\r\n").await;
         // a client that connects and says nothing at all
         drop(TcpStream::connect(p.addr).await.unwrap());
 
@@ -1041,6 +1334,669 @@ mod tests {
         assert!(any_address_refused(&[loopback, public]), "and the order must not matter");
         assert!(any_address_refused(&[public, metadata]));
         assert!(any_address_refused(&[]), "an empty resolution is a refusal, not a success");
+    }
+
+    // ---- plain HTTP forwarding ---------------------------------------------
+
+    /// Absolute-form request lines are assembled rather than written out: the remote-asset guard
+    /// in tests/build/noRemoteAssets.test.ts forbids an http(s) URL literal anywhere under
+    /// src-tauri/src, tests included. `concat!` is compile-time, so the bytes on the wire are
+    /// identical to the literal.
+    const SCHEME: &str = concat!("http", "://");
+
+    /// Like `send`, but tolerant of a socket the proxy has already closed. The oversized-header
+    /// tests push more bytes than the proxy will ever read, so the write half fails part-way
+    /// through by design, and `send`'s `unwrap` would report that as a test failure.
+    async fn send_tolerating_a_closed_socket(addr: SocketAddr, request: &str) {
+        let Ok(mut s) = TcpStream::connect(addr).await else {
+            return;
+        };
+        for chunk in request.as_bytes().chunks(16 * 1024) {
+            if s.write_all(chunk).await.is_err() {
+                break;
+            }
+        }
+        let mut buf = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(2), s.read_to_end(&mut buf)).await;
+    }
+
+    #[tokio::test]
+    async fn forwards_a_plain_http_request_to_a_permitted_host() {
+        // Absolute-form request line, which is what a browser sends to a proxy.
+        let (upstream, seen) = recording_upstream().await;
+        let p = start(
+            origins(&["rossi-editore.it"]),
+            connector_only_for("rossi-editore.it", upstream),
+        )
+        .await
+        .unwrap();
+
+        let request =
+            format!("GET {SCHEME}rossi-editore.it/index.html HTTP/1.1\r\nHost: rossi-editore.it\r\n\r\n");
+        // Not `send`: the recording upstream never answers, so a helper that waits for a response
+        // would wait for ever. What is under test here is what the upstream received.
+        send_tolerating_a_closed_socket(p.addr, &request).await;
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(p.ledger.allowed(), vec![("rossi-editore.it".to_string(), 80)]);
+        assert_eq!(
+            String::from_utf8_lossy(&seen.lock().unwrap().clone()),
+            request,
+            "the upstream did not receive the request as sent"
+        );
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn relays_the_plain_http_response_back_to_the_client() {
+        let upstream = fake_upstream(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
+        let p = start(
+            origins(&["rossi-editore.it"]),
+            connector_only_for("rossi-editore.it", upstream),
+        )
+        .await
+        .unwrap();
+        let reply =
+            send(p.addr, &format!("GET {SCHEME}rossi-editore.it/ HTTP/1.1\r\n\r\n")).await;
+        assert!(reply.starts_with("HTTP/1.1 200 OK"), "got {reply:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn refuses_a_plain_http_request_to_a_host_outside_the_scan() {
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        let reply =
+            send(p.addr, &format!("GET {SCHEME}doubleclick.net/pixel.gif HTTP/1.1\r\nHost: doubleclick.net\r\n\r\n"))
+                .await;
+        assert!(reply.starts_with("HTTP/1.1 403"), "got {reply:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_eq!(
+            p.ledger.denied(),
+            vec![("doubleclick.net".to_string(), 80, DenyReason::NotAScanTarget)]
+        );
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn refuses_an_origin_form_request_line() {
+        // "GET /x HTTP/1.1" carries no authority. A proxy that trusted the Host header here would
+        // be trusting a value the page controls.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        let reply = send(p.addr, "GET /index.html HTTP/1.1\r\nHost: rossi-editore.it\r\n\r\n").await;
+        assert!(reply.starts_with("HTTP/1.1 403"), "got {reply:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_eq!(p.ledger.denied().len(), 1);
+        assert_eq!(
+            p.ledger.denied(),
+            vec![("/index.html".to_string(), 0, DenyReason::MalformedAuthority)]
+        );
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn ignores_the_host_header_when_it_disagrees_with_the_request_line() {
+        // Request-line authority wins. Otherwise a request to an allowed host with a forged Host
+        // header, or the reverse, decides on the wrong name.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        let reply = send(
+            p.addr,
+            &format!("GET {SCHEME}doubleclick.net/p.gif HTTP/1.1\r\nHost: rossi-editore.it\r\n\r\n"),
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 403"), "got {reply:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_eq!(
+            p.ledger.denied(),
+            vec![("doubleclick.net".to_string(), 80, DenyReason::NotAScanTarget)],
+            "the Host header, not the request line, decided"
+        );
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn refuses_a_plain_http_request_to_a_non_http_port() {
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        let reply = send(
+            p.addr,
+            &format!("GET {SCHEME}rossi-editore.it:445/share HTTP/1.1\r\nHost: rossi-editore.it\r\n\r\n"),
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 403"), "got {reply:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_eq!(
+            p.ledger.denied(),
+            vec![("rossi-editore.it".to_string(), 445, DenyReason::PortNotAllowed)]
+        );
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn refuses_an_oversized_plain_http_header_block_instead_of_reading_forever() {
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        let mut req = format!("GET {SCHEME}rossi-editore.it/ HTTP/1.1\r\n");
+        for i in 0..100_000 {
+            req.push_str(&format!("X-Pad-{i}: 0123456789\r\n"));
+        }
+        send_tolerating_a_closed_socket(p.addr, &req).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn never_panics_on_a_hostile_plain_http_request_line() {
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        for line in [
+            format!("GET {SCHEME} HTTP/1.1\r\n\r\n"),
+            format!("GET {SCHEME}:80/ HTTP/1.1\r\n\r\n"),
+            format!("GET {SCHEME}[::1]:80/ HTTP/1.1\r\n\r\n"),
+            format!("GET {SCHEME}user@rossi-editore.it@evil.example/ HTTP/1.1\r\n\r\n"),
+            format!("GET {SCHEME}rossi-editore.it:99999/ HTTP/1.1\r\n\r\n"),
+            format!("GET {SCHEME}rossi-editore.it:/ HTTP/1.1\r\n\r\n"),
+            format!("GET  {SCHEME}rossi-editore.it/ HTTP/1.1\r\n\r\n"),
+            "\r\n\r\n".to_string(),
+        ] {
+            let _ = send(p.addr, &line).await;
+        }
+        // Reaching here without the process aborting is the assertion; under panic = "abort" a
+        // panic in the spawned task would take the suite with it. The connector is a tripwire, so
+        // nothing above may reach an upstream either.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_sensor_alive(&p.ledger);
+    }
+
+    // ---- plain HTTP: hostile input beyond the brief -------------------------
+
+    #[test]
+    fn the_absolute_form_parser_never_invents_a_host() {
+        // Asserted against the parser directly rather than through a socket, so the whole table
+        // is visible in one place. Every `None` here is a refusal; every `Some` is a string that
+        // still has to survive `admission::decide` before anything is dialled.
+        let s = SCHEME;
+        for target in [
+            // not absolute form at all
+            "/index.html",
+            "*",
+            "rossi-editore.it:80",
+            concat!("https", "://", "rossi-editore.it/"),
+            "ftp://rossi-editore.it/",
+            // an empty or confused authority
+            s,
+            &format!("{s}/path"),
+            &format!("{s}?q"),
+            &format!("{s}user@rossi-editore.it/"),
+            &format!("{s}rossi-editore.it@evil.example/"),
+            &format!("{s}user@rossi-editore.it@evil.example/"),
+            // brackets are an IPv6 literal; refused before any zone-id reasoning is needed
+            &format!("{s}[::1]:80/"),
+            &format!("{s}[fe80::1%25eth0]/"),
+            // ports that are not a port
+            &format!("{s}rossi-editore.it:/"),
+            &format!("{s}rossi-editore.it:99999/"),
+            &format!("{s}rossi-editore.it:+80/"),
+            &format!("{s}rossi-editore.it: 80/"),
+            &format!("{s}rossi-editore.it:80:443/"),
+            &format!("{s}rossi-editore.it:8o/"),
+        ] {
+            assert_eq!(parse_absolute_form(target), None, "{target:?} must not name a host");
+        }
+
+        // The shapes that do name one. Note the last two: the string handed on is the raw
+        // authority, which is still only a *candidate* — `decide` normalises and vets it.
+        assert_eq!(
+            parse_absolute_form(&format!("{s}rossi-editore.it/index.html")),
+            Some(("rossi-editore.it".to_string(), 80))
+        );
+        assert_eq!(
+            parse_absolute_form(&format!("{s}rossi-editore.it")),
+            Some(("rossi-editore.it".to_string(), 80))
+        );
+        assert_eq!(
+            parse_absolute_form(&format!("{s}rossi-editore.it:443/x?y#z")),
+            Some(("rossi-editore.it".to_string(), 443))
+        );
+        assert_eq!(
+            parse_absolute_form(&format!("{s}rossi-editore.it:445/share")),
+            Some(("rossi-editore.it".to_string(), 445))
+        );
+        assert_eq!(
+            parse_absolute_form(&format!("{s}WWW.Rossi-Editore.IT./x")),
+            Some(("WWW.Rossi-Editore.IT.".to_string(), 80))
+        );
+        // A scheme is case-insensitive (RFC 3986 §3.1). Matching it case-insensitively cannot
+        // change which host is named, so there is nothing to gain by refusing the spelling.
+        assert_eq!(
+            parse_absolute_form(concat!("HTTP", "://", "rossi-editore.it/")),
+            Some(("rossi-editore.it".to_string(), 80))
+        );
+    }
+
+    #[test]
+    fn a_preamble_two_parsers_could_read_differently_is_not_well_formed() {
+        let ok = "GET / HTTP/1.1\r\nHost: rossi-editore.it\r\n\r\n";
+        assert!(plain_head_is_well_formed(ok));
+        assert!(plain_head_is_well_formed("GET / HTTP/1.1\r\n\r\n"));
+
+        for head in [
+            // framing: no body may be declared, in any spelling, once or twice
+            "GET / HTTP/1.1\r\nContent-Length: 5\r\n\r\n",
+            "GET / HTTP/1.1\r\ncontent-length: 0\r\n\r\n",
+            "GET / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\n",
+            "GET / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n",
+            "GET / HTTP/1.1\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n",
+            // obs-fold, which lets a folded line hide a second header from one of two parsers
+            "GET / HTTP/1.1\r\nX-Pad: a\r\n b\r\n\r\n",
+            "GET / HTTP/1.1\r\nX-Pad: a\r\n\tb\r\n\r\n",
+            // a line that is not a header at all
+            "GET / HTTP/1.1\r\nnot-a-header\r\n\r\n",
+            "GET / HTTP/1.1\r\n: empty-name\r\n\r\n",
+            "GET / HTTP/1.1\r\nX Pad: a\r\n\r\n",
+            // line endings that are not CRLF
+            "GET / HTTP/1.1\nHost: rossi-editore.it\r\n\r\n",
+            "GET / HTTP/1.1\rHost: rossi-editore.it\r\n\r\n",
+            "GET / HTTP/1.1\r\nHost: a\rb\r\n\r\n",
+            // control characters, NUL included
+            "GET /\u{0} HTTP/1.1\r\n\r\n",
+            "GET / HTTP/1.1\r\nX-Pad: \u{0}\r\n\r\n",
+            "GET / HTTP/1.1\r\nX-Pad: \u{7f}\r\n\r\n",
+            "GET / HTTP/1.1\r\nX-Pad: \u{1b}[2K\r\n\r\n",
+            // non-ASCII, which no browser sends and which no two parsers normalise alike
+            "GET / HTTP/1.1\r\nHost: rossi\u{2010}editore.it\r\n\r\n",
+        ] {
+            assert!(!plain_head_is_well_formed(head), "{head:?} must not be forwardable");
+        }
+    }
+
+    #[tokio::test]
+    async fn refuses_a_plain_http_request_that_declares_a_body() {
+        // No body is forwarded, so there is no framing for the proxy and the origin server to
+        // disagree about — which is what request smuggling is. A request that wants one is
+        // refused before the admission decision, and names nothing.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        for extra in [
+            "Content-Length: 5",
+            "content-length: 0",
+            "Content-Length: 5\r\nContent-Length: 6",
+            "Transfer-Encoding: chunked",
+            "Transfer-Encoding: chunked\r\nContent-Length: 5",
+            "X-Pad: a\r\n Content-Length: 5",
+        ] {
+            let reply = send(
+                p.addr,
+                &format!("POST {SCHEME}rossi-editore.it/f HTTP/1.1\r\n{extra}\r\n\r\n"),
+            )
+            .await;
+            assert!(reply.starts_with("HTTP/1.1 403"), "{extra} got {reply:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_eq!(p.ledger.refused(), 6, "a refusal that names nothing must still be counted");
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn the_host_header_decides_nothing_in_either_direction() {
+        // Absent, duplicated, empty, forged in either direction: the request line is the only
+        // authority. The last case is the positive control — a forged Host on a request whose
+        // request line names the scan target must still be allowed, or this test would pass for
+        // a proxy that simply refused everything with an odd Host.
+        let upstream = fake_upstream(b"HTTP/1.1 204 No Content\r\n\r\n").await;
+        let p = start(
+            origins(&["rossi-editore.it"]),
+            connector_only_for("rossi-editore.it", upstream),
+        )
+        .await
+        .unwrap();
+
+        for headers in ["", "Host: rossi-editore.it\r\n", "Host: a\r\nHost: b\r\n", "Host: \r\n"] {
+            let reply =
+                send(p.addr, &format!("GET {SCHEME}doubleclick.net/p HTTP/1.1\r\n{headers}\r\n"))
+                    .await;
+            assert!(reply.starts_with("HTTP/1.1 403"), "{headers:?} got {reply:?}");
+        }
+        let reply = send(
+            p.addr,
+            &format!("GET {SCHEME}rossi-editore.it/ HTTP/1.1\r\nHost: doubleclick.net\r\n\r\n"),
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 204"), "the control did not reach the upstream: {reply:?}");
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(p.ledger.denied().len(), 4);
+        assert!(p.ledger.denied().iter().all(|(h, p, _)| h == "doubleclick.net" && *p == 80));
+        assert_eq!(p.ledger.allowed(), vec![("rossi-editore.it".to_string(), 80)]);
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn the_plain_http_host_dialled_is_the_string_the_guard_vetted() {
+        // The counterpart of `the_connector_is_handed_the_host_the_guard_vetted_not_the_raw_authority`
+        // for the forwarding path: the request line's authority is a candidate, and only
+        // `Decision::Allow`'s host may reach a resolver.
+        let (upstream, _seen) = recording_upstream().await;
+        let (connector, dialled) = recording_connector(upstream);
+        let p = start(origins(&["rossi-editore.it"]), connector).await.unwrap();
+
+        for authority in ["WWW.Rossi-Editore.IT", "rossi-editore.it.", "ROSSI-EDITORE.IT:80"] {
+            send_tolerating_a_closed_socket(
+                p.addr,
+                &format!("GET {SCHEME}{authority}/x HTTP/1.1\r\n\r\n"),
+            )
+            .await;
+        }
+
+        let mut got = dialled.lock().unwrap().clone();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "rossi-editore.it".to_string(),
+                "rossi-editore.it".to_string(),
+                "www.rossi-editore.it".to_string(),
+            ],
+            "the connector was given a string the guard never vetted"
+        );
+        let mut recorded: Vec<String> = p.ledger.allowed().into_iter().map(|(h, _)| h).collect();
+        recorded.sort();
+        assert_eq!(recorded, got, "the record and the dial must be the same string");
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn refuses_a_plain_http_request_aimed_at_an_address_rather_than_a_name() {
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        // A bare IPv4 authority is a host the guard can read, and refuses as a literal. A
+        // bracketed IPv6 authority is refused a step earlier, by the parser, so it is recorded
+        // whole and as a malformed authority — never as a host anything could be dialled at.
+        for (authority, reason) in [
+            ("127.0.0.1", DenyReason::IpLiteral),
+            ("169.254.169.254", DenyReason::IpLiteral),
+            ("10.0.0.1", DenyReason::IpLiteral),
+            ("8.8.8.8:80", DenyReason::IpLiteral),
+            ("[::1]", DenyReason::MalformedAuthority),
+            ("[::ffff:127.0.0.1]:80", DenyReason::MalformedAuthority),
+            ("[fe80::1%25eth0]", DenyReason::MalformedAuthority),
+        ] {
+            let reply = send(p.addr, &format!("GET {SCHEME}{authority}/ HTTP/1.1\r\n\r\n")).await;
+            assert!(reply.starts_with("HTTP/1.1 403"), "{authority} got {reply:?}");
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            let last = p.ledger.denied().pop().expect("nothing was recorded for {authority}");
+            assert_eq!(last.2, reason, "{authority}");
+        }
+        assert!(p.ledger.allowed().is_empty());
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn refuses_a_plain_http_request_when_no_scan_is_running() {
+        let p = start(origins(&[]), connector_that_must_never_be_called()).await.unwrap();
+        let reply = send(p.addr, &format!("GET {SCHEME}rossi-editore.it/ HTTP/1.1\r\n\r\n")).await;
+        assert!(reply.starts_with("HTTP/1.1 403"), "got {reply:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            p.ledger.denied(),
+            vec![("rossi-editore.it".to_string(), 80, DenyReason::NoScanRunning)]
+        );
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn will_not_forward_a_second_request_pipelined_behind_the_first() {
+        // One request, one admission decision, one connection. A second request arriving in the
+        // same segment as an admitted first would otherwise ride its admission — and the socket
+        // it would ride is already connected to the admitted host, so the ledger would never see
+        // the name it was aimed at either.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        let reply = send(
+            p.addr,
+            &format!(
+                "GET {SCHEME}rossi-editore.it/a HTTP/1.1\r\n\r\nGET {SCHEME}doubleclick.net/b HTTP/1.1\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(reply.starts_with("HTTP/1.1 403"), "got {reply:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty(), "an admitted request carried a second one with it");
+        assert_eq!(p.ledger.refused(), 1);
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn closes_a_forwarded_connection_after_one_response_rather_than_reusing_it() {
+        // This is what stops a redirect moving the connection to a host that was never admitted:
+        // the client cannot follow one on this socket, it must open another, and that is another
+        // decision. Asserted by sending a second request after the response and finding the
+        // socket closed with nothing more coming back.
+        let upstream =
+            fake_upstream(b"HTTP/1.1 301 Moved\r\nLocation: /elsewhere\r\n\r\n").await;
+        let p = start(
+            origins(&["rossi-editore.it"]),
+            connector_only_for("rossi-editore.it", upstream),
+        )
+        .await
+        .unwrap();
+
+        let mut s = TcpStream::connect(p.addr).await.unwrap();
+        s.write_all(format!("GET {SCHEME}rossi-editore.it/ HTTP/1.1\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut first = [0u8; 21];
+        s.read_exact(&mut first).await.unwrap();
+        assert_eq!(&first[..], b"HTTP/1.1 301 Moved\r\nL");
+
+        let _ = s
+            .write_all(format!("GET {SCHEME}doubleclick.net/b HTTP/1.1\r\n\r\n").as_bytes())
+            .await;
+        let mut rest = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(2), s.read_to_end(&mut rest)).await;
+        assert!(
+            !String::from_utf8_lossy(&rest).contains("HTTP/1.1 301"),
+            "a second response arrived on a connection admitted for one request"
+        );
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(p.ledger.allowed(), vec![("rossi-editore.it".to_string(), 80)]);
+        assert_sensor_alive(&p.ledger);
+    }
+
+    // ---- audit findings I1 and M1 ------------------------------------------
+
+    #[test]
+    fn a_target_that_is_not_an_authority_never_reaches_the_admission_decision() {
+        // I1. The earlier shape handed the raw target to `decide` with port 0 and relied on
+        // `admission::ALLOWED_PORTS` never containing 0. The probe that found it:
+        // `GET rossi-editore.it HTTP/1.1` put a valid, in-scope host — one that matches the scan
+        // origin exactly — into `decide`, saved only by a check in another module. These now stop
+        // at `Reject`, which has no allow branch and carries no port to be widened.
+        for target in ["rossi-editore.it", "/index.html", "*", "rossi-editore.it:80"] {
+            assert_eq!(
+                parse_plain_request(&format!("GET {target} HTTP/1.1\r\n\r\n")),
+                Some(Request::Reject { target: target.to_string() }),
+                "{target:?} must not become a question for `decide`"
+            );
+        }
+        assert_eq!(
+            parse_plain_request(&format!("GET {SCHEME}rossi-editore.it/x HTTP/1.1\r\n\r\n")),
+            Some(Request::Decide {
+                mode: Mode::Forward,
+                host: "rossi-editore.it".to_string(),
+                port: 80
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bare_in_scope_host_as_the_target_is_denied_and_named() {
+        // The probe from I1, end to end. It is refused, it is recorded, and the connector — a
+        // tripwire — is never reached.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        let reply = send(p.addr, "GET rossi-editore.it HTTP/1.1\r\n\r\n").await;
+        assert!(reply.starts_with("HTTP/1.1 403"), "got {reply:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_eq!(
+            p.ledger.denied(),
+            vec![("rossi-editore.it".to_string(), 0, DenyReason::MalformedAuthority)],
+            "the client named no port and no authority; the record must say so"
+        );
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn refuses_a_tab_inside_the_request_target() {
+        // M1. `str::trim` inside `vet_host` strips a leading tab, and the request line splits on
+        // SP alone, so `http://\thost/x` was vetted as `host` and forwarded with the tab still in
+        // it. Nothing escaped — the dialled string was the vetted one — but an HT in a request
+        // target is illegal (RFC 9112 §3) and two parsers read it differently.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        for target in [
+            format!("{SCHEME}\trossi-editore.it/x"),
+            format!("{SCHEME}rossi-editore.it\t/x"),
+            format!("{SCHEME}rossi-editore.it\t.evil.example/x"),
+        ] {
+            let reply = send(p.addr, &format!("GET {target} HTTP/1.1\r\n\r\n")).await;
+            assert!(reply.starts_with("HTTP/1.1 403"), "{target:?} got {reply:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_eq!(p.ledger.refused(), 3);
+        assert_sensor_alive(&p.ledger);
+        // and the rule is not vacuous: HT is still legal in a header value
+        assert!(plain_head_is_well_formed("GET / HTTP/1.1\r\nX-Pad:\ta\r\n\r\n"));
+    }
+
+    #[tokio::test]
+    async fn a_second_request_sent_after_the_response_is_never_dialled() {
+        // The auditor's variant of the pipelining test: the second request arrives in its own
+        // segment, after the response, rather than behind the first. Nothing is read from the
+        // client after the preamble, so it reaches neither the ledger nor a connector.
+        let upstream = fake_upstream(b"HTTP/1.1 200 OK\r\n\r\n").await;
+        let (connector, dialled) = recording_connector(upstream);
+        let p = start(origins(&["rossi-editore.it"]), connector).await.unwrap();
+
+        let mut s = TcpStream::connect(p.addr).await.unwrap();
+        s.write_all(format!("GET {SCHEME}rossi-editore.it/ HTTP/1.1\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut first = [0u8; 15];
+        s.read_exact(&mut first).await.unwrap();
+        assert_eq!(&first[..], b"HTTP/1.1 200 OK");
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = s
+            .write_all(format!("GET {SCHEME}doubleclick.net/b HTTP/1.1\r\n\r\n").as_bytes())
+            .await;
+        let mut rest = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(2), s.read_to_end(&mut rest)).await;
+
+        assert_eq!(dialled.lock().unwrap().clone(), vec!["rossi-editore.it".to_string()]);
+        assert_eq!(p.ledger.allowed(), vec![("rossi-editore.it".to_string(), 80)]);
+        assert_eq!(p.ledger.accepted(), 1, "the second request opened no new connection either");
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn a_query_or_fragment_ends_the_authority_rather_than_extending_it() {
+        // `?` and `#` delimit the authority exactly as `/` does. If they did not, the text after
+        // them would be read as part of the host by this parser and as a query by the server —
+        // and an in-scope name hidden in a query string would be the obvious way to try it.
+        let s = SCHEME;
+        assert_eq!(
+            parse_absolute_form(&format!("{s}rossi-editore.it?q=1")),
+            Some(("rossi-editore.it".to_string(), 80))
+        );
+        assert_eq!(
+            parse_absolute_form(&format!("{s}rossi-editore.it#frag")),
+            Some(("rossi-editore.it".to_string(), 80))
+        );
+        assert_eq!(
+            parse_absolute_form(&format!("{s}doubleclick.net?x=rossi-editore.it")),
+            Some(("doubleclick.net".to_string(), 80))
+        );
+        assert_eq!(
+            parse_absolute_form(&format!("{s}doubleclick.net#.rossi-editore.it")),
+            Some(("doubleclick.net".to_string(), 80))
+        );
+        // An `@` *after* the delimiter is query text, not userinfo, and the authority is still
+        // the third party — which is the reading RFC 3986 §3.2 and every browser give it. The
+        // `@` rule applies to what is left of the delimiter, where userinfo can actually appear.
+        assert_eq!(
+            parse_absolute_form(&format!("{s}doubleclick.net?@rossi-editore.it")),
+            Some(("doubleclick.net".to_string(), 80))
+        );
+        assert_eq!(parse_absolute_form(&format!("{s}doubleclick.net@rossi-editore.it?x")), None);
+
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        for target in [
+            format!("{SCHEME}doubleclick.net?x=rossi-editore.it"),
+            format!("{SCHEME}doubleclick.net#.rossi-editore.it"),
+        ] {
+            let reply = send(p.addr, &format!("GET {target} HTTP/1.1\r\n\r\n")).await;
+            assert!(reply.starts_with("HTTP/1.1 403"), "{target} got {reply:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert!(p.ledger.denied().iter().all(|(h, _, _)| h == "doubleclick.net"));
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn refuses_a_percent_encoded_authority_rather_than_decoding_it() {
+        // A proxy that decoded `%2e` into `.` would be deciding on a name the client did not
+        // write, and one the server may decode differently. `%` is outside `vet_host`'s allowlist,
+        // so the decision refuses it — and this proxy never decodes anything.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        for authority in [
+            "rossi-editore%2eit",
+            "%72ossi-editore.it",
+            "rossi-editore.it%00.evil.example",
+            "rossi-editore.it%2eevil.example",
+            "evil.example%2f.rossi-editore.it",
+        ] {
+            let reply = send(p.addr, &format!("GET {SCHEME}{authority}/x HTTP/1.1\r\n\r\n")).await;
+            assert!(reply.starts_with("HTTP/1.1 403"), "{authority} got {reply:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(p.ledger.allowed().is_empty());
+        assert_eq!(p.ledger.denied().len(), 5);
+        assert!(p
+            .ledger
+            .denied()
+            .iter()
+            .all(|(_, p, r)| *p == 80 && *r == DenyReason::MalformedAuthority));
+        assert_sensor_alive(&p.ledger);
     }
 
     #[tokio::test]

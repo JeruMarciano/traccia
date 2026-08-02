@@ -32,18 +32,131 @@ tauri-build = { version = "2", features = [] }
 #   tokio                 Async runtime for the proxy listener. Tauri depends on
 #                         it regardless — verified with `cargo tree -i tokio`,
 #                         which shows tauri v2.11.5. Feature set kept narrow.
+#   chromiumoxide         The CDP client. Pinned to 0.7.0 by Task 0's preflight
+#                         (`version = "0.7"` has exactly one match on crates.io;
+#                         0.8/0.9 exist and were not taken because the plan
+#                         names 0.7). Task 7's cdp.rs now reaches it from
+#                         `run()`, for protocol types and a raw
+#                         `chromiumoxide::conn::Connection` only — never
+#                         `Browser`, never `Browser::connect` — which is the
+#                         preflight's advice at §1 followed exactly. Task 12
+#                         re-measured against the 2026-07-31 baseline (binary
+#                         2,436,064, .dmg 1,536,327) with nothing else changed
+#                         in Cargo.toml between the two builds but this crate
+#                         and futures-core (net zero, see below): **+183,504
+#                         bytes of binary (+7.5%) / +111,012 of .dmg (+7.2%)**.
+#                         That is the whole marginal cost, attributed by
+#                         subtraction against a baseline nothing else moved,
+#                         and it lands well inside the preflight's own
+#                         upper-bound estimate of +1,380,736 / +718,410 for a
+#                         probe that also touched `Browser::launch`,
+#                         `Page::execute` and `Connection::submit_command` —
+#                         confirming the preflight's prediction that avoiding
+#                         `Browser` would land below that figure. Method and
+#                         numbers: docs/decisions/2026-08-01-v0.1-bundle-measurement.md.
+#                         The preflight's own figures remain at
+#                         docs/decisions/2026-08-01-v0.1-preflight.md for the
+#                         record of what the upper bound looked like before
+#                         Task 7 was written.
+#   futures-core          The `Stream` trait, and nothing else. Task 7's cdp.rs
+#                         drives `chromiumoxide::conn::Connection` directly
+#                         rather than through `Browser` (preflight §1), and
+#                         `Connection` is a `Stream` — polling it means naming
+#                         the trait, and chromiumoxide does not re-export it.
+#                         Deliberately futures-core and not `futures`: the trait
+#                         alone, none of the combinators, none of the executor.
+#
+#                         SHIPPED BYTES: zero. This adds no package to
+#                         Cargo.lock — the only change there is one line in
+#                         traccia's own dependency list. futures-core 0.3.33 is
+#                         already compiled into the macOS build graph, three
+#                         ways over. Verified with `cargo tree -e normal -i
+#                         futures-core`, which prints:
+#
+#                             futures-core v0.3.33
+#                             ├── futures v0.3.33
+#                             │   └── chromiumoxide v0.7.0
+#                             │       └── traccia v1.0.0
+#                             ├── futures-channel v0.3.33
+#                             │   ├── futures v0.3.33 (*)
+#                             │   ├── futures-util v0.3.33
+#                             │   │   ├── async-tungstenite v0.27.0
+#                             │   │   │   └── chromiumoxide v0.7.0 (*)
+#                             ...
+#
+#                         i.e. it was already reachable through chromiumoxide
+#                         before this line existed. Declaring it changes what
+#                         this crate may name, not what the linker sees.
 #
 # Deliberately NOT taken:
 #   hyper / reqwest / h2  The proxy handles CONNECT only: parse a request line,
 #                         answer 200 or 403, then splice bytes. An HTTP stack
 #                         would add a large attack surface to the one component
 #                         that must be small enough to audit by reading it.
+#                         NOTE, added by Task 0: this is no longer true of the
+#                         macOS build graph. hyper, hyper-util, tower,
+#                         tower-http and a reqwest 0.13 were already locked via
+#                         tauri, but target-gated out here — `cargo tree -e
+#                         normal -i reqwest@0.13.4` prints nothing on macOS.
+#                         What changed is that they are now reachable:
+#                         chromiumoxide 0.7.0 depends on reqwest
+#                         unconditionally (`default-features = false`, so no TLS
+#                         and no h2), which pulls hyper, hyper-util, tower and
+#                         tower-http. It is used in exactly one place —
+#                         `Browser::connect_with_config` fetching /json/version
+#                         — which is the call this project already avoids by
+#                         reading DevToolsActivePort. Reachable only through
+#                         `Browser::connect`; the ~200 KB above is what that
+#                         reachability costs. Phase 2 decides whether to pay it.
+#   chromiumoxide's own   `Target.attachedToTarget` → immediate
+#   attach handling       `Runtime.runIfWaitingForDebugger`, hardcoded in the
+#                         crate's `pub(crate)` handler, with no hook to arm
+#                         Fetch first. This is the F2 race the CDP spike proved
+#                         must not happen, so the interception loop cannot be
+#                         delegated to `Browser`. See the preflight doc §1.
+#   tokio-util            The obvious home for a CancellationToken, and the type
+#                         Task 7's brief named. Not taken: unlike futures-core
+#                         it is genuinely absent from this build graph — `cargo
+#                         tree -e normal -i tokio-util` prints "nothing to
+#                         print" on macOS — so taking it would compile and ship
+#                         a new crate. cdp.rs defines its own
+#                         `CancellationToken` over an Arc<AtomicBool> instead:
+#                         set a flag, read a flag, which is the whole of what a
+#                         scan needs to be stoppable. If a later task wants the
+#                         real token's `cancelled()` future to await on, that is
+#                         a dependency decision to take then, with bytes
+#                         measured — not a thing to inherit by accident.
 #   uuid                  Temp-file uniqueness comes from pid + a process-local
 #                         counter + nanos since epoch. Same guarantee, no crate.
 #   tokio-tungstenite     CDP is Phase 2. Not added until it is needed.
+#                         NOTE, added by Task 0: still not taken, but a
+#                         WebSocket stack is compiled in regardless, because
+#                         chromiumoxide 0.7.0 brings its own — async-tungstenite
+#                         0.27.0, and under it tungstenite 0.23.0, which adds
+#                         rand 0.8.7, rand_chacha, ppv-lite86, zerocopy, sha1
+#                         and data-encoding. chromiumoxide also pulls which
+#                         6.0.3 (browser discovery), which adds a second rustix
+#                         0.38 alongside the one already locked. So the choice
+#                         Phase 2 faces is not "add a WebSocket crate or not" —
+#                         it is which of the two already-compiled stacks owns
+#                         the CDP transport. Preflight doc §1 argues for a raw
+#                         connection either way; if that ends up being
+#                         tokio-tungstenite, drop chromiumoxide's transport
+#                         rather than shipping both.
 #   tauri-plugin-opener   Shipped by create-tauri-app and removed here. It hands
 #                         a URL or a path to the OS to open, which is precisely
 #                         the egress and execution surface this app must not have.
+#   Playwright and a      The obvious alternative to hand-rolled CDP: a
+#   bundled Node runtime  browser-automation library and the JS runtime it
+#                         needs to run in. Not taken. Playwright alone bundles
+#                         its own browser binaries and a Node runtime is
+#                         roughly 60 MB against this project's ~1.5 MB
+#                         baseline .dmg (docs/decisions/2026-07-31-tauri-bundle-measurement.md) —
+#                         a two-order-of-magnitude jump for a dependency this
+#                         app needs for one narrow job: attach CDP, watch
+#                         requests, detach. `chromiumoxide`'s typed protocol
+#                         plus a raw connection does that job at +183,504
+#                         bytes, and the author chose the smaller download.
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -51,10 +164,27 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
+futures-core = "0.3"
 
 [dev-dependencies]
 # Dev only. Never shipped.
 tempfile = "3"
+# Self dependency, `test-support` feature only: `tests/egress.rs` links this crate as an
+# external integration test and needs `scan::run_scan_for_test*`, `scan::LaunchHook`,
+# `scan::ScanRun` and `proxy::Ledger::poison_for_test` — real `pub` seams, but ones a
+# release build must not carry (see [features] below). Without this line those seams
+# would either have to be `pub` unconditionally (shipping in every build, including the
+# release rlib) or invisible to `tests/egress.rs` (which cannot see a `#[cfg(test)]` item
+# in the crate it links against). This is the standard pattern for exposing test-only `pub`
+# surface to an integration test without shipping it.
+traccia = { path = ".", features = ["test-support"] }
+
+[features]
+# Off by default, so `cargo build --release` (and every other default build) never carries
+# the seams below. On for `tests/egress.rs` via the self dev-dependency above, and can be
+# turned on explicitly for any other integration test that needs the same seams.
+test-support = []
 
 [profile.release]
 opt-level = "z"

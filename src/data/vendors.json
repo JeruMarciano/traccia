@@ -1,0 +1,1212 @@
+{
+  "www.google-analytics.com": {
+    "owner": "Google",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "google-analytics.com": {
+    "owner": "Google",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "ssl.google-analytics.com": {
+    "owner": "Google",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "analytics.google.com": {
+    "owner": "Google",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "www.googletagmanager.com": {
+    "owner": "Google",
+    "category": "tag-manager",
+    "purposeGroup": "Marketing"
+  },
+  "googletagmanager.com": {
+    "owner": "Google",
+    "category": "tag-manager",
+    "purposeGroup": "Marketing"
+  },
+  "googletagservices.com": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "doubleclick.net": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "googlesyndication.com": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "googleadservices.com": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "adservice.google.com": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "pagead2.googlesyndication.com": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "fonts.googleapis.com": {
+    "owner": "Google",
+    "category": "fonts",
+    "purposeGroup": "Running the systems"
+  },
+  "fonts.gstatic.com": {
+    "owner": "Google",
+    "category": "fonts",
+    "purposeGroup": "Running the systems"
+  },
+  "gstatic.com": {
+    "owner": "Google",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "www.gstatic.com": {
+    "owner": "Google",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "www.recaptcha.net": {
+    "owner": "Google",
+    "category": "captcha",
+    "purposeGroup": "Running the systems"
+  },
+  "recaptcha.net": {
+    "owner": "Google",
+    "category": "captcha",
+    "purposeGroup": "Running the systems"
+  },
+  "maps.googleapis.com": {
+    "owner": "Google",
+    "category": "maps",
+    "purposeGroup": "Running the systems"
+  },
+  "maps.google.com": {
+    "owner": "Google",
+    "category": "maps",
+    "purposeGroup": "Running the systems"
+  },
+  "apis.google.com": {
+    "owner": "Google",
+    "category": "infrastructure",
+    "purposeGroup": "Running the systems"
+  },
+  "googleapis.com": {
+    "owner": "Google",
+    "category": "infrastructure",
+    "purposeGroup": "Running the systems"
+  },
+  "youtube.com": {
+    "owner": "Google",
+    "category": "video",
+    "purposeGroup": "Running the systems"
+  },
+  "www.youtube.com": {
+    "owner": "Google",
+    "category": "video",
+    "purposeGroup": "Running the systems"
+  },
+  "youtube-nocookie.com": {
+    "owner": "Google",
+    "category": "video",
+    "purposeGroup": "Running the systems"
+  },
+  "ytimg.com": {
+    "owner": "Google",
+    "category": "video",
+    "purposeGroup": "Running the systems"
+  },
+  "i.ytimg.com": {
+    "owner": "Google",
+    "category": "video",
+    "purposeGroup": "Running the systems"
+  },
+  "connect.facebook.net": {
+    "owner": "Meta",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "facebook.net": {
+    "owner": "Meta",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "www.facebook.com": {
+    "owner": "Meta",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "facebook.com": {
+    "owner": "Meta",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "fbcdn.net": {
+    "owner": "Meta",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "instagram.com": {
+    "owner": "Meta",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "www.instagram.com": {
+    "owner": "Meta",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "www.clarity.ms": {
+    "owner": "Microsoft",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "clarity.ms": {
+    "owner": "Microsoft",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "bing.com": {
+    "owner": "Microsoft",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "c.bing.com": {
+    "owner": "Microsoft",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "linkedin.com": {
+    "owner": "Microsoft",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "www.linkedin.com": {
+    "owner": "Microsoft",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "licdn.com": {
+    "owner": "Microsoft",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "snap.licdn.com": {
+    "owner": "Microsoft",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "px.ads.linkedin.com": {
+    "owner": "Microsoft",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "tiktok.com": {
+    "owner": "TikTok",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "analytics.tiktok.com": {
+    "owner": "TikTok",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "business-api.tiktok.com": {
+    "owner": "TikTok",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "ibytedtos.com": {
+    "owner": "TikTok",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "cloudflare.com": {
+    "owner": "Cloudflare",
+    "category": "infrastructure",
+    "purposeGroup": "Running the systems"
+  },
+  "cloudflareinsights.com": {
+    "owner": "Cloudflare",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "cdnjs.cloudflare.com": {
+    "owner": "Cloudflare",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "cloudflarestream.com": {
+    "owner": "Cloudflare",
+    "category": "video",
+    "purposeGroup": "Running the systems"
+  },
+  "amazonaws.com": {
+    "owner": "Amazon",
+    "category": "infrastructure",
+    "purposeGroup": "Running the systems"
+  },
+  "cloudfront.net": {
+    "owner": "Amazon",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "amazon-adsystem.com": {
+    "owner": "Amazon",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "s3.amazonaws.com": {
+    "owner": "Amazon",
+    "category": "infrastructure",
+    "purposeGroup": "Running the systems"
+  },
+  "code.jquery.com": {
+    "owner": "OpenJS Foundation",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "jquery.com": {
+    "owner": "OpenJS Foundation",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "cdn.jsdelivr.net": {
+    "owner": "jsDelivr",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "jsdelivr.net": {
+    "owner": "jsDelivr",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "unpkg.com": {
+    "owner": "unpkg",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "maxcdn.bootstrapcdn.com": {
+    "owner": "StackPath",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "stackpath.bootstrapcdn.com": {
+    "owner": "StackPath",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "fastly.net": {
+    "owner": "Fastly",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "akamaiedge.net": {
+    "owner": "Akamai",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "akamai.net": {
+    "owner": "Akamai",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "kxcdn.com": {
+    "owner": "KeyCDN",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "stripe.com": {
+    "owner": "Stripe",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "js.stripe.com": {
+    "owner": "Stripe",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "api.stripe.com": {
+    "owner": "Stripe",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "checkout.stripe.com": {
+    "owner": "Stripe",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "m.stripe.network": {
+    "owner": "Stripe",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "paypal.com": {
+    "owner": "PayPal",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "www.paypal.com": {
+    "owner": "PayPal",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "paypalobjects.com": {
+    "owner": "PayPal",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "nexi.it": {
+    "owner": "Nexi",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "xpay.nexi.it": {
+    "owner": "Nexi",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "nexigroup.com": {
+    "owner": "Nexi",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "satispay.com": {
+    "owner": "Satispay",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "online.satispay.com": {
+    "owner": "Satispay",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "pagopa.it": {
+    "owner": "PagoPA",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "checkout.pagopa.it": {
+    "owner": "PagoPA",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "klarna.com": {
+    "owner": "Klarna",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "x.klarnacdn.net": {
+    "owner": "Klarna",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "scalapay.com": {
+    "owner": "Scalapay",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "adyen.com": {
+    "owner": "Adyen",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "checkoutshopper-live.adyen.com": {
+    "owner": "Adyen",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "braintreegateway.com": {
+    "owner": "Braintree (PayPal)",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "braintree-api.com": {
+    "owner": "Braintree (PayPal)",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "squareup.com": {
+    "owner": "Square",
+    "category": "payments",
+    "purposeGroup": "Getting paid"
+  },
+  "mailchimp.com": {
+    "owner": "Mailchimp",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "list-manage.com": {
+    "owner": "Mailchimp",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "chimpstatic.com": {
+    "owner": "Mailchimp",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "sendinblue.com": {
+    "owner": "Brevo",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "brevo.com": {
+    "owner": "Brevo",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "sibforms.com": {
+    "owner": "Brevo",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "klaviyo.com": {
+    "owner": "Klaviyo",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "static.klaviyo.com": {
+    "owner": "Klaviyo",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "a.klaviyo.com": {
+    "owner": "Klaviyo",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "activehosted.com": {
+    "owner": "ActiveCampaign",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "activecampaign.com": {
+    "owner": "ActiveCampaign",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "getresponse.com": {
+    "owner": "GetResponse",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "mailerlite.com": {
+    "owner": "MailerLite",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "convertkit.com": {
+    "owner": "ConvertKit",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "hotjar.com": {
+    "owner": "Hotjar",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "static.hotjar.com": {
+    "owner": "Hotjar",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "script.hotjar.com": {
+    "owner": "Hotjar",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "insights.hotjar.com": {
+    "owner": "Hotjar",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "hubspot.com": {
+    "owner": "HubSpot",
+    "category": "crm",
+    "purposeGroup": "Selling"
+  },
+  "hs-scripts.com": {
+    "owner": "HubSpot",
+    "category": "crm",
+    "purposeGroup": "Selling"
+  },
+  "hsforms.com": {
+    "owner": "HubSpot",
+    "category": "forms",
+    "purposeGroup": "Marketing"
+  },
+  "hsforms.net": {
+    "owner": "HubSpot",
+    "category": "forms",
+    "purposeGroup": "Marketing"
+  },
+  "hubspotusercontent.net": {
+    "owner": "HubSpot",
+    "category": "crm",
+    "purposeGroup": "Selling"
+  },
+  "js.hs-scripts.com": {
+    "owner": "HubSpot",
+    "category": "crm",
+    "purposeGroup": "Selling"
+  },
+  "hs-analytics.net": {
+    "owner": "HubSpot",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "intercom.io": {
+    "owner": "Intercom",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "widget.intercom.io": {
+    "owner": "Intercom",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "js.intercomcdn.com": {
+    "owner": "Intercom",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "intercomcdn.com": {
+    "owner": "Intercom",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "zendesk.com": {
+    "owner": "Zendesk",
+    "category": "support",
+    "purposeGroup": "Support"
+  },
+  "zdassets.com": {
+    "owner": "Zendesk",
+    "category": "support",
+    "purposeGroup": "Support"
+  },
+  "static.zdassets.com": {
+    "owner": "Zendesk",
+    "category": "support",
+    "purposeGroup": "Support"
+  },
+  "shopify.com": {
+    "owner": "Shopify",
+    "category": "ecommerce",
+    "purposeGroup": "Selling"
+  },
+  "cdn.shopify.com": {
+    "owner": "Shopify",
+    "category": "ecommerce",
+    "purposeGroup": "Selling"
+  },
+  "myshopify.com": {
+    "owner": "Shopify",
+    "category": "ecommerce",
+    "purposeGroup": "Selling"
+  },
+  "shopifycloud.com": {
+    "owner": "Shopify",
+    "category": "ecommerce",
+    "purposeGroup": "Selling"
+  },
+  "wordpress.com": {
+    "owner": "Automattic",
+    "category": "hosting",
+    "purposeGroup": "Running the systems"
+  },
+  "wp.com": {
+    "owner": "Automattic",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "gravatar.com": {
+    "owner": "Automattic",
+    "category": "infrastructure",
+    "purposeGroup": "Running the systems"
+  },
+  "woocommerce.com": {
+    "owner": "Automattic",
+    "category": "ecommerce",
+    "purposeGroup": "Selling"
+  },
+  "jetpack.com": {
+    "owner": "Automattic",
+    "category": "hosting",
+    "purposeGroup": "Running the systems"
+  },
+  "stats.wp.com": {
+    "owner": "Automattic",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "wix.com": {
+    "owner": "Wix",
+    "category": "hosting",
+    "purposeGroup": "Running the systems"
+  },
+  "wixstatic.com": {
+    "owner": "Wix",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "parastorage.com": {
+    "owner": "Wix",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "squarespace.com": {
+    "owner": "Squarespace",
+    "category": "hosting",
+    "purposeGroup": "Running the systems"
+  },
+  "sqspcdn.com": {
+    "owner": "Squarespace",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "squarespace-cdn.com": {
+    "owner": "Squarespace",
+    "category": "cdn",
+    "purposeGroup": "Running the systems"
+  },
+  "typeform.com": {
+    "owner": "Typeform",
+    "category": "forms",
+    "purposeGroup": "Marketing"
+  },
+  "embed.typeform.com": {
+    "owner": "Typeform",
+    "category": "forms",
+    "purposeGroup": "Marketing"
+  },
+  "calendly.com": {
+    "owner": "Calendly",
+    "category": "scheduling",
+    "purposeGroup": "Selling"
+  },
+  "assets.calendly.com": {
+    "owner": "Calendly",
+    "category": "scheduling",
+    "purposeGroup": "Selling"
+  },
+  "vimeo.com": {
+    "owner": "Vimeo",
+    "category": "video",
+    "purposeGroup": "Running the systems"
+  },
+  "player.vimeo.com": {
+    "owner": "Vimeo",
+    "category": "video",
+    "purposeGroup": "Running the systems"
+  },
+  "vimeocdn.com": {
+    "owner": "Vimeo",
+    "category": "video",
+    "purposeGroup": "Running the systems"
+  },
+  "trustpilot.com": {
+    "owner": "Trustpilot",
+    "category": "reviews",
+    "purposeGroup": "Marketing"
+  },
+  "widget.trustpilot.com": {
+    "owner": "Trustpilot",
+    "category": "reviews",
+    "purposeGroup": "Marketing"
+  },
+  "invitejs.trustpilot.com": {
+    "owner": "Trustpilot",
+    "category": "reviews",
+    "purposeGroup": "Marketing"
+  },
+  "criteo.com": {
+    "owner": "Criteo",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "static.criteo.net": {
+    "owner": "Criteo",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "dis.criteo.com": {
+    "owner": "Criteo",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "taboola.com": {
+    "owner": "Taboola",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "cdn.taboola.com": {
+    "owner": "Taboola",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "trc.taboola.com": {
+    "owner": "Taboola",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "outbrain.com": {
+    "owner": "Outbrain",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "widgets.outbrain.com": {
+    "owner": "Outbrain",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "segment.com": {
+    "owner": "Segment (Twilio)",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "cdn.segment.com": {
+    "owner": "Segment (Twilio)",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "api.segment.io": {
+    "owner": "Segment (Twilio)",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "matomo.cloud": {
+    "owner": "Matomo",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "matomo.org": {
+    "owner": "Matomo",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "iubenda.com": {
+    "owner": "Iubenda",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "cdn.iubenda.com": {
+    "owner": "Iubenda",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "cs.iubenda.com": {
+    "owner": "Iubenda",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "cookiebot.com": {
+    "owner": "Cookiebot (Usercentrics)",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "consent.cookiebot.com": {
+    "owner": "Cookiebot (Usercentrics)",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "consentcdn.cookiebot.com": {
+    "owner": "Cookiebot (Usercentrics)",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "onetrust.com": {
+    "owner": "OneTrust",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "cdn.cookielaw.org": {
+    "owner": "OneTrust",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "geolocation.onetrust.com": {
+    "owner": "OneTrust",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "usercentrics.eu": {
+    "owner": "Usercentrics",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "app.usercentrics.eu": {
+    "owner": "Usercentrics",
+    "category": "consent",
+    "purposeGroup": "Running the systems"
+  },
+  "static.ads-twitter.com": {
+    "owner": "X (Twitter)",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "platform.twitter.com": {
+    "owner": "X (Twitter)",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "syndication.twitter.com": {
+    "owner": "X (Twitter)",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "ct.pinterest.com": {
+    "owner": "Pinterest",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "assets.pinterest.com": {
+    "owner": "Pinterest",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "sc-static.net": {
+    "owner": "Snap Inc.",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "tr.snapchat.com": {
+    "owner": "Snap Inc.",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "addthis.com": {
+    "owner": "AddThis (Oracle)",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "sharethis.com": {
+    "owner": "ShareThis",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "js.driftt.com": {
+    "owner": "Drift",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "widget.drift.com": {
+    "owner": "Drift",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "freshchat.com": {
+    "owner": "Freshworks",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "freshdesk.com": {
+    "owner": "Freshworks",
+    "category": "support",
+    "purposeGroup": "Support"
+  },
+  "wchat.freshchat.com": {
+    "owner": "Freshworks",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "livechatinc.com": {
+    "owner": "LiveChat",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "cdn.livechatinc.com": {
+    "owner": "LiveChat",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "tawk.to": {
+    "owner": "Tawk.to",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "embed.tawk.to": {
+    "owner": "Tawk.to",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "olark.com": {
+    "owner": "Olark",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "static.olark.com": {
+    "owner": "Olark",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "client.crisp.chat": {
+    "owner": "Crisp",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "crisp.chat": {
+    "owner": "Crisp",
+    "category": "live-chat",
+    "purposeGroup": "Support"
+  },
+  "beacon-v2.helpscout.net": {
+    "owner": "Help Scout",
+    "category": "support",
+    "purposeGroup": "Support"
+  },
+  "helpscout.net": {
+    "owner": "Help Scout",
+    "category": "support",
+    "purposeGroup": "Support"
+  },
+  "use.typekit.net": {
+    "owner": "Adobe (Typekit)",
+    "category": "fonts",
+    "purposeGroup": "Running the systems"
+  },
+  "p.typekit.net": {
+    "owner": "Adobe (Typekit)",
+    "category": "fonts",
+    "purposeGroup": "Running the systems"
+  },
+  "kit.fontawesome.com": {
+    "owner": "Font Awesome",
+    "category": "fonts",
+    "purposeGroup": "Running the systems"
+  },
+  "use.fontawesome.com": {
+    "owner": "Font Awesome",
+    "category": "fonts",
+    "purposeGroup": "Running the systems"
+  },
+  "sentry.io": {
+    "owner": "Sentry",
+    "category": "error-tracking",
+    "purposeGroup": "Running the systems"
+  },
+  "browser.sentry-cdn.com": {
+    "owner": "Sentry",
+    "category": "error-tracking",
+    "purposeGroup": "Running the systems"
+  },
+  "newrelic.com": {
+    "owner": "New Relic",
+    "category": "performance",
+    "purposeGroup": "Running the systems"
+  },
+  "js-agent.newrelic.com": {
+    "owner": "New Relic",
+    "category": "performance",
+    "purposeGroup": "Running the systems"
+  },
+  "bam.nr-data.net": {
+    "owner": "New Relic",
+    "category": "performance",
+    "purposeGroup": "Running the systems"
+  },
+  "bugsnag.com": {
+    "owner": "Bugsnag",
+    "category": "error-tracking",
+    "purposeGroup": "Running the systems"
+  },
+  "sessions.bugsnag.com": {
+    "owner": "Bugsnag",
+    "category": "error-tracking",
+    "purposeGroup": "Running the systems"
+  },
+  "logrocket.com": {
+    "owner": "LogRocket",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "cdn.logrocket.io": {
+    "owner": "LogRocket",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "datadoghq.com": {
+    "owner": "Datadog",
+    "category": "performance",
+    "purposeGroup": "Running the systems"
+  },
+  "browser-intake-datadoghq.com": {
+    "owner": "Datadog",
+    "category": "performance",
+    "purposeGroup": "Running the systems"
+  },
+  "cdn.optimizely.com": {
+    "owner": "Optimizely",
+    "category": "a-b-testing",
+    "purposeGroup": "Marketing"
+  },
+  "logx.optimizely.com": {
+    "owner": "Optimizely",
+    "category": "a-b-testing",
+    "purposeGroup": "Marketing"
+  },
+  "dev.visualwebsiteoptimizer.com": {
+    "owner": "VWO",
+    "category": "a-b-testing",
+    "purposeGroup": "Marketing"
+  },
+  "vwo.com": {
+    "owner": "VWO",
+    "category": "a-b-testing",
+    "purposeGroup": "Marketing"
+  },
+  "amplitude.com": {
+    "owner": "Amplitude",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "cdn.amplitude.com": {
+    "owner": "Amplitude",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "mixpanel.com": {
+    "owner": "Mixpanel",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "cdn.mxpnl.com": {
+    "owner": "Mixpanel",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "heap.io": {
+    "owner": "Heap",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "cdn.heapanalytics.com": {
+    "owner": "Heap",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "plausible.io": {
+    "owner": "Plausible",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "usefathom.com": {
+    "owner": "Fathom Analytics",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "cdn.usefathom.com": {
+    "owner": "Fathom Analytics",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "hcaptcha.com": {
+    "owner": "hCaptcha",
+    "category": "captcha",
+    "purposeGroup": "Running the systems"
+  },
+  "js.hcaptcha.com": {
+    "owner": "hCaptcha",
+    "category": "captcha",
+    "purposeGroup": "Running the systems"
+  },
+  "wa.me": {
+    "owner": "WhatsApp (Meta)",
+    "category": "support",
+    "purposeGroup": "Support"
+  },
+  "api.whatsapp.com": {
+    "owner": "WhatsApp (Meta)",
+    "category": "support",
+    "purposeGroup": "Support"
+  },
+  "tile.openstreetmap.org": {
+    "owner": "OpenStreetMap Foundation",
+    "category": "maps",
+    "purposeGroup": "Running the systems"
+  },
+  "aruba.it": {
+    "owner": "Aruba",
+    "category": "hosting",
+    "purposeGroup": "Running the systems"
+  },
+  "hosting.aruba.it": {
+    "owner": "Aruba",
+    "category": "hosting",
+    "purposeGroup": "Running the systems"
+  },
+  "register.it": {
+    "owner": "Register.it (Aruba)",
+    "category": "hosting",
+    "purposeGroup": "Running the systems"
+  },
+  "netsons.com": {
+    "owner": "Netsons",
+    "category": "hosting",
+    "purposeGroup": "Running the systems"
+  },
+  "serverplan.com": {
+    "owner": "Serverplan",
+    "category": "hosting",
+    "purposeGroup": "Running the systems"
+  },
+  "poste.it": {
+    "owner": "Poste Italiane",
+    "category": "delivery",
+    "purposeGroup": "Delivering orders"
+  },
+  "posteitaliane.it": {
+    "owner": "Poste Italiane",
+    "category": "delivery",
+    "purposeGroup": "Delivering orders"
+  },
+  "dhl.com": {
+    "owner": "DHL",
+    "category": "delivery",
+    "purposeGroup": "Delivering orders"
+  },
+  "dhl.it": {
+    "owner": "DHL",
+    "category": "delivery",
+    "purposeGroup": "Delivering orders"
+  },
+  "ups.com": {
+    "owner": "UPS",
+    "category": "delivery",
+    "purposeGroup": "Delivering orders"
+  },
+  "fedex.com": {
+    "owner": "FedEx",
+    "category": "delivery",
+    "purposeGroup": "Delivering orders"
+  },
+  "brt.it": {
+    "owner": "BRT (Bartolini)",
+    "category": "delivery",
+    "purposeGroup": "Delivering orders"
+  },
+  "gls-italy.com": {
+    "owner": "GLS",
+    "category": "delivery",
+    "purposeGroup": "Delivering orders"
+  },
+  "sda.it": {
+    "owner": "SDA Express Courier",
+    "category": "delivery",
+    "purposeGroup": "Delivering orders"
+  }
+}

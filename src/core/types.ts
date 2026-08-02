@@ -61,6 +61,42 @@ export interface Observation {
   beforeConsent: boolean
 }
 
+/** One entry in the bundled vendor dictionary. Data only; never fetched. */
+export interface VendorEntry {
+  /** The company that owns the host, e.g. "Google". */
+  owner: string
+  /** What it does, e.g. "analytics". Combined with owner to name a place. */
+  category: string
+  /** Which purpose group the place belongs to, e.g. "Marketing". */
+  purposeGroup: string
+}
+
+export type VendorDictionary = Readonly<Record<string, VendorEntry>>
+
+/** One host seen during a scan, before it is named. */
+export interface ObservedHost {
+  host: string
+  requestCount: number
+}
+
+/** What one completed scan produced. Consumed by ingestScan. */
+export interface ScanResult {
+  /** The origin host the user asked to scan, e.g. "rossi-editore.it". */
+  scannedHost: string
+  /** Every host contacted, including the scanned host itself. */
+  hosts: ObservedHost[]
+  /** How many pages were loaded, entry page included. */
+  pagesVisited: number
+  /**
+   * How many places the map may be incomplete, e.g. a page that failed to load or a
+   * request that could not be attributed to a page. Not a count of unobserved third
+   * parties — the map cannot know what it never saw.
+   */
+  possibleGaps: number
+  /** True if the scan was stopped before it ran its course, rather than finishing on its own. */
+  stoppedEarly: boolean
+}
+
 export interface Project {
   schemaVersion: 1
   name: string

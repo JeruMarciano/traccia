@@ -16,7 +16,12 @@
  * Colour is used once, for people, and never for anything that could be read as a fault. Every
  * distinction above survives greyscale, because it is carried by line style and shape; the one
  * hue only reinforces the thing it marks.
+ *
+ * Print is the one exception to "held as a string": `./print.css` is an ordinary stylesheet, so
+ * Vite bundles it rather than this file having to grow a second string nobody can lint. This
+ * import is the only thing that makes it reach the page.
  */
+import './print.css'
 
 export const STYLESHEET = `
 :root{
@@ -77,6 +82,23 @@ export const STYLESHEET = `
 .action:hover:enabled{background:var(--ink);color:var(--sheet);}
 .action:disabled{border-color:var(--rule);color:var(--ink-soft);cursor:default;}
 
+/* The scan control: a plain field and one button, styled like the title-block actions it sits
+   beside rather than as a form of its own. */
+.scanbar{display:flex;gap:6px;padding:10px 0 0;}
+.scan-input{
+  flex:1;
+  min-width:0;
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--ink);
+  background:none;
+  border:1px solid var(--rule);
+  border-radius:0;
+  padding:6px 9px;
+}
+.scan-input:disabled{color:var(--ink-soft);}
+.scan-input:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+
 /* A message about this session, not about the client's data: heavier left rule, no colour. */
 .notice{
   display:flex;
@@ -104,6 +126,7 @@ export const STYLESHEET = `
 
 .link{stroke:var(--ink);stroke-width:1;fill:none;}
 .crossing{stroke:var(--ink);stroke-width:1.25;fill:none;}
+.subject{cursor:pointer;}
 .disc{fill:var(--person);}
 .disc-label{
   fill:var(--sheet);
@@ -147,18 +170,16 @@ export const STYLESHEET = `
 }
 .key-gloss{display:block;margin:2px 0 0;font-size:11px;line-height:1.35;color:var(--ink-soft);}
 
-/* The register */
-.register{
+/* The detail bar: what the clicked point holds. Present only while something is selected, so
+   the sheet is the drawing alone until a click asks a question of it. */
+.detail{
   width:322px;
   flex:none;
   border-left:1px solid var(--rule);
   padding:16px 22px 18px;
   overflow-y:auto;
 }
-.register-head{
-  display:flex;
-  align-items:baseline;
-  gap:8px;
+.detail-head{
   margin:0;
   font-family:var(--mono);
   font-size:10px;
@@ -166,53 +187,61 @@ export const STYLESHEET = `
   letter-spacing:.16em;
   text-transform:uppercase;
 }
-.register-count{margin-left:auto;font-size:12px;letter-spacing:0;}
-.register-caption,.register-empty{
-  margin:9px 0 0;
-  font-size:11.5px;
-  line-height:1.45;
+.detail-none{margin:8px 0 0;font-size:11.5px;color:var(--ink-soft);}
+.detail-subjects{list-style:none;margin:14px 0 0;padding:0;}
+.detail-subject-name{margin:0;font-size:13px;}
+.detail-subject-notes{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
+.detail-place{padding:14px 0;border-bottom:1px dashed var(--rule);}
+.detail-place:first-of-type{padding-top:14px;}
+.detail-place-name{margin:0;font-size:14px;font-weight:400;}
+.detail-purpose{
+  margin:2px 0 0;
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:.11em;
+  text-transform:uppercase;
   color:var(--ink-soft);
 }
-.register-list{list-style:none;margin:14px 0 0;padding:0;border-top:1px solid var(--rule);}
-/* Dashed separators, for the same reason the map dashes an unanswered count: every line in
-   this list is still open. */
-.entry{
+.detail-facts{
+  margin:10px 0 0;
   display:grid;
-  grid-template-columns:26px 1fr;
-  column-gap:10px;
-  padding:11px 0;
-  border-bottom:1px dashed var(--rule);
-  border-left:3px solid transparent;
-  padding-left:7px;
-  margin-left:-10px;
+  grid-template-columns:1fr 1fr;
+  gap:8px 10px;
 }
-.entry--linked{cursor:pointer;}
-.entry--linked:hover,.entry--linked:focus-visible{border-left-color:var(--ink);}
-.entry-gauge{margin-top:3px;}
-.gauge-cell{fill:none;stroke:var(--ink);stroke-width:1;}
-.gauge-cell--on{fill:var(--ink);}
-.entry-q{margin:0;font-size:13px;line-height:1.4;}
-.entry-why{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
+.detail-facts>div{min-width:0;}
+.detail-facts dt{
+  margin:0;
+  font-family:var(--mono);
+  font-size:8.5px;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+}
+.detail-facts dd{margin:2px 0 0;font-size:12px;line-height:1.35;}
+.detail-sub{
+  margin:14px 0 0;
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:.11em;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+  border-top:1px solid var(--rule);
+  padding-top:9px;
+}
+.detail-observations{list-style:none;margin:8px 0 0;padding:0;}
+.detail-observations li{margin:0 0 4px;font-family:var(--mono);font-size:10.5px;}
 
 @media (max-width:900px){
   .sheet{display:block;height:auto;}
-  .register{width:auto;border-left:0;border-top:1px solid var(--rule);padding:16px 22px 22px;}
+  .detail{width:auto;border-left:0;border-top:1px solid var(--rule);padding:16px 22px 22px;}
   .map-svg{height:auto;}
 }
 @media (max-width:620px){
   .legend{grid-template-columns:repeat(2,minmax(0,1fr));}
 }
 
-/* On paper the sheet is the paper, the controls are gone, and nothing is greyed out: a printed
-   map has no cursor to isolate anything with. */
-@media print{
-  :root{--sheet:#FFFFFF;}
-  .sheet{display:block;height:auto;}
-  .plate{padding:0;}
-  .actions,.notice{display:none;}
-  .register{width:auto;border-left:0;border-top:1px solid var(--rule);padding:14px 0 0;}
-  .map-svg{height:auto;}
-  .dim{opacity:1;}
-  .entry{break-inside:avoid;}
-}
+/* The limits statement and the possible-gaps line: real text in the DOM at all times, so what
+   prints can never drift from what the app knows, but of no use on this screen. print.css turns
+   it back on inside @media print. */
+.print-only{display:none;}
 `
