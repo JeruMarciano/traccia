@@ -1,5 +1,5 @@
 import { addFlow, addPlace } from './graph'
-import { identify } from './vendors'
+import { classifyHost, identify } from './vendors'
 import type { Flow, Observation, Place, Project, ScanResult, VendorDictionary } from './types'
 
 export interface IngestIds {
@@ -153,7 +153,10 @@ export function ingestScan(
         id,
         name,
         kind: hit === null ? 'unknown' : 'processor',
-        purposeGroup: hit === null ? NOT_IDENTIFIED : hit.purposeGroup,
+        // An uncatalogued host still gets a purpose where its own name suggests one — see
+        // `classifyHost`. `kind` stays 'unknown', so the map keeps drawing it as a figure
+        // nobody has explained: a guessed purpose is not an identification.
+        purposeGroup: hit === null ? (classifyHost(observed.host) ?? NOT_IDENTIFIED) : hit.purposeGroup,
         holder: 'supplier',
         leavesEEA: 'unknown',
         sources: [],

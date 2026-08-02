@@ -212,9 +212,18 @@ describe('ingestScan', () => {
     expect(names).toContain('segment-data-us-east.zqtk.net')
     expect(names).toContain('other.zqtk.net')
     for (const n of ['segment-data-us-east.zqtk.net', 'other.zqtk.net']) {
-      expect(p.places.find((pl) => pl.name === n)?.purposeGroup).toBe('Not yet identified')
+      // Neither is in the dictionary, so neither is identified -- `kind` stays 'unknown' and
+      // the map keeps drawing them as figures nobody has explained.
       expect(p.places.find((pl) => pl.name === n)?.kind).toBe('unknown')
     }
+    // The purpose, though, is guessed from the host's own name where it says something:
+    // "segment-data-..." reads as audience work, "other..." says nothing at all.
+    expect(p.places.find((pl) => pl.name === 'segment-data-us-east.zqtk.net')?.purposeGroup).toBe(
+      'Marketing',
+    )
+    expect(p.places.find((pl) => pl.name === 'other.zqtk.net')?.purposeGroup).toBe(
+      'Not yet identified',
+    )
   })
 
   it('records every host as an observation with its request count', () => {

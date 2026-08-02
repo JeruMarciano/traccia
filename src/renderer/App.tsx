@@ -43,7 +43,10 @@ export function App() {
   const [lastScan, setLastScan] = useState<LastScan | null>(null)
   // What the documents appear to describe, awaiting the user's tick. The extracted text
   // behind these candidates is already gone — only the evidence snippets survive to here.
-  const [suggestions, setSuggestions] = useState<Candidate[] | null>(null)
+  const [suggestions, setSuggestions] = useState<{
+    candidates: Candidate[]
+    read: string[]
+  } | null>(null)
 
   const layout = useMemo(() => computeLayout(project, { width: 800, height: 500 }), [project])
 
@@ -91,19 +94,20 @@ export function App() {
 
   async function addDocuments(): Promise<void> {
     try {
-      const { documents, unreadable, truncated } = await pickAndExtractDocuments()
+      const { documents, unreadable, truncated, noText } = await pickAndExtractDocuments()
       const notes: string[] = []
       if (unreadable.length > 0) notes.push(STRINGS.documentsUnreadable(unreadable.join(', ')))
+      if (noText.length > 0) notes.push(STRINGS.documentsNoText(noText.join(', ')))
       if (truncated.length > 0) notes.push(STRINGS.documentsTruncated(truncated.join(', ')))
       if (documents.length === 0) {
-        // The picker was cancelled, or nothing was readable.
+        // The picker was cancelled, or nothing readable came back.
         setNotice(notes.length > 0 ? notes.join(' ') : null)
         return
       }
       const found = extractCandidates(documents, VENDORS, INTERNAL_SYSTEMS)
       if (found.length === 0) notes.push(STRINGS.documentsNothingFound)
       setNotice(notes.length > 0 ? notes.join(' ') : null)
-      setSuggestions(found.length > 0 ? found : null)
+      setSuggestions(found.length > 0 ? { candidates: found, read: documents.map((d) => d.name) } : null)
     } catch {
       setNotice(STRINGS.documentsFailed)
     }
@@ -160,7 +164,8 @@ export function App() {
           )}
           {suggestions === null ? null : (
             <SuggestionsPanel
-              candidates={suggestions}
+              candidates={suggestions.candidates}
+              read={suggestions.read}
               onConfirm={confirmSuggestions}
               onCancel={() => setSuggestions(null)}
             />

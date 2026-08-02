@@ -120,10 +120,13 @@ export const STYLESHEET = `
   padding:11px 12px;
   border:1px solid var(--ink);
   border-left-width:3px;
-  max-height:38vh;
+  max-height:62vh;
   overflow-y:auto;
 }
 .suggestions-head{
+  display:flex;
+  align-items:baseline;
+  gap:8px;
   margin:0;
   font-family:var(--mono);
   font-size:10px;
@@ -131,6 +134,8 @@ export const STYLESHEET = `
   letter-spacing:.16em;
   text-transform:uppercase;
 }
+.suggestions-count{margin-left:auto;font-size:13px;letter-spacing:0;}
+.suggestions-read{margin:6px 0 0;font-family:var(--mono);font-size:9px;color:var(--ink-soft);}
 .suggestions-caption{margin:6px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
 .suggestions-list{list-style:none;margin:10px 0 0;padding:0;}
 .suggestion{padding:8px 0;border-bottom:1px dashed var(--rule);}
@@ -224,10 +229,7 @@ export const STYLESHEET = `
   text-transform:uppercase;
 }
 .detail-none{margin:8px 0 0;font-size:11.5px;color:var(--ink-soft);}
-.detail-declared-list{list-style:none;margin:8px 0 0;padding:0;}
-.detail-declared-list li{margin:0 0 7px;}
-.detail-declared-doc{margin:0;font-family:var(--mono);font-size:9.5px;color:var(--ink);}
-.detail-declared-quote{margin:2px 0 0;font-size:11px;line-height:1.4;color:var(--ink-soft);}
+.detail-declared{margin:8px 0 0;font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);}
 .detail-subjects{list-style:none;margin:14px 0 0;padding:0;}
 .detail-subject-name{margin:0;font-size:13px;}
 .detail-subject-notes{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}

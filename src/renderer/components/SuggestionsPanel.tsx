@@ -11,11 +11,13 @@ import { STRINGS } from '../strings'
 
 interface Props {
   candidates: Candidate[]
+  /** The documents actually read, named so it is obvious which files this list came from. */
+  read: string[]
   onConfirm: (confirmed: Candidate[]) => void
   onCancel: () => void
 }
 
-export function SuggestionsPanel({ candidates, onConfirm, onCancel }: Props) {
+export function SuggestionsPanel({ candidates, read, onConfirm, onCancel }: Props) {
   const [unticked, setUnticked] = useState<ReadonlySet<string>>(new Set())
 
   const toggle = (id: string): void => {
@@ -29,7 +31,11 @@ export function SuggestionsPanel({ candidates, onConfirm, onCancel }: Props) {
 
   return (
     <section className="suggestions" aria-label={STRINGS.suggestionsHeading}>
-      <h2 className="suggestions-head">{STRINGS.suggestionsHeading}</h2>
+      <h2 className="suggestions-head">
+        <span>{STRINGS.suggestionsHeading}</span>
+        <span className="suggestions-count">{candidates.length}</span>
+      </h2>
+      <p className="suggestions-read">{STRINGS.suggestionsRead(read.length, read.join(', '))}</p>
       <p className="suggestions-caption">{STRINGS.suggestionsCaption}</p>
       <ul className="suggestions-list">
         {candidates.map((c) => (
