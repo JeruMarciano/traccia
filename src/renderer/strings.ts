@@ -13,8 +13,16 @@ export const STRINGS = {
   save: 'Save',
   undo: 'Undo',
   redo: 'Redo',
+  print: 'Print',
   untitled: 'Untitled',
   startedOn: (date: string): string => `Started ${date}`,
+
+  printLimits:
+    'This map shows what this website contacts from a visitor’s browser. ' +
+    'It does not show data moving inside the organisation, anything behind a login, ' +
+    'or anything that is not on the web. ' +
+    'A connection made over a secure WebSocket (wss://) is not visible to this kind of scan, ' +
+    'so a vendor reached only that way will not appear here.',
 
   people: 'People',
   subjectGroupCount: (n: number): string => `${n} groups`,

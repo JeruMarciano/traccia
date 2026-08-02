@@ -1,0 +1,36 @@
+/*
+ * The printed sheet. On screen the app is a working tool: a scan control, a title-block full of
+ * actions, and a session notice that means nothing once the tab is closed. On paper it is a
+ * document a consultant leaves with a client, so only the map and the register survive the
+ * change of medium.
+ *
+ * `.print-only` carries `printLimits` and, when there is one, the possible-gaps sentence. Both
+ * are ordinary text in the DOM at all times -- theme.ts keeps them off the screen -- so what
+ * prints can never say something the app is not also showing, or fail to say something it is.
+ *
+ * Nothing here needs a rule for colour: every distinction the map and the register make is
+ * already carried by shape, weight or label (see theme.ts), so switching to a monochrome
+ * printer loses nothing but the one accent hue.
+ */
+@media print {
+  :root { --sheet: #FFFFFF; }
+
+  .sheet { display: block; height: auto; }
+  .plate { padding: 0; }
+
+  /* The scan control, the title-block actions and any session notice are for this screen. */
+  .scanbar, .actions, .notice { display: none; }
+
+  .register { width: auto; border-left: 0; border-top: 1px solid var(--rule); padding: 14px 0 0; }
+  .map-svg { height: auto; }
+  .dim { opacity: 1; }
+
+  /* Nothing that means one thing is allowed to straddle a page break: a register entry, and the
+     map as a whole -- which is one drawing, purpose groups and all, not a page each. */
+  .entry { break-inside: avoid; }
+  .map { break-inside: avoid; }
+
+  .print-only { display: block; }
+  .print-limits { margin: 11px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--ink-soft); }
+  .print-gaps { margin: 5px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--ink); }
+}
