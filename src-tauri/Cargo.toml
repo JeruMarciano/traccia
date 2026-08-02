@@ -35,15 +35,29 @@ tauri-build = { version = "2", features = [] }
 #   chromiumoxide         The CDP client. Pinned to 0.7.0 by Task 0's preflight
 #                         (`version = "0.7"` has exactly one match on crates.io;
 #                         0.8/0.9 exist and were not taken because the plan
-#                         names 0.7). Declared here but not yet referenced by
-#                         any code, so LTO strips it and today's cost is +160
-#                         bytes of binary against the 2026-07-31 baseline.
-#                         That figure is an artefact of the strip, not a budget.
-#                         Measured with the crate actually reachable from
-#                         `run()`: +1,380,736 bytes of binary / +718,410 of
-#                         .dmg, rising to +1,581,216 / +836,366 once
-#                         `Browser::connect` is on a live path. Method and
-#                         caveats: docs/decisions/2026-08-01-v0.1-preflight.md.
+#                         names 0.7). Task 7's cdp.rs now reaches it from
+#                         `run()`, for protocol types and a raw
+#                         `chromiumoxide::conn::Connection` only — never
+#                         `Browser`, never `Browser::connect` — which is the
+#                         preflight's advice at §1 followed exactly. Task 12
+#                         re-measured against the 2026-07-31 baseline (binary
+#                         2,436,064, .dmg 1,536,327) with nothing else changed
+#                         in Cargo.toml between the two builds but this crate
+#                         and futures-core (net zero, see below): **+183,504
+#                         bytes of binary (+7.5%) / +111,012 of .dmg (+7.2%)**.
+#                         That is the whole marginal cost, attributed by
+#                         subtraction against a baseline nothing else moved,
+#                         and it lands well inside the preflight's own
+#                         upper-bound estimate of +1,380,736 / +718,410 for a
+#                         probe that also touched `Browser::launch`,
+#                         `Page::execute` and `Connection::submit_command` —
+#                         confirming the preflight's prediction that avoiding
+#                         `Browser` would land below that figure. Method and
+#                         numbers: docs/decisions/2026-08-01-v0.1-bundle-measurement.md.
+#                         The preflight's own figures remain at
+#                         docs/decisions/2026-08-01-v0.1-preflight.md for the
+#                         record of what the upper bound looked like before
+#                         Task 7 was written.
 #   futures-core          The `Stream` trait, and nothing else. Task 7's cdp.rs
 #                         drives `chromiumoxide::conn::Connection` directly
 #                         rather than through `Browser` (preflight §1), and
@@ -132,6 +146,17 @@ tauri-build = { version = "2", features = [] }
 #   tauri-plugin-opener   Shipped by create-tauri-app and removed here. It hands
 #                         a URL or a path to the OS to open, which is precisely
 #                         the egress and execution surface this app must not have.
+#   Playwright and a      The obvious alternative to hand-rolled CDP: a
+#   bundled Node runtime  browser-automation library and the JS runtime it
+#                         needs to run in. Not taken. Playwright alone bundles
+#                         its own browser binaries and a Node runtime is
+#                         roughly 60 MB against this project's ~1.5 MB
+#                         baseline .dmg (docs/decisions/2026-07-31-tauri-bundle-measurement.md) —
+#                         a two-order-of-magnitude jump for a dependency this
+#                         app needs for one narrow job: attach CDP, watch
+#                         requests, detach. `chromiumoxide`'s typed protocol
+#                         plus a raw connection does that job at +183,504
+#                         bytes, and the author chose the smaller download.
 
 [dependencies]
 tauri = { version = "2", features = [] }

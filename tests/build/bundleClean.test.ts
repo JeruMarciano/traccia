@@ -9,6 +9,7 @@ import { join } from 'node:path'
 
 const DIST = join(__dirname, '../../dist')
 const CONF = join(__dirname, '../../src-tauri/tauri.conf.json')
+const VENDORS = join(__dirname, '../../src/data/vendors.json')
 
 // Known-safe string literals baked in by dependencies, never fetched: React's production error
 // decoder link, and XML/SVG/MathML namespace identifiers used as plain attribute values.
@@ -37,6 +38,29 @@ function stripHtmlComments(text: string): string {
 function unallowedUrls(text: string): string[] {
   const matches = stripHtmlComments(text).match(/https?:\/\/[^\s"'`)]+/g) ?? []
   return matches.filter((url) => !ALLOWED_URL_PREFIXES.some((p) => url.startsWith(p)))
+}
+
+// The dictionary is inlined into the bundle as an object literal keyed by domain, in source
+// order (Vite preserves the JSON's key order when it turns an `import x from './vendors.json'`
+// into a JS object). Locating it precisely -- rather than scanning the whole file, which would
+// also catch the allowlisted React/XML strings the file is *supposed* to carry -- means finding
+// the byte range that runs from the first domain key to the closing brace right after the last
+// entry's value, and scanning only that range. Returns null if the file does not contain the
+// dictionary at all (most built files won't).
+function findDictionaryRegion(text: string, firstDomain: string, lastDomain: string): string | null {
+  const startMarker = `"${firstDomain}"`
+  const start = text.indexOf(startMarker)
+  if (start === -1) return null
+  const lastKeyMarker = `"${lastDomain}"`
+  const lastKeyIdx = text.indexOf(lastKeyMarker, start)
+  if (lastKeyIdx === -1) return null
+  // The last entry's value ends with its own closing brace, immediately followed by the
+  // dictionary object's own closing brace: "}}" is exactly that boundary, and it is the first
+  // "}}" after the last key because a single-object-valued entry (owner/category/purposeGroup,
+  // no nested braces) cannot produce one earlier.
+  const closeIdx = text.indexOf('}}', lastKeyIdx)
+  if (closeIdx === -1) return null
+  return text.slice(start, closeIdx + 2)
 }
 
 describe('shipped configuration', () => {
@@ -78,6 +102,58 @@ describe('built renderer is clean', () => {
       if (bad.length > 0) offenders.push(`${file}: ${bad.join(', ')}`)
     }
     expect(offenders).toEqual([])
+  })
+
+  if (!built) {
+    it.skip('skipped: dist/ does not exist — run `npm run build:vite` first', () => {})
+  }
+})
+
+describe('the vendor dictionary ships in the bundle, and carries no URL', () => {
+  const built = existsSync(DIST)
+  const vendors: Record<string, { owner: string }> = JSON.parse(readFileSync(VENDORS, 'utf8'))
+
+  it('source dictionary contains no http:// or https:// URL', () => {
+    const raw = readFileSync(VENDORS, 'utf8')
+    expect(raw).not.toMatch(/https?:\/\//)
+  })
+
+  it.skipIf(!built)('is present in the built bundle — a sample of its domains and owners appear verbatim', () => {
+    const bundled = collect(DIST)
+      .map((f) => readFileSync(f, 'utf8'))
+      .join('\n')
+    // A sample rather than every entry: cheap to run, and any one of these missing means the
+    // dictionary was not inlined the way the renderer expects.
+    const sample = Object.entries(vendors).slice(0, 10)
+    for (const [domain, entry] of sample) {
+      expect(bundled).toContain(domain)
+      expect(bundled).toContain(entry.owner)
+    }
+  })
+
+  // The requirement is the *shipped* data, not the source file above -- a URL could in principle
+  // be introduced by a build step even if src/data/vendors.json stays clean. This is the file's
+  // existing convention: assert against dist/, not just the file that feeds it.
+  it.skipIf(!built)('carries no http:// or https:// URL in the built bundle, scoped to the dictionary itself', () => {
+    const domains = Object.keys(vendors)
+    const firstDomain = domains[0]
+    const lastDomain = domains[domains.length - 1]
+    if (firstDomain === undefined || lastDomain === undefined) throw new Error('vendors.json is empty')
+
+    let region: string | null = null
+    for (const file of collect(DIST)) {
+      region = findDictionaryRegion(readFileSync(file, 'utf8'), firstDomain, lastDomain)
+      if (region !== null) break
+    }
+    // A null region means the dictionary was not found in any built file at all -- a failure of
+    // this test's own method, not a pass. It must not be confused with "no URLs found".
+    expect(region).not.toBeNull()
+    // Sanity check: the extracted region should be within shouting distance of the compact
+    // source JSON's length (built JS drops the quotes JSON needs around string values, so it is
+    // reliably a little shorter, not equal) -- a mislocated or truncated region would be far
+    // shorter still, and this catches that without being pinned to a specific bundler's output.
+    expect((region as string).length).toBeGreaterThanOrEqual(JSON.stringify(vendors).length * 0.8)
+    expect(region).not.toMatch(/https?:\/\//)
   })
 
   if (!built) {
