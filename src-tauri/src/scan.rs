@@ -384,7 +384,7 @@ async fn run_pipeline(
         }
     };
 
-    // `launch` blocks for up to ten seconds waiting for `DevToolsActivePort`;
+    // `launch` blocks for up to thirty seconds waiting for `DevToolsActivePort`;
     // running it on the runtime would starve a proxy worker sharing it.
     let profile_dir = profile_dir_path();
     let launched = match tokio::task::spawn_blocking(move || {
