@@ -46,3 +46,35 @@ describe('computeLayout', () => {
     expect(labels).not.toContain('Delivering orders')
   })
 })
+
+describe('the internal ring', () => {
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    Math.hypot(a.x - b.x, a.y - b.y)
+
+  it('draws an all-internal group closer to the centre than an external one', () => {
+    const p = projectWithPlaces(
+      place({ name: 'Payroll system', kind: 'internal', purposeGroup: 'Payroll & HR' }),
+      place({ name: 'Google Analytics', kind: 'processor', purposeGroup: 'Marketing' }),
+    )
+    const { nodes } = computeLayout(p, SIZE)
+    const centre = nodes.find((n) => n.id === 'centre')
+    const internal = nodes.find((n) => n.id === 'group:Payroll & HR')
+    const external = nodes.find((n) => n.id === 'group:Marketing')
+    if (!centre || !internal || !external) throw new Error('missing nodes')
+    expect(dist(internal, centre)).toBeLessThan(dist(external, centre))
+  })
+
+  it('keeps a mixed group on the outer ring', () => {
+    const p = projectWithPlaces(
+      place({ name: 'CRM', kind: 'internal', purposeGroup: 'Sales' }),
+      place({ name: 'HubSpot', kind: 'processor', purposeGroup: 'Sales' }),
+      place({ name: 'Ads', kind: 'processor', purposeGroup: 'Marketing' }),
+    )
+    const { nodes } = computeLayout(p, SIZE)
+    const centre = nodes.find((n) => n.id === 'centre')
+    const sales = nodes.find((n) => n.id === 'group:Sales')
+    const marketing = nodes.find((n) => n.id === 'group:Marketing')
+    if (!centre || !sales || !marketing) throw new Error('missing nodes')
+    expect(Math.abs(dist(sales, centre) - dist(marketing, centre))).toBeLessThan(1)
+  })
+})
