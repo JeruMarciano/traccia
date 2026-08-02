@@ -55,6 +55,9 @@ export function DetailPanel({ project, selected, dictionary }: Props) {
               <dd>{d.retentionLabel}</dd>
             </div>
           </dl>
+          {d.declaredIn.length === 0 ? null : (
+            <p className="detail-declared">{STRINGS.declaredIn(d.declaredIn.join(', '))}</p>
+          )}
           <h4 className="detail-sub">{STRINGS.detailObservationsHeading}</h4>
           {d.observations.length === 0 ? (
             <p className="detail-none">{STRINGS.notYetIdentified}</p>

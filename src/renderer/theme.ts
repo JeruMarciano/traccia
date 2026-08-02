@@ -113,6 +113,42 @@ export const STYLESHEET = `
   line-height:1.4;
 }
 
+/* Found-in-documents suggestions: a working list, styled like the notice family — nothing
+   here is a finding until the user ticks it onto the map. */
+.suggestions{
+  margin:12px 0 0;
+  padding:11px 12px;
+  border:1px solid var(--ink);
+  border-left-width:3px;
+  max-height:38vh;
+  overflow-y:auto;
+}
+.suggestions-head{
+  margin:0;
+  font-family:var(--mono);
+  font-size:10px;
+  font-weight:400;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+}
+.suggestions-caption{margin:6px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
+.suggestions-list{list-style:none;margin:10px 0 0;padding:0;}
+.suggestion{padding:8px 0;border-bottom:1px dashed var(--rule);}
+.suggestion-row{display:flex;gap:9px;align-items:baseline;cursor:pointer;}
+.suggestion-name{font-size:13px;}
+.suggestion-tag{
+  font-family:var(--mono);
+  font-size:8.5px;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+  border:1px solid var(--rule);
+  padding:1px 5px;
+}
+.suggestion-group{font-family:var(--mono);font-size:9px;letter-spacing:.06em;color:var(--ink-soft);}
+.suggestion-evidence{margin:4px 0 0 24px;font-size:11.5px;line-height:1.4;color:var(--ink-soft);}
+.suggestion-sources{margin:2px 0 0 24px;font-family:var(--mono);font-size:9px;color:var(--ink-soft);}
+.suggestions-actions{display:flex;gap:6px;margin:11px 0 0;}
+
 /* The map */
 .map{flex:1;display:flex;flex-direction:column;min-height:0;margin:0;}
 .map-svg{flex:1;min-height:0;width:100%;height:100%;display:block;}
@@ -188,6 +224,7 @@ export const STYLESHEET = `
   text-transform:uppercase;
 }
 .detail-none{margin:8px 0 0;font-size:11.5px;color:var(--ink-soft);}
+.detail-declared{margin:8px 0 0;font-size:11px;color:var(--ink-soft);font-style:italic;}
 .detail-subjects{list-style:none;margin:14px 0 0;padding:0;}
 .detail-subject-name{margin:0;font-size:13px;}
 .detail-subject-notes{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}

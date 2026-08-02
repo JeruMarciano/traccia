@@ -25,6 +25,8 @@ export interface PlaceDetail {
   whereLabel: string
   retentionLabel: string
   observations: ObservationDetail[]
+  /** Names of the documents that declared this place, in source order, deduplicated. */
+  declaredIn: string[]
 }
 
 // Mirrors the (unexported) displayName/titleCase pair in src/core/scan.ts, the only place a
@@ -87,6 +89,7 @@ export function placeDetails(
     whereLabel: whereLabel(place.jurisdiction, place.leavesEEA),
     retentionLabel: place.retention ?? STRINGS.notYetIdentified,
     observations,
+    declaredIn: [...new Set(place.sources.map((s) => s.documentName))],
   }
 }
 

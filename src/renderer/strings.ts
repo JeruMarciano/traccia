@@ -47,6 +47,23 @@ export const STRINGS = {
   openFailed: 'This file could not be read as a project.',
   saveFailed: 'The project could not be saved.',
 
+  addDocuments: 'Add documents',
+  documentsFailed: 'The documents could not be read.',
+  documentsNothingFound:
+    'Nothing describing a data-processing activity was found in those documents.',
+  documentsUnreadable: (names: string): string => `Could not read: ${names}.`,
+  documentsTruncated: (names: string): string =>
+    `Read only partially (very large file): ${names}.`,
+  suggestionsHeading: 'Found in the documents',
+  suggestionsCaption:
+    'Tick what belongs on the map. The documents themselves are not kept — only what you confirm.',
+  suggestionsConfirm: 'Add to map',
+  suggestionsCancel: 'Discard all',
+  suggestionFoundIn: (names: string): string => `Found in ${names}`,
+  suggestionInternal: 'Internal',
+  suggestionExternal: 'Supplier',
+  declaredIn: (names: string): string => `Declared in ${names}`,
+
   detailHeading: 'What is here',
   detailPeopleHeading: 'People',
   detailWhere: 'Where',
