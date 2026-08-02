@@ -84,6 +84,12 @@ export interface ExtractedDocuments {
   unreadable: string[]
   /** File names whose text hit a cap and was cut short. */
   truncated: string[]
+  /**
+   * File names that were read but held no text at all — a scanned or photographed PDF is the
+   * usual case. Distinct from `unreadable`: nothing went wrong, there was simply nothing to
+   * read, and silently contributing nothing is how a user concludes the tool missed something.
+   */
+  noText: string[]
 }
 
 interface RawExtract {
@@ -109,15 +115,20 @@ export async function pickAndExtractDocuments(): Promise<ExtractedDocuments> {
   const documents: DocumentText[] = []
   const unreadable: string[] = []
   const truncated: string[] = []
+  const noText: string[] = []
   for (const entry of raw) {
     if (typeof entry.error === 'string' || typeof entry.text !== 'string') {
       unreadable.push(entry.name)
       continue
     }
+    if (entry.text.trim() === '') {
+      noText.push(entry.name)
+      continue
+    }
     documents.push({ name: entry.name, text: entry.text })
     if (entry.truncated === true) truncated.push(entry.name)
   }
-  return { documents, unreadable, truncated }
+  return { documents, unreadable, truncated, noText }
 }
 
 function messageOf(error: unknown): string {

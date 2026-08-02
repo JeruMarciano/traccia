@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { identify } from '../../src/core/vendors'
+import { classifyHost, identify } from '../../src/core/vendors'
 import type { VendorDictionary } from '../../src/core/types'
 
 const DICT: VendorDictionary = {
@@ -51,5 +51,25 @@ describe('identify', () => {
     expect(identify('__proto__', DICT)).toBeNull()
     expect(identify('constructor', DICT)).toBeNull()
     expect(identify('a.constructor', DICT)).toBeNull()
+  })
+})
+
+describe('classifyHost', () => {
+  it('reads a purpose out of a host name the dictionary does not know', () => {
+    expect(classifyHost('stats.rossi-editore.it')).toBe('Marketing')
+    expect(classifyHost('tracking.unknown-vendor.io')).toBe('Marketing')
+    expect(classifyHost('cdn.some-host.net')).toBe('Running the systems')
+    expect(classifyHost('checkout.tiny-shop.de')).toBe('Getting paid')
+    expect(classifyHost('livechat.helper.io')).toBe('Support')
+  })
+
+  it('is null when the name says nothing, so the map still admits it does not know', () => {
+    expect(classifyHost('xyz42.example.com')).toBeNull()
+    expect(classifyHost('')).toBeNull()
+  })
+
+  it('ignores the public suffix, whose labels collide with real hints', () => {
+    // ".media" and ".id" are TLDs; neither says anything about what the operator does.
+    expect(classifyHost('acme.media')).toBeNull()
   })
 })

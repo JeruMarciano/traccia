@@ -89,10 +89,10 @@ describe('ingestDocument', () => {
     expect(added?.name).toBe('Payroll system')
     expect(added?.kind).toBe('internal')
     expect(added?.confidence).toBe('declared')
-    // The passage the match was found in outlives the document — it is the only answer to
-    // "why is this on the map?" once the file is gone.
+    // The file name and nothing else: the passage that produced the match is shown while
+    // confirming, then dropped with the text it came from.
     expect(added?.sources).toEqual([
-      { documentId: 'contract.pdf', documentName: 'contract.pdf', locator: 'the payroll run' },
+      { documentId: 'contract.pdf', documentName: 'contract.pdf' },
     ])
   })
 
@@ -110,7 +110,6 @@ describe('ingestDocument', () => {
     expect(out.places[0]?.sources).toContainEqual({
       documentId: 'contract.pdf',
       documentName: 'contract.pdf',
-      locator: 'the payroll run',
     })
     expect(out.places[0]?.sources.length).toBe((p.places[0]?.sources.length ?? 0) + 1)
   })
@@ -146,12 +145,15 @@ describe('trackers and cookies named in prose', () => {
     expect(out.every((c) => c.layer === 'external')).toBe(true)
   })
 
-  it('carries the sentence through to the place, so the map can say why it is there', () => {
+  it('keeps the file name as the source and nothing of what the file said', () => {
     const docs = [{ name: 'policy.pdf', text: 'The site sets profiling cookies on first visit.' }]
     const [candidate] = extractCandidates(docs, VENDORS, TRACKING)
     if (candidate === undefined) throw new Error('expected a candidate')
+    // The evidence exists while confirming -- it is what the user judges the suggestion on --
+    // and must not survive into the project.
+    expect(candidate.evidence).toContain('profiling cookies')
     const p = ingestDocument(emptyProject(), [candidate])
     expect(p.places[0]?.name).toBe('Cookies')
-    expect(p.places[0]?.sources[0]?.locator).toContain('profiling cookies')
+    expect(p.places[0]?.sources[0]?.locator).toBeUndefined()
   })
 })

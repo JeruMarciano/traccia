@@ -54,6 +54,10 @@ export const STRINGS = {
   documentsUnreadable: (names: string): string => `Could not read: ${names}.`,
   documentsTruncated: (names: string): string =>
     `Read only partially (very large file): ${names}.`,
+  documentsNoText: (names: string): string =>
+    `No text to read in: ${names}. A scanned or photographed page holds a picture of text, not text.`,
+  suggestionsRead: (count: number, names: string): string =>
+    `Read ${count} ${count === 1 ? 'document' : 'documents'}: ${names}`,
   suggestionsHeading: 'Found in the documents',
   suggestionsCaption:
     'Tick what belongs on the map. The documents themselves are not kept — only what you confirm.',
@@ -62,7 +66,8 @@ export const STRINGS = {
   suggestionFoundIn: (names: string): string => `Found in ${names}`,
   suggestionInternal: 'Internal',
   suggestionExternal: 'Supplier',
-  detailDeclaredHeading: 'Declared in documents',
+  detailPurpose: 'Purpose',
+  declaredIn: (names: string): string => `Declared: ${names}`,
 
   detailHeading: 'What is here',
   detailPeopleHeading: 'People',

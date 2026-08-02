@@ -22,11 +22,14 @@ export interface ObservationDetail {
 export interface PlaceDetail {
   id: string
   name: string
+  /** What this is for. A dictionary hit knows it; an uncatalogued host has it guessed from
+   *  its own name (see `classifyHost`); failing both, it is honestly not yet identified. */
+  purposeGroup: string
   whereLabel: string
   retentionLabel: string
   observations: ObservationDetail[]
-  /** The documents that declared this place, with the passage each was found in. */
-  declaredIn: { documentName: string; quote?: string }[]
+  /** Names of the documents that declared this place, deduplicated. */
+  declaredIn: string[]
 }
 
 // Mirrors the (unexported) displayName/titleCase pair in src/core/scan.ts, the only place a
@@ -86,13 +89,11 @@ export function placeDetails(
   return {
     id: place.id,
     name: place.name,
+    purposeGroup: place.purposeGroup,
     whereLabel: whereLabel(place.jurisdiction, place.leavesEEA),
     retentionLabel: place.retention ?? STRINGS.notYetIdentified,
     observations,
-    declaredIn: [...new Map(place.sources.map((s) => [s.documentName, s])).values()].map((s) => ({
-      documentName: s.documentName,
-      quote: s.locator,
-    })),
+    declaredIn: [...new Set(place.sources.map((s) => s.documentName))],
   }
 }
 

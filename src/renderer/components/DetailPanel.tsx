@@ -47,6 +47,10 @@ export function DetailPanel({ project, selected, dictionary }: Props) {
           <h3 className="detail-place-name">{d.name}</h3>
           <dl className="detail-facts">
             <div>
+              <dt>{STRINGS.detailPurpose}</dt>
+              <dd>{d.purposeGroup}</dd>
+            </div>
+            <div>
               <dt>{STRINGS.detailWhere}</dt>
               <dd>{d.whereLabel}</dd>
             </div>
@@ -56,19 +60,7 @@ export function DetailPanel({ project, selected, dictionary }: Props) {
             </div>
           </dl>
           {d.declaredIn.length === 0 ? null : (
-            <>
-              <h4 className="detail-sub">{STRINGS.detailDeclaredHeading}</h4>
-              <ul className="detail-declared-list">
-                {d.declaredIn.map((s) => (
-                  <li key={s.documentName}>
-                    <p className="detail-declared-doc">{s.documentName}</p>
-                    {s.quote === undefined ? null : (
-                      <p className="detail-declared-quote">“{s.quote}”</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </>
+            <p className="detail-declared">{STRINGS.declaredIn(d.declaredIn.join(', '))}</p>
           )}
           <h4 className="detail-sub">{STRINGS.detailObservationsHeading}</h4>
           {d.observations.length === 0 ? (
