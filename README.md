@@ -29,6 +29,29 @@ Neither is assumed to be technical.
 - **Neutral language.** Unknowns are reported as "not yet identified" — Traccia is a
   mapping tool, not a compliance tool, and never labels anything a violation.
 
+## What a scan cannot see
+
+Stated here because the sheet is only trustworthy if its limits are: a scan observes the
+connections a site makes from a visitor's browser. It does not see anything behind a
+login, data moving inside the organisation, anything not on the web, or connections made
+over secure WebSockets (wss://) — a vendor reached only that way will not appear. Every
+printed sheet carries this statement on it. The no-traffic promise itself is enforced by
+an automated test (`src-tauri/tests/egress.rs`) that fails the build if the app attempts
+any connection beyond the scanned site.
+
+## Install
+
+Traccia is currently unsigned: macOS and Windows will warn about an app from an
+unidentified developer. That is the absence of a paid certificate, not a judgment on the
+app — on macOS, right-click the app and choose **Open**; on Windows, choose
+**More info → Run anyway**.
+
+- **macOS:** download the `.dmg` from Releases (about 1.6 MB), open it, drag Traccia to
+  Applications.
+- **Windows:** download and run the installer from Releases.
+
+A scan needs Google Chrome or Microsoft Edge installed; Traccia finds whichever is there.
+
 ## Running from source
 
 Prerequisites: Node.js, Rust (stable), and the [Tauri prerequisites](https://tauri.app/start/prerequisites/)
@@ -64,5 +87,6 @@ shows details per service, and prints the map to PDF.
 
 ## License
 
-[MIT](LICENSE). Traccia's dependencies include a small number of MPL-2.0 licensed
-Rust crates pulled in by Tauri; their licenses apply to those files only.
+[MIT](LICENSE). Traccia's dependencies include five MPL-2.0 licensed Rust crates pulled
+in unmodified by Tauri; their licenses apply to those files only. They are named, with
+their upstream sources, in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
