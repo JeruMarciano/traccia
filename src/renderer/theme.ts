@@ -77,6 +77,23 @@ export const STYLESHEET = `
 .action:hover:enabled{background:var(--ink);color:var(--sheet);}
 .action:disabled{border-color:var(--rule);color:var(--ink-soft);cursor:default;}
 
+/* The scan control: a plain field and one button, styled like the title-block actions it sits
+   beside rather than as a form of its own. */
+.scanbar{display:flex;gap:6px;padding:10px 0 0;}
+.scan-input{
+  flex:1;
+  min-width:0;
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--ink);
+  background:none;
+  border:1px solid var(--rule);
+  border-radius:0;
+  padding:6px 9px;
+}
+.scan-input:disabled{color:var(--ink-soft);}
+.scan-input:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+
 /* A message about this session, not about the client's data: heavier left rule, no colour. */
 .notice{
   display:flex;

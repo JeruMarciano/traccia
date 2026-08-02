@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { validateProject } from '../core/project'
-import type { Project } from '../core/types'
+import type { ObservedHost, Project, ScanResult } from '../core/types'
 import { STRINGS } from './strings'
 
 /**
@@ -36,4 +36,63 @@ export async function saveProject(project: Project): Promise<boolean> {
   // and after the port diffs cleanly. Rust writes these bytes verbatim once its structural check
   // passes.
   return invoke<boolean>('save_project', { projectJson: JSON.stringify(result.project, null, 2) })
+}
+
+function isObservedHost(v: unknown): v is ObservedHost {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as Record<string, unknown>).host === 'string' &&
+    typeof (v as Record<string, unknown>).requestCount === 'number'
+  )
+}
+
+/**
+ * A narrow structural check on what `start_scan` returns. Rust's `ScanOutput` checks what
+ * protects the machine (the bytes parse, the shape serialises); this checks what protects the
+ * map, the same division `openProject` documents above — including `possibleGaps` and
+ * `stoppedEarly`, which a payload missing either must not be allowed to fake its way past.
+ */
+function isScanResult(v: unknown): v is ScanResult {
+  if (typeof v !== 'object' || v === null) return false
+  const r = v as Record<string, unknown>
+  return (
+    typeof r.scannedHost === 'string' &&
+    Array.isArray(r.hosts) &&
+    r.hosts.every(isObservedHost) &&
+    typeof r.pagesVisited === 'number' &&
+    typeof r.possibleGaps === 'number' &&
+    typeof r.stoppedEarly === 'boolean'
+  )
+}
+
+export async function startScan(url: string): Promise<ScanResult> {
+  const raw = await invoke<string>('start_scan', { url })
+  const parsed: unknown = JSON.parse(raw)
+  if (!isScanResult(parsed)) throw new Error(STRINGS.scanFailed)
+  return parsed
+}
+
+export async function cancelScan(): Promise<void> {
+  await invoke<void>('cancel_scan')
+}
+
+function messageOf(error: unknown): string {
+  if (typeof error === 'string') return error
+  return error instanceof Error ? error.message : ''
+}
+
+/**
+ * Which of the fixed scan sentences to show. Rust throws one of four bare tokens, never a
+ * sentence — `src/renderer/strings.ts` owns the copy, per the module comment in
+ * `src-tauri/src/scan.rs`. `SCAN_NO_BROWSER` is matched by prefix because it is the one token
+ * that carries a payload, the paths that were searched; the text that arrived is only ever
+ * matched against, never shown.
+ */
+export function scanNotice(error: unknown): string {
+  const message = messageOf(error)
+  if (message.startsWith('SCAN_NO_BROWSER')) return STRINGS.scanNoBrowser
+  if (message === 'SCAN_BAD_URL') return STRINGS.scanBadUrl
+  if (message === 'SCAN_BUSY') return STRINGS.scanBusy
+  return STRINGS.scanFailed
 }

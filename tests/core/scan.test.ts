@@ -16,6 +16,8 @@ function result(over: Partial<ScanResult> = {}): ScanResult {
     scannedHost: 'rossi-editore.it',
     hosts: [{ host: 'rossi-editore.it', requestCount: 12 }],
     pagesVisited: 1,
+    possibleGaps: 0,
+    stoppedEarly: false,
     ...over,
   }
 }

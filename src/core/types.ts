@@ -87,6 +87,14 @@ export interface ScanResult {
   hosts: ObservedHost[]
   /** How many pages were loaded, entry page included. */
   pagesVisited: number
+  /**
+   * How many places the map may be incomplete, e.g. a page that failed to load or a
+   * request that could not be attributed to a page. Not a count of unobserved third
+   * parties — the map cannot know what it never saw.
+   */
+  possibleGaps: number
+  /** True if the scan was stopped before it ran its course, rather than finishing on its own. */
+  stoppedEarly: boolean
 }
 
 export interface Project {
