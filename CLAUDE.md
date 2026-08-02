@@ -13,6 +13,9 @@ Local-only desktop app that maps where an organisation's personal data goes.
   Timestamps and IDs are parameters.
 - Gaps are computed on demand, never stored in the project file, never edited by a user.
 - Copy about unknowns stays neutral: "not yet identified", never "violation" or "non-compliant".
+- `tests/core` = 91 as of the 2026-08-01 external-map v0.1 plan. This is a baseline, not a freeze —
+  it moved deliberately during that plan, with the count accounted for per task, and it may move
+  again the same way. It is not a ceiling on `src/core/`.
 
 ## Commands
 
