@@ -30,7 +30,9 @@ Every task's requirements implicitly include this section. A reviewer checks all
 - **English only.** All user-facing strings live in `src/renderer/strings.ts`. `tests/renderer/noLooseStrings.test.ts` enforces this; do not weaken it.
 - **Commit at every green state.** Every task ends with a commit.
 - **Rust is not on PATH non-interactively.** Prefix every cargo invocation: `source "$HOME/.cargo/env" && cargo ...`
-- **Security gate.** Tasks 5, 6, 7, 8 and 11 touch the network boundary, the filesystem or IPC. Each must be reviewed by the `security-auditor` agent before commit, which has authority to block. Task 5 additionally requires the full adversarial-audit treatment Phase 1 Task 10 applied to the admission decision.
+- **Security gate.** Tasks 5, 6, 7, 8, 10 and 11 touch the network boundary, the filesystem or IPC. Each must be reviewed by the `security-auditor` agent before commit, which has authority to block. Task 5 additionally requires the full adversarial-audit treatment Phase 1 Task 10 applied to the admission decision. (Task 10 was added to this list after Task 0 found that the print dialog requires a new `core:webview:allow-print` capability.)
+- **Test-count baselines are superseded.** Tasks 1, 2 and 3 each added a test beyond their stated baselines under rulings recorded in the SDD ledger. The plan's per-task numbers are stale; the true count after Task 3 is **`tests/core` 91, full suite 123, Rust 67**. Later tasks measure against those.
+- **`src/core/` and `tests/core/` are closed.** Tasks 1, 2 and 3 are complete. (The Global Constraints originally read "Task 2, Task 3, Task 4" — an off-by-one; Task 4 is Rust-only.) Every remaining task must leave `git diff --stat src/core tests/core` empty against its own starting commit.
 
 ---
 
@@ -1539,7 +1541,57 @@ everything."
 1. `Target.setAutoAttach` with `flatten: true`, **reapplied recursively in every new session**. Without it a cross-origin iframe's trackers are invisible — and iframes are where a great deal of ad-tech lives.
 2. `waitForDebuggerOnStart: true`, with interception armed in the new session **before** `Runtime.runIfWaitingForDebugger`. This is what closed the startup race; the spike measured 20 cold starts with 0 escapes only once this was in place.
 
-Task 0 recorded whether `chromiumoxide` offers these directly or whether they go over the raw CDP channel. Follow what it recorded.
+### The architecture this task must use — settled by Task 0, not open
+
+Task 0 read `chromiumoxide` 0.7.0's source and compile-checked every claim below. Its finding
+(`docs/decisions/2026-08-01-v0.1-preflight.md` §1) changes this task's shape, so read that section
+before writing code.
+
+**Property 1 is available. Property 2 is not — not through `chromiumoxide::Browser`, by any route.**
+
+`Target::on_event` (`chromiumoxide-0.7.0/src/handler/target.rs:258–268`) handles
+`Target.attachedToTarget` by queueing `Runtime.runIfWaitingForDebugger` **immediately and
+unconditionally**, with nothing armed in the child session. That is precisely the startup race F2
+exists to close. There is no hook, config flag or callback between the two. Nor can the arming be
+raced from outside:
+
+- `Browser::execute` hardcodes `session_id: None` (`src/cmd.rs:48`) — browser session only.
+- `Page::execute` addresses its own page's session, and a `Page` exists only after that target has
+  finished initialising, i.e. after the resume.
+- `CommandMessage::with_session` is the right shape but `mod cmd` is `pub(crate)` — confirmed by
+  rustc **E0603**. `HandlerMessage` is `pub(crate)` too.
+
+**Therefore:**
+
+> Use `chromiumoxide::cdp` for the protocol types — it re-exports the whole generated protocol, so
+> every command is a typed params struct. Use **`chromiumoxide::conn::Connection`** for the
+> transport: `Connection::connect(debug_ws_url)` and
+> `Connection::submit_command(method, Option<SessionId>, params)` (`src/conn.rs:42`, `:77`) are
+> both public, and `submit_command` is the only public API in the crate that can address an
+> **arbitrary** session — which is exactly what arming a child session before resuming it requires.
+>
+> **Do not construct `Browser` or `Handler` in this module.** Delegating the attach/resume sequence
+> to them reintroduces the race. This is also what keeps `reqwest`/`hyper`/`tower` unreachable:
+> they enter the graph only via `Browser::connect_with_config`, which fetches `/json/version` over
+> HTTP — a call this project already avoids by reading `DevToolsActivePort` out of the profile.
+> Task 0 measured that reachability at 200,480 binary bytes / 117,956 `.dmg` bytes, and Task 12
+> re-measures. Constructing `Browser` here would spend those bytes and put an HTTP client on a live
+> path in an app whose whole claim is that it makes no outbound request.
+>
+> If `Connection`'s surface turns out to be insufficient in practice, the fallback is
+> `tokio-tungstenite` driving the same generated types — which is what the spike itself used. Take
+> that fallback rather than reaching for `Browser`. Report it if you do.
+
+**One property must be asserted, not assumed.** Task 0 found that `chromiumoxide`'s own recursion
+is the *browser's*, driven by `setDiscoverTargets`, not something re-driven per attach: a `Target`
+is created only from `Target.targetCreated`, and `on_attached_to_target` binds a session to an
+existing `Target` rather than creating one. Since this task owns the loop directly, that machinery
+is not in play — but it means the recursive re-issue in step 4 below is **your** responsibility and
+there is no library behaviour to fall back on. Write it explicitly and test it.
+
+Under-arming fails in the dangerous direction: a missed vendor is silently absent from the map
+rather than visibly uncertain. A scan that reports a clean site that is not clean is the wrong
+answer this whole release is built to avoid.
 
 **CDP observes. It does not enforce.** The proxy already refused anything outside the scan origins before CDP saw it. What CDP adds is attribution — which host, how many requests — and that is all it is trusted for. The spike measured CDP missing 15 of 37 real hosts; a scan that trusted CDP alone would under-report by 40%.
 
@@ -1654,10 +1706,15 @@ Both are pure and are where the tests above live. `HostAccumulator` keeps an ord
 
 The sequence, in this order:
 
-1. Read `DevToolsActivePort` from the profile directory, with a bounded timeout — 15 s, matching the spike's F7. Distinguish "browser never opened the port" from "no browser found" with a different error; neither may hang or report an empty scan as a clean one.
-2. Connect.
-3. `Target.setAutoAttach { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }` on the browser target.
-4. On every `Target.attachedToTarget`: arm request observation in the **new session**, re-issue `setAutoAttach` with the same three arguments on that session so nested frames are covered, and only then `Runtime.runIfWaitingForDebugger`.
+1. Read `DevToolsActivePort` from the profile directory, with a bounded timeout — 15 s, matching the spike's F7. The file's first line is the port; the second is the browser-level WebSocket path. Distinguish "browser never opened the port" from "no browser found" with a different error; neither may hang or report an empty scan as a clean one.
+2. Connect: `Connection::connect(ws_url)` from `chromiumoxide::conn`. No `Browser`, no `Handler` — see the architecture note above.
+3. `Target.setAutoAttach { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }` on the browser target — `submit_command(..., None, params)`, session `None` being the browser session.
+4. On every `Target.attachedToTarget`, in this order and addressed to the **new** `sessionId` via `submit_command(..., Some(session_id), ...)`:
+   a. arm request observation (`Network.enable`, and `Fetch.enable` if interception is used);
+   b. re-issue `setAutoAttach` with the same three arguments **on that session**, so nested frames are covered — this recursion is yours to drive, there is no library behaviour behind it;
+   c. only then `Runtime.runIfWaitingForDebugger`.
+
+   Steps (a) and (b) must both complete before (c). Awaiting each command's response before sending the next is the straightforward way to guarantee it; do not fire and forget.
 5. Navigate to the entry URL. Settle.
 6. Collect same-origin links from the entry page, take up to `max_pages`, navigate each, settle.
 7. Check `cancel` between every page and before every settle. On cancel, return what has been collected so far and let the caller tear down.
@@ -1679,7 +1736,11 @@ Expected: no warnings; all pass.
 
 Dispatch `security-auditor`:
 
-> Audit `src-tauri/src/cdp.rs`. Confirm nothing here is relied on to prevent egress — the proxy is the enforcement point and CDP is attribution only. Then confirm the two properties the CDP spike proved necessary are actually present and actually recursive: `Target.setAutoAttach` with `flatten: true` reapplied in every attached session, and interception armed before `Runtime.runIfWaitingForDebugger`. A comment claiming them is not evidence. Check that the `DevToolsActivePort` read cannot be satisfied by a file another local process wrote, that the bounded timeout cannot be extended indefinitely by a slow write, and that cancellation cannot leave a browser process running.
+> Audit `src-tauri/src/cdp.rs`. Confirm nothing here is relied on to prevent egress — the proxy is the enforcement point and CDP is attribution only. Then confirm the two properties the CDP spike proved necessary are actually present and actually recursive: `Target.setAutoAttach` with `flatten: true` reapplied in every attached session, and interception armed before `Runtime.runIfWaitingForDebugger`. A comment claiming them is not evidence — trace the actual send order in the code, and confirm each command's response is awaited rather than fired and forgotten, since the ordering guarantee is what closes the race.
+>
+> Task 0 established that `chromiumoxide::Browser` resumes a child session immediately on attach with nothing armed, which is the race itself. **Confirm this module constructs no `Browser` and no `Handler`** — grep for both — and drives `chromiumoxide::conn::Connection` (or `tokio-tungstenite`) directly. If `Browser` appears anywhere on a live path, that is a blocking finding regardless of what the surrounding comments say. Confirm also that `reqwest`/`hyper` remain unreachable from `main`, since `Browser::connect_with_config` is the only thing that pulls them onto a live path.
+>
+> Check that the `DevToolsActivePort` read cannot be satisfied by a file another local process wrote, that the bounded timeout cannot be extended indefinitely by a slow write, and that cancellation cannot leave a browser process running.
 
 - [ ] **Step 8: Commit**
 
@@ -2059,10 +2120,29 @@ Run the app, scan a site, print, and save the PDF. Check by eye: the map is on t
 Run: `npm test && npm run typecheck`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Security audit — blocking**
+
+**Added after Task 0.** The plan originally gated only Tasks 5, 6, 7, 8 and 11. Task 0 established
+that the print dialog opens **only** once `core:webview:allow-print` is granted in
+`src-tauri/capabilities/default.json` — the first widening of the renderer's authority since the
+Tauri port. A capability change is an IPC-surface change, so this task is gated too.
+
+Dispatch `security-auditor`:
+
+> Audit the diff to `src-tauri/capabilities/default.json`. Confirm `core:webview:allow-print` is the
+> only permission added and that no `fs:`, `shell:`, `http:` or `dialog:` permission was widened
+> alongside it. Confirm the capability file's own description was rewritten to describe what the
+> renderer can now do — the previous description asserted a narrower surface than is now true, and
+> leaving it stale is how the next reader concludes the file is unmaintained. Then establish what
+> `core:webview:allow-print` actually authorises in Tauri 2: whether it can reach anything beyond
+> opening the platform print dialog for the current webview, and whether it can be invoked without
+> a user gesture. If printing can be triggered programmatically, say what that means for a local-only
+> app — a print dialog is not egress, but an unprompted one is a surface the release notes should name.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/renderer/print.css src/renderer/App.tsx src/renderer/strings.ts src/renderer/theme.ts
+git add src/renderer/print.css src/renderer/App.tsx src/renderer/strings.ts src/renderer/theme.ts src-tauri/capabilities/default.json
 git commit -m "feat(export): print the sheet, with what the map cannot see printed on it"
 ```
 
