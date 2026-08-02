@@ -69,6 +69,30 @@ function hasFlow(project: Project, from: string, to: string): boolean {
   return project.flows.some((f) => f.from === from && f.to === to)
 }
 
+/**
+ * True when `host` is the scan origin `scannedHost` itself, or a
+ * label-boundary subdomain of it — mirroring `admission::vet_host` /
+ * `is_subdomain_of` in src-tauri/src/admission.rs, the same rule Rust uses to
+ * admit a request as part of the site being scanned rather than a third
+ * party. Both sides must agree, or a host the proxy treats as "the site"
+ * gets ingested here as a fabricated supplier.
+ *
+ * Case-insensitive. `www.rossi-editore.it` is a subdomain of
+ * `rossi-editore.it`; `evil-rossi-editore.it` is not (no label boundary —
+ * the character before the shared suffix is not a dot); neither is
+ * `rossi-editore.it.evil.com` (the scanned host is a prefix, not a suffix).
+ */
+export function isScannedHostOrSubdomain(host: string, scannedHost: string): boolean {
+  const h = host.toLowerCase()
+  const o = scannedHost.toLowerCase()
+  if (h === o) return true
+  const cut = h.length - o.length
+  if (cut < 2) return false
+  const prefix = h.slice(0, cut)
+  const suffix = h.slice(cut)
+  return prefix.endsWith('.') && suffix === o
+}
+
 export function ingestScan(
   project: Project,
   result: ScanResult,
@@ -117,7 +141,7 @@ export function ingestScan(
   //    site. The scanned host itself is skipped — it is the site, not a
   //    recipient of its own data.
   for (const observed of result.hosts) {
-    if (observed.host.toLowerCase() === result.scannedHost.toLowerCase()) continue
+    if (isScannedHostOrSubdomain(observed.host, result.scannedHost)) continue
 
     const name = displayName(observed.host, dictionary)
     const hit = identify(observed.host, dictionary)
