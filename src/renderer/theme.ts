@@ -170,57 +170,8 @@ export const STYLESHEET = `
 }
 .key-gloss{display:block;margin:2px 0 0;font-size:11px;line-height:1.35;color:var(--ink-soft);}
 
-/* The register: the open questions, a section under the map rather than a panel of its own --
-   the right-hand panel now shows the content of whatever is selected (see .detail below). */
-.register{
-  width:auto;
-  flex:none;
-  border-top:1px solid var(--rule);
-  margin-top:14px;
-  padding:16px 0 0;
-}
-.register-head{
-  display:flex;
-  align-items:baseline;
-  gap:8px;
-  margin:0;
-  font-family:var(--mono);
-  font-size:10px;
-  font-weight:400;
-  letter-spacing:.16em;
-  text-transform:uppercase;
-}
-.register-count{margin-left:auto;font-size:12px;letter-spacing:0;}
-.register-caption,.register-empty{
-  margin:9px 0 0;
-  font-size:11.5px;
-  line-height:1.45;
-  color:var(--ink-soft);
-}
-.register-list{list-style:none;margin:14px 0 0;padding:0;border-top:1px solid var(--rule);}
-/* Dashed separators, for the same reason the map dashes an unanswered count: every line in
-   this list is still open. */
-.entry{
-  display:grid;
-  grid-template-columns:26px 1fr;
-  column-gap:10px;
-  padding:11px 0;
-  border-bottom:1px dashed var(--rule);
-  border-left:3px solid transparent;
-  padding-left:7px;
-  margin-left:-10px;
-}
-.entry--linked{cursor:pointer;}
-.entry--linked:hover,.entry--linked:focus-visible{border-left-color:var(--ink);}
-.entry-gauge{margin-top:3px;}
-.gauge-cell{fill:none;stroke:var(--ink);stroke-width:1;}
-.gauge-cell--on{fill:var(--ink);}
-.entry-q{margin:0;font-size:13px;line-height:1.4;}
-.entry-why{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
-
-/* The detail panel: what the selected point holds. Same right-hand position the register used
-   to occupy, so the sheet still reads as two regions -- the drawing on the left, one thing about
-   it on the right. */
+/* The detail bar: what the clicked point holds. Present only while something is selected, so
+   the sheet is the drawing alone until a click asks a question of it. */
 .detail{
   width:322px;
   flex:none;
@@ -236,7 +187,7 @@ export const STYLESHEET = `
   letter-spacing:.16em;
   text-transform:uppercase;
 }
-.detail-empty{margin:9px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
+.detail-none{margin:8px 0 0;font-size:11.5px;color:var(--ink-soft);}
 .detail-subjects{list-style:none;margin:14px 0 0;padding:0;}
 .detail-subject-name{margin:0;font-size:13px;}
 .detail-subject-notes{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft);}
@@ -277,10 +228,7 @@ export const STYLESHEET = `
   border-top:1px solid var(--rule);
   padding-top:9px;
 }
-.detail-flows,.detail-observations{list-style:none;margin:8px 0 0;padding:0;}
-.detail-flows li{margin:0 0 8px;}
-.detail-flow-data{margin:0;font-size:12.5px;line-height:1.4;}
-.detail-flow-purpose{margin:2px 0 0;font-size:11px;color:var(--ink-soft);}
+.detail-observations{list-style:none;margin:8px 0 0;padding:0;}
 .detail-observations li{margin:0 0 4px;font-family:var(--mono);font-size:10.5px;}
 
 @media (max-width:900px){
