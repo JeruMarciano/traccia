@@ -14,6 +14,17 @@ describe('classifyField', () => {
     expect(classifyField({ name: 'cognome', type: 'text', autocomplete: '', label: '' })).toBe('name'))
   it('username is not a name', () =>
     expect(classifyField({ name: 'username', type: 'text', autocomplete: '', label: '' })).toBe('free-text'))
+  it('a compound "Name" label is not a person\'s name', () => {
+    // "Company Name", "Product Name", "Display Name", "Screen Name" all end in "name" after a
+    // word boundary — none of them is a person's name, and the classifier must not guess.
+    expect(classifyField({ name: 'displayName', type: 'text', autocomplete: '', label: 'Display Name' })).toBe(
+      'free-text',
+    )
+  })
+  it('word boundary lets an Italian article precede cognome', () =>
+    expect(classifyField({ name: 'f3', type: 'text', autocomplete: '', label: 'Il cognome' })).toBe('name'))
+  it('word boundary refuses cognome embedded in a longer word', () =>
+    expect(classifyField({ name: 'mycognomex', type: 'text', autocomplete: '', label: '' })).toBe('free-text'))
   it('type=search is free text', () =>
     expect(classifyField({ name: 'search', type: 'search', autocomplete: '', label: 'Cerca' })).toBe(
       'free-text',

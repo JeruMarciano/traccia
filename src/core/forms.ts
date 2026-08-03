@@ -15,9 +15,9 @@ export function isCollectingField(field: Pick<RawFormField, 'type'>): boolean {
  * A dictionary term, anchored so it matches a whole word and never part of one — the same
  * `\p{L}`/`\p{N}` boundary used in documents.ts, and for the same reason: `\b` treats an accented
  * letter as a boundary character, which would let "città" match inside a longer Italian word.
- * Also why "username" never matches the term "name": the character before "name" is the letter
- * "r", not a boundary, so the whole-word anchor correctly refuses it — the wrong answer the
- * classification table calls out is only reachable by a substring match, not a word-boundary one.
+ * The same anchor is why "cognome" matches "Il cognome" but not "mycognomex": in the second, the
+ * character on either side of "cognome" is a letter, so there is no boundary and the whole-word
+ * anchor correctly refuses it — a substring match would get both of these wrong.
  */
 function wholeWord(term: string): RegExp {
   const body = term
@@ -34,15 +34,13 @@ function matchesAny(text: string, terms: string[]): boolean {
 // English + Italian, inline: word data belongs with the rule that reads it, not in a fetched or
 // generated dictionary. Word-boundary, lowercased, matched against name+label together.
 //
-// "name" is a term (not just "surname"/"full name"), because a field simply labelled "Name" is
-// the common case. The word-boundary anchor alone is why "username" does not match it: the
-// character before "name" is the letter "r", not a boundary, so `wholeWord('name')` correctly
-// refuses it -- this is the specific protection the break-and-watch step in this task exercises.
-// It does not, on its own, protect the two-word form "user name" (there the character before
-// "name" is a space, a genuine boundary) -- an account handle spelled with a space is still not a
-// person's name, so that exact phrase is excluded outright rather than left to boundary matching.
-const NAME_TERMS = ['nome', 'cognome', 'surname', 'full name', 'name']
-const NAME_EXCLUSIONS = ['user name']
+// Deliberately no bare "name" term. "Company Name", "Product Name", "Display Name", "Screen
+// Name" would all match it after a word boundary -- none of them is a person's name, and a false
+// positive there is exactly the guess "prefer a blank to a guess" rules out. "full name" is the
+// safe English equivalent: it only matches when the sentence actually says "full name", which
+// "Display Name" never does. This is also why "username" is free-text without needing an explicit
+// exclusion: no term here is a substring of it.
+const NAME_TERMS = ['nome', 'cognome', 'surname', 'full name']
 const EMAIL_TERMS = ['email', 'e-mail', 'posta elettronica']
 const PHONE_TERMS = ['telefono', 'cellulare', 'phone']
 const ADDRESS_TERMS = ['indirizzo', 'città', 'cap', 'provincia', 'address', 'city', 'zip']
@@ -75,7 +73,7 @@ function wordKind(name: string, label: string): FormFieldKind | null {
   const text = `${name} ${label}`.toLowerCase()
   if (matchesAny(text, EMAIL_TERMS)) return 'email'
   if (matchesAny(text, PHONE_TERMS)) return 'phone'
-  if (!matchesAny(text, NAME_EXCLUSIONS) && matchesAny(text, NAME_TERMS)) return 'name'
+  if (matchesAny(text, NAME_TERMS)) return 'name'
   if (matchesAny(text, ADDRESS_TERMS)) return 'address'
   if (matchesAny(text, PAYMENT_TERMS)) return 'payment'
   return null
