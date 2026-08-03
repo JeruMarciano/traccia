@@ -1,5 +1,21 @@
+import { isThirdPartyCookie } from '../core/cookies'
 import type { ScanResult } from '../core/types'
 import { STRINGS } from './strings'
+
+/**
+ * The cookie count to append to the notice, or null when the scan captured none — a scan that
+ * captured no cookies says nothing about them, rather than reporting a hollow "0 cookies
+ * recorded".
+ */
+function cookieNotice(result: ScanResult): string | null {
+  if (result.cookies.length === 0) return null
+  const thirdParty = result.cookies.filter((c) => isThirdPartyCookie(c.domain, result.scannedHost)).length
+  return STRINGS.cookiesRecorded(result.cookies.length, thirdParty)
+}
+
+function join(base: string, extra: string | null): string {
+  return extra === null ? base : `${base} ${extra}`
+}
 
 /**
  * Which notice, if any, to show after a scan completes without throwing.
@@ -13,10 +29,14 @@ import { STRINGS } from './strings'
  * third party": a scan that saw nothing but still could not answer everything is the least
  * trustworthy result, not the cleanest one, and the printed sheet already shows the gap count in
  * that situation — this notice must agree with it rather than say the opposite.
+ *
+ * The cookie count, when there is one, is appended to whichever sentence above applies — or
+ * stands alone when none of them do.
  */
 export function scanResultNotice(result: ScanResult): string | null {
-  if (result.stoppedEarly) return STRINGS.scanStopped(result.possibleGaps)
-  if (result.possibleGaps > 0) return STRINGS.scanIncomplete(result.possibleGaps)
-  if (result.hosts.length <= 1) return STRINGS.scanFoundNothing
-  return null
+  const cookies = cookieNotice(result)
+  if (result.stoppedEarly) return join(STRINGS.scanStopped(result.possibleGaps), cookies)
+  if (result.possibleGaps > 0) return join(STRINGS.scanIncomplete(result.possibleGaps), cookies)
+  if (result.hosts.length <= 1) return join(STRINGS.scanFoundNothing, cookies)
+  return cookies
 }

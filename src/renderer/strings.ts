@@ -105,4 +105,6 @@ export const STRINGS = {
     n === 0
       ? 'Scan stopped before it finished.'
       : `Scan stopped before it finished — ${n} ${n === 1 ? 'place' : 'places'} where the map may be incomplete.`,
+  cookiesRecorded: (n: number, thirdParty: number): string =>
+    `${n} cookies recorded (${thirdParty} third-party).`,
 } as const

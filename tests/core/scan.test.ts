@@ -11,6 +11,8 @@ const DICT: VendorDictionary = {
 
 const IDS = { prefix: 'scan1' }
 
+const CAPTURED_AT = 1_700_000_000
+
 function result(over: Partial<ScanResult> = {}): ScanResult {
   return {
     scannedHost: 'rossi-editore.it',
@@ -25,6 +27,17 @@ function result(over: Partial<ScanResult> = {}): ScanResult {
     capturedAtEpochSeconds: 0,
     ...over,
   }
+}
+
+function scanResultWith(over: Partial<ScanResult> = {}): ScanResult {
+  return result({ capturedAtEpochSeconds: CAPTURED_AT, ...over })
+}
+
+const GA_COOKIE = {
+  name: '_ga',
+  domain: 'google-analytics.com',
+  session: false,
+  expiresEpochSeconds: CAPTURED_AT + 86_400 * 400,
 }
 
 describe('ingestScan', () => {
@@ -301,6 +314,41 @@ describe('ingestScan', () => {
       { prefix: 'scan2' },
     )
     expect(JSON.stringify(before)).toBe(snapshot)
+  })
+
+  it('a recognised cookie attaches to the place its domain identifies', () => {
+    const result = scanResultWith({
+      cookies: [{ name: '_ga', domain: 'google-analytics.com', session: false, expiresEpochSeconds: CAPTURED_AT + 86_400 * 400 }],
+    })
+    const after = ingestScan(emptyProject(), result, DICT, { prefix: 's1' })
+    const ga = after.places.find((p) => p.name === 'Google Analytics')
+    expect(after.cookies).toEqual([
+      { name: '_ga', domain: 'google-analytics.com', thirdParty: true, lifetime: 'a-year-or-more', placeId: ga?.id },
+    ])
+  })
+
+  it('an unrecognised cookie is kept and attached to nothing, not dropped', () => {
+    const result = scanResultWith({
+      cookies: [{ name: 'sid', domain: 'cdn.example-widget.com', session: true, expiresEpochSeconds: -1 }],
+    })
+    const after = ingestScan(emptyProject(), result, DICT, { prefix: 's1' })
+    expect(after.cookies).toHaveLength(1)
+    expect(after.cookies?.[0]?.placeId).toBeUndefined()
+  })
+
+  it('rescanning replaces cookie facts rather than duplicating them', () => {
+    const once = ingestScan(emptyProject(), scanResultWith({ cookies: [GA_COOKIE] }), DICT, { prefix: 's1' })
+    const twice = ingestScan(once, scanResultWith({ cookies: [GA_COOKIE] }), DICT, { prefix: 's2' })
+    expect(twice.cookies).toHaveLength(1)
+  })
+
+  it('a first-party session cookie is recorded as exactly that', () => {
+    const result = scanResultWith({
+      scannedHost: 'rossi-editore.it',
+      cookies: [{ name: 'lang', domain: 'rossi-editore.it', session: true, expiresEpochSeconds: -1 }],
+    })
+    const after = ingestScan(emptyProject(), result, DICT, { prefix: 's1' })
+    expect(after.cookies?.[0]).toMatchObject({ thirdParty: false, lifetime: 'session' })
   })
 
   describe('own-subdomain skipping', () => {

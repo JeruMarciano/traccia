@@ -1,6 +1,7 @@
+import { bucketLifetime, cookieOwnerName, isThirdPartyCookie } from './cookies'
 import { addFlow, addPlace } from './graph'
 import { classifyHost, identify } from './vendors'
-import type { Flow, Observation, Place, Project, ScanResult, VendorDictionary } from './types'
+import type { CapturedCookie, Flow, Observation, Place, Project, ScanResult, VendorDictionary } from './types'
 
 export interface IngestIds {
   /** Prefix for generated ids, e.g. "scan1". Callers pass a fresh one per scan. */
@@ -207,7 +208,49 @@ export function ingestScan(
     })
   }
 
-  return { ...working, observations: [...updatedExisting, ...fresh] }
+  // 5. Cookies the scan captured. Each is judged by the pure functions in
+  //    `cookies.ts` and attached to a place only when the vendor dictionary
+  //    recognises its domain and that place already exists on the map — a
+  //    cookie is evidence, not a reason to invent a place. Deduped by
+  //    (name, domain), same shape as the observations dedupe above: a domain
+  //    already recorded keeps its position but takes this scan's judgement,
+  //    the newer scan wins.
+  const cookieKey = (name: string, domain: string): string => `${name} ${domain}`
+
+  const latestCookieByKey = new Map<string, CapturedCookie>()
+  for (const raw of result.cookies) {
+    const ownerName = cookieOwnerName(raw.domain, dictionary)
+    const place = ownerName === null ? undefined : findPlaceByName(working, ownerName)
+    latestCookieByKey.set(cookieKey(raw.name, raw.domain), {
+      name: raw.name,
+      domain: raw.domain,
+      thirdParty: isThirdPartyCookie(raw.domain, result.scannedHost),
+      lifetime: bucketLifetime(raw, result.capturedAtEpochSeconds),
+      placeId: place?.id,
+    })
+  }
+
+  const existingCookies = working.cookies ?? []
+  const updatedExistingCookies = existingCookies.map((c) => {
+    return latestCookieByKey.get(cookieKey(c.name, c.domain)) ?? c
+  })
+
+  const alreadyKnownCookies = new Set(existingCookies.map((c) => cookieKey(c.name, c.domain)))
+  const seenCookiesThisScan = new Set<string>()
+  const freshCookies: CapturedCookie[] = []
+  for (const raw of result.cookies) {
+    const key = cookieKey(raw.name, raw.domain)
+    if (alreadyKnownCookies.has(key) || seenCookiesThisScan.has(key)) continue
+    seenCookiesThisScan.add(key)
+    const captured = latestCookieByKey.get(key)
+    if (captured !== undefined) freshCookies.push(captured)
+  }
+
+  return {
+    ...working,
+    observations: [...updatedExisting, ...fresh],
+    cookies: [...updatedExistingCookies, ...freshCookies],
+  }
 }
 
 function visitorFlow(from: string, to: string): Omit<Flow, 'id'> {

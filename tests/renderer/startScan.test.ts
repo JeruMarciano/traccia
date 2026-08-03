@@ -16,6 +16,11 @@ describe('startScan', () => {
         pagesVisited: 1,
         possibleGaps: 2,
         stoppedEarly: true,
+        cookies: [],
+        formFields: [],
+        storageKeys: [],
+        consentMarkers: [],
+        capturedAtEpochSeconds: 0,
       }),
     )
     const result = await startScan('https://rossi-editore.it')
