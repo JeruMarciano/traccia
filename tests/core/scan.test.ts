@@ -18,6 +18,11 @@ function result(over: Partial<ScanResult> = {}): ScanResult {
     pagesVisited: 1,
     possibleGaps: 0,
     stoppedEarly: false,
+    cookies: [],
+    formFields: [],
+    storageKeys: [],
+    consentMarkers: [],
+    capturedAtEpochSeconds: 0,
     ...over,
   }
 }

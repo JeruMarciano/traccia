@@ -170,6 +170,60 @@ export interface ObservedHost {
   requestCount: number
 }
 
+export type CookieLifetime = 'session' | 'under-a-day' | 'under-a-year' | 'a-year-or-more'
+
+/** One cookie as Rust hands it over. Raw material; judgements happen in core. */
+export interface RawScanCookie {
+  name: string
+  domain: string
+  /** True when the browser reports no expiry (a session cookie). */
+  session: boolean
+  /** Seconds since epoch; meaningless when session is true. */
+  expiresEpochSeconds: number
+}
+
+/** One cookie as the project records it, after core's judgements. */
+export interface CapturedCookie {
+  name: string
+  domain: string
+  thirdParty: boolean
+  lifetime: CookieLifetime
+  /** The Place this cookie belongs to, when the vendor dictionary recognises its domain. */
+  placeId?: string
+}
+
+/** One form field as Rust hands it over, untrusted and unclassified. */
+export interface RawFormField {
+  /** URL of the page the field was found on, origin+path only. */
+  page: string
+  name: string
+  type: string
+  autocomplete: string
+  label: string
+}
+
+export type FormFieldKind = 'email' | 'phone' | 'name' | 'address' | 'payment' | 'free-text'
+
+export interface CollectionPointField {
+  name: string
+  kind: FormFieldKind
+}
+
+/** A discovered door: one page that collects data through a form. */
+export interface CollectionPoint {
+  id: string
+  page: string
+  fields: CollectionPointField[]
+  sources: SourceRef[]
+  confidence: Confidence
+}
+
+export interface RawStorageKey {
+  scope: 'local' | 'session'
+  key: string
+  bytes: number
+}
+
 /** What one completed scan produced. Consumed by ingestScan. */
 export interface ScanResult {
   /** The origin host the user asked to scan, e.g. "rossi-editore.it". */
@@ -186,6 +240,13 @@ export interface ScanResult {
   possibleGaps: number
   /** True if the scan was stopped before it ran its course, rather than finishing on its own. */
   stoppedEarly: boolean
+  cookies: RawScanCookie[]
+  formFields: RawFormField[]
+  storageKeys: RawStorageKey[]
+  /** Fixed marker names of consent managers detected, e.g. "OneTrust". Empty = none detected. */
+  consentMarkers: string[]
+  /** When the scan captured, seconds since epoch. Rust supplies it; core never asks the clock. */
+  capturedAtEpochSeconds: number
 }
 
 export interface Project {
@@ -197,4 +258,6 @@ export interface Project {
   places: Place[]
   flows: Flow[]
   observations: Observation[]
+  cookies?: CapturedCookie[]
+  collectionPoints?: CollectionPoint[]
 }
