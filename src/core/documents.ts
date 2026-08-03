@@ -315,29 +315,50 @@ const ROLES: ReadonlyArray<{ phrase: string; holder: Holder }> = [
  * off. Five tokens rather than an open run, because an unbounded capture swallows the rest of a
  * sentence that happens to be in title case.
  *
- * The joiners end in a boundary, or "e" matches the "E" of "Editore" and "Rossi Editore S.r.l."
- * is captured as "Rossi E".
+ * The boundary on the joiners is a statement of intent and nothing more: no input distinguishes
+ * it. Without it a joiner can only match the first letters of a following word -- "e" against
+ * "editore" -- and the run then stops, because the next token needs whitespace before it. The
+ * capture ends on a dangling joiner, which `trimName` removes either way. It was added for a
+ * reason that no longer holds (the "E" of "Editore", true only under the single case-insensitive
+ * pattern this module no longer uses), and it is kept because a joiner is a whole word.
  */
 const TOKEN = "[\\p{L}\\p{N}&.’'-]*"
 const JOINERS = '(?:e|and|di|de|dei|degli|of)(?![\\p{L}\\p{N}])'
 const ORGANISATION = `(\\p{Lu}${TOKEN}(?:\\s+(?:${JOINERS}|\\p{Lu}${TOKEN})){0,4})`
 
 /**
- * The role phrase and the name are matched by two patterns rather than one, because they need
- * different flags and JavaScript has no way to change flags mid-pattern that this build can rely
- * on. The phrase is case-insensitive -- an informativa prints "TITOLARE DEL TRATTAMENTO" as a
- * heading as often as in a sentence -- while the name must not be: under `i`, `\p{Lu}` matches
- * lowercase letters too, and the whole capitalisation rule that separates a name from ordinary
- * prose silently stops working.
+ * The role phrase and the name are matched by separate patterns, because they need different
+ * flags and JavaScript has no way to change flags mid-pattern that this build can rely on. The
+ * phrase is case-insensitive -- an informativa prints "TITOLARE DEL TRATTAMENTO" as a heading as
+ * often as in a sentence -- while the name must not be: under `i`, `\p{Lu}` matches lowercase
+ * letters too, and the whole capitalisation rule that separates a name from ordinary prose
+ * silently stops working.
  *
- * The tail is the connector and the name. The connector may be absent; a comma is not a
- * connector, so the clause after the name is cut off rather than read as part of it.
+ * Global, because the first occurrence of the phrase is often a heading and the name is in the
+ * sentence below it. The first occurrence that produces a name wins, not the first occurrence.
  */
 const ROLE_PATTERNS = ROLES.map(({ phrase, holder }) => ({
   holder,
-  phrase: new RegExp(phrase, 'iu'),
-  tail: new RegExp(`^\\s*(?:[èÈ]|[eE]['’]|:|[iI][sS](?![\\p{L}\\p{N}]))?\\s+${ORGANISATION}`, 'u'),
+  phrase: new RegExp(phrase, 'giu'),
 }))
+
+/**
+ * What has to sit between the role phrase and the name: a connector -- "è", ":", "is" -- or a
+ * line break, which is how a heading-and-value layout says the same thing.
+ *
+ * One of the two is required. A bare space is not enough, because capitalisation cannot tell a
+ * name from prose inside an all-caps run, and an informativa prints its headings in caps:
+ * "TITOLARE DEL TRATTAMENTO E RESPONSABILE DELLA PROTEZIONE DEI DATI" then names an organisation
+ * called "E RESPONSABILE DELLA PROTEZIONE DEI". The cost is that
+ * "Titolare del trattamento Acme S.r.l." on one line, with nothing between the two, is not read.
+ */
+const ROLE_SEPARATOR = new RegExp(
+  `^(?:[ \\t]*(?:[èÈ]|[eE]['’]|:|[iI][sS](?![\\p{L}\\p{N}]))[ \\t\\r\\n]*|[ \\t]*[\\r\\n]+[ \\t]*)`,
+  'u',
+)
+
+/** The name, anchored where the separator left off. */
+const ORGANISATION_AT = new RegExp(`^${ORGANISATION}`, 'u')
 
 /**
  * A trailing dot that belongs to the name rather than to the sentence: the token before it is a
@@ -347,24 +368,45 @@ const ROLE_PATTERNS = ROLES.map(({ phrase, holder }) => ({
  */
 const KEPT_DOT = /(^|[^\p{L}])\p{L}\.$/u
 
+/** A joiner the capture ran out on: "Acme e successivamente il gruppo" is a company called Acme. */
+const TRAILING_JOINER = /(?:\s+(?:e|and|di|de|dei|degli|of))+$/u
+
+/** The sentence punctuation and dangling joiners a capture can carry away with it. */
+function trimName(captured: string): string {
+  const trimmed = captured.replace(/[.,;:]+$/u, (end) => (KEPT_DOT.test(captured) ? end : ''))
+  return trimmed.replace(TRAILING_JOINER, '')
+}
+
 /**
  * Every organisation the text names in a controller or processor role, with where the phrase sat
- * so the caller can size an evidence window and judge a denial. Names are trimmed of the sentence
- * punctuation a capture can carry away.
+ * so the caller can size an evidence window and judge a denial.
+ *
+ * The name is bounded by its own sentence, like every other attribute this module reads. Without
+ * that bound a name ending in "S.r.l." runs into the sentence after it -- the dot a company
+ * suffix keeps is the same dot that ends the sentence -- and "Acme S.r.l. I Dati Personali" is
+ * offered as one organisation. The dot at the bound is kept in the slice so `trimName` can decide
+ * which of the two it is; `endsSentence` already draws that distinction and is not reimplemented
+ * here.
  */
-export function roleCandidates(
+function roleCandidates(
   text: string,
 ): Array<{ name: string; holder: Holder; at: number; length: number }> {
   const out: Array<{ name: string; holder: Holder; at: number; length: number }> = []
-  for (const { holder, phrase, tail } of ROLE_PATTERNS) {
-    const p = phrase.exec(text)
-    if (p === null) continue
-    const t = tail.exec(text.slice(p.index + p[0].length))
-    if (t === null) continue
-    const captured = t[1] ?? ''
-    const name = captured.replace(/[.,;:]+$/u, (end) => (KEPT_DOT.test(captured) ? end : ''))
-    if (name === '') continue
-    out.push({ name, holder, at: p.index, length: p[0].length + t[0].length })
+  for (const { holder, phrase } of ROLE_PATTERNS) {
+    for (const p of text.matchAll(phrase)) {
+      const afterPhrase = p.index + p[0].length
+      const separator = ROLE_SEPARATOR.exec(text.slice(afterPhrase))
+      if (separator === null) continue
+      const nameAt = afterPhrase + separator[0].length
+      const { end } = sentenceBounds(text, nameAt)
+      const stop = text.charAt(end) === '.' ? end + 1 : end
+      const t = ORGANISATION_AT.exec(text.slice(nameAt, stop))
+      if (t === null) continue
+      const name = trimName(t[1] ?? '')
+      if (name === '') continue
+      out.push({ name, holder, at: p.index, length: nameAt - p.index + t[0].length })
+      break
+    }
   }
   return out
 }

@@ -564,10 +564,12 @@ describe('subject groups named in a document', () => {
 // An informativa names the controller in a near-fixed position, and it is the one organisation on
 // the map that is not a supplier. See §4.3 of the extraction-depth spec.
 describe('the controller and the processor, by name', () => {
-  const roles = (text: string): Array<{ name: string; holder: string }> =>
+  const rolePlaces = (text: string): PlaceCandidate[] =>
     placesOnly(extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES))
       .filter((c) => c.purposeGroup === 'Running the systems')
-      .map((c) => ({ name: c.name, holder: c.holder }))
+
+  const roles = (text: string): Array<{ name: string; holder: string }> =>
+    rolePlaces(text).map((c) => ({ name: c.name, holder: c.holder }))
 
   it('names the controller from an Italian informativa', () => {
     expect(roles('Titolare del trattamento è Rossi Editore S.r.l., con sede in Milano.')).toEqual([
@@ -630,8 +632,74 @@ describe('the controller and the processor, by name', () => {
 
   it('is not offered when the sentence denies it', () => {
     expect(roles('Non è stato nominato un responsabile del trattamento esterno.')).toEqual([])
-    // The case that needs the guard rather than the capitalisation rule: a name is right there.
-    expect(roles('Non abbiamo nominato responsabile del trattamento Cloud Servizi S.r.l.')).toEqual([])
+    // The case that needs the guard rather than the separator rule: a name is right there,
+    // introduced the way a named one would be.
+    expect(
+      roles('Non abbiamo nominato responsabile del trattamento: Cloud Servizi S.r.l.'),
+    ).toEqual([])
+  })
+
+  it('puts the controller in the inner ring and a named processor outside it', () => {
+    const [controller] = rolePlaces('Titolare del trattamento è Rossi Editore S.r.l.')
+    expect(controller?.layer).toBe('internal')
+    expect(controller?.kind).toBe('internal')
+    const [processor] = rolePlaces('Responsabile del trattamento è Cloud Servizi S.r.l.')
+    expect(processor?.layer).toBe('external')
+    expect(processor?.kind).toBe('processor')
+  })
+
+  it('stops the name where its sentence stops', () => {
+    // A name ending in "S.r.l." runs straight into the next sentence, because the dot that ends
+    // the sentence is also the dot the company suffix is allowed to keep. Every other extractor
+    // in the module is bounded by the sentence; this one has to be too.
+    expect(
+      roles('Titolare del trattamento è Acme S.r.l. I Dati Personali sono raccolti online.'),
+    ).toEqual([{ name: 'Acme S.r.l.', holder: 'you' }])
+    expect(
+      roles('Titolare del trattamento è Acme S.r.l. Via Roma 12, 20100 Milano (MI).'),
+    ).toEqual([{ name: 'Acme S.r.l.', holder: 'you' }])
+  })
+
+  it('reads the controller and the processor separately when they follow one another', () => {
+    expect(
+      roles(
+        'Titolare del trattamento è Acme S.r.l. Responsabile del trattamento è Cloud Servizi S.r.l.',
+      ),
+    ).toEqual([
+      { name: 'Acme S.r.l.', holder: 'you' },
+      { name: 'Cloud Servizi S.r.l.', holder: 'supplier' },
+    ])
+  })
+
+  it('reads a heading-and-value layout, and never puts a line break inside a name', () => {
+    const text = 'Titolare del trattamento\nAcme S.r.l.\nVia Roma 12'
+    expect(roles(text)).toEqual([{ name: 'Acme S.r.l.', holder: 'you' }])
+    expect(roles(text)[0]?.name).not.toContain('\n')
+  })
+
+  it('reads past an all-caps heading to the sentence that names the organisation', () => {
+    // Capitalisation cannot tell a name from prose inside an all-caps run, and the phrase is
+    // matched case-insensitively precisely because a heading is printed that way. A heading has
+    // no connector after it, so it yields nothing and the sentence below is reached.
+    expect(
+      roles(
+        'TITOLARE DEL TRATTAMENTO E RESPONSABILE DELLA PROTEZIONE DEI DATI\n\n' +
+          'Il Titolare del trattamento è Rossi Editore S.r.l.',
+      ),
+    ).toEqual([{ name: 'Rossi Editore S.r.l.', holder: 'you' }])
+    expect(
+      roles('DATA CONTROLLER AND CONTACT DETAILS\nThe data controller is Acme Ltd.'),
+    ).toEqual([{ name: 'Acme Ltd', holder: 'you' }])
+  })
+
+  it('does not read a name that follows the phrase with neither connector nor line break', () => {
+    expect(roles('Titolare del trattamento Acme S.r.l.')).toEqual([])
+  })
+
+  it('drops a joiner left dangling at the end of the name', () => {
+    expect(roles('Titolare del trattamento è Acme e successivamente il gruppo')).toEqual([
+      { name: 'Acme', holder: 'you' },
+    ])
   })
 })
 
@@ -691,6 +759,13 @@ describe('confirming a subject group', () => {
       { prefix: 'scan1' },
     )
     expect(out.subjectGroups.map((s) => s.name)).toEqual(['Website visitors'])
+  })
+
+  it('merges a group whose name differs only in case', () => {
+    // Two dictionaries and a scan write the same people three ways; the map must hold one point.
+    const seeded = { ...emptyProject(), subjectGroups: [{ id: 'scan1-sg-1', name: 'Website visitors' }] }
+    const out = ingestDocument(seeded, [group({ name: 'WEBSITE VISITORS' })])
+    expect(out.subjectGroups).toEqual([{ id: 'scan1-sg-1', name: 'Website visitors' }])
   })
 
   it('does not add the same group twice from two confirmations', () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createEmptyProject } from '../../src/core/project'
-import { addPlace, updatePlace, removePlace } from '../../src/core/graph'
+import { addPlace, addSubjectGroup, updatePlace, removePlace } from '../../src/core/graph'
 import type { Place } from '../../src/core/types'
 
 const NOW = '2026-07-30T09:00:00.000Z'
@@ -26,6 +26,24 @@ describe('place mutations', () => {
   it('rejects a duplicate id', () => {
     const p = addPlace(createEmptyProject('X', NOW), draft, 'pl-1')
     expect(() => addPlace(p, draft, 'pl-1')).toThrow('Place id already exists: pl-1')
+  })
+
+  it('adds a subject group with the supplied id', () => {
+    const p = addSubjectGroup(createEmptyProject('X', NOW), { name: 'Customers' }, 'sg-1')
+    expect(p.subjectGroups).toEqual([{ id: 'sg-1', name: 'Customers' }])
+  })
+
+  it('does not mutate the project a subject group is added to', () => {
+    const before = createEmptyProject('X', NOW)
+    addSubjectGroup(before, { name: 'Customers' }, 'sg-1')
+    expect(before.subjectGroups).toEqual([])
+  })
+
+  it('rejects a duplicate subject-group id', () => {
+    const p = addSubjectGroup(createEmptyProject('X', NOW), { name: 'Customers' }, 'sg-1')
+    expect(() => addSubjectGroup(p, { name: 'Employees' }, 'sg-1')).toThrow(
+      'Subject group id already exists: sg-1',
+    )
   })
 
   it('applies a patch and leaves other fields alone', () => {
