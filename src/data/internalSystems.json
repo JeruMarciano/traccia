@@ -93,7 +93,6 @@
   "iubenda": { "name": "Iubenda", "purposeGroup": "Website tracking", "layer": "external", "holder": "supplier" },
   "usercentrics": { "name": "Usercentrics", "purposeGroup": "Website tracking", "layer": "external", "holder": "supplier" },
 
-  "email": { "name": "Email", "purposeGroup": "Office & Email", "layer": "internal", "holder": "you" },
   "online payments": { "name": "Online payments", "purposeGroup": "Payments", "layer": "external", "holder": "supplier" },
   "digital signature": { "name": "Digital signature", "purposeGroup": "IT & Infrastructure", "layer": "internal", "holder": "you" },
   "customer support": { "name": "Customer support", "purposeGroup": "Customer Support", "layer": "internal", "holder": "you" },
@@ -112,7 +111,6 @@
   "risorse umane": { "name": "HR management", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
   "gestione del personale": { "name": "HR management", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
   "selezione del personale": { "name": "Recruiting", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
-  "curriculum": { "name": "Recruiting", "purposeGroup": "Payroll & HR", "layer": "internal", "holder": "you" },
 
   "contabilità": { "name": "Accounting system", "purposeGroup": "Finance & Accounting", "layer": "internal", "holder": "you" },
   "fatturazione": { "name": "Invoicing", "purposeGroup": "Finance & Accounting", "layer": "internal", "holder": "you" },
@@ -121,7 +119,6 @@
   "anagrafica clienti": { "name": "Customer database", "purposeGroup": "Sales & CRM", "layer": "internal", "holder": "you" },
   "gestione clienti": { "name": "CRM", "purposeGroup": "Sales & CRM", "layer": "internal", "holder": "you" },
 
-  "posta elettronica": { "name": "Email", "purposeGroup": "Office & Email", "layer": "internal", "holder": "you" },
   "assistenza clienti": { "name": "Customer support", "purposeGroup": "Customer Support", "layer": "internal", "holder": "you" },
   "copia di sicurezza": { "name": "Backup", "purposeGroup": "IT & Infrastructure", "layer": "internal", "holder": "you" },
   "firma digitale": { "name": "Digital signature", "purposeGroup": "IT & Infrastructure", "layer": "internal", "holder": "you" },

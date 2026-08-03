@@ -80,6 +80,22 @@ describe('the shipped internal-systems dictionary', () => {
   it('carries nothing that could be fetched at runtime', () => {
     expect(JSON.stringify(dict)).not.toMatch(/https?:\/\//)
   })
+
+  it('shares no term with the data-category dictionary', () => {
+    // A word cannot be both a system the organisation runs and a category of data it collects.
+    // "email", "posta elettronica" and "curriculum" were in both, so "Raccogliamo nome, cognome e
+    // indirizzo email dei clienti" -- a sentence naming no system at all -- minted a place called
+    // Email, carrying whatever the neighbouring clause said about retention. The evidence snippet
+    // reads like support for it, which is what the confirm step cannot contain.
+    //
+    // Whichever side a new term belongs on, it belongs on one of them: a system is something the
+    // organisation runs, a category is something it holds.
+    const shared = Object.keys(dict).filter((term) => term in CATEGORIES)
+    expect(
+      shared,
+      `these terms are in both src/data/internalSystems.json and src/data/dataCategories.json: ${shared.join(', ')}`,
+    ).toEqual([])
+  })
 })
 
 // Documents arrive in whatever language the client wrote them in, and for this tool that is
@@ -132,15 +148,12 @@ describe('reading an Italian document', () => {
     const text =
       'Il gestionale aziendale e il registro protocollo sono interni. Le pratiche passano ' +
       'per la posta elettronica certificata. La formazione del personale è tracciata a parte.'
-    // "Email" is the shorter term "posta elettronica" sitting inside "posta elettronica
-    // certificata". Both are offered, the way "cookie" and "banner cookie" both are above: the
-    // dictionary has no notion of one term outranking another, and inventing one here would be a
-    // code change dressed as data. A PEC mailbox is an email system, so the extra line is honest
-    // rather than wrong, and the user ticks what belongs on the map.
+    // The PEC mailbox is offered and a bare "Email" is not: "posta elettronica" is a category of
+    // data in this build, not a system, so only the three-word term names something the
+    // organisation runs. See "shares no term with the data-category dictionary" above.
     expect(found(text)).toEqual([
       'Certified email (PEC)',
       'Document register',
-      'Email',
       'Management system',
       'Training records',
     ])
@@ -162,11 +175,10 @@ describe('reading an Italian document', () => {
   it('recognises a three-word term a PDF broke across two lines', () => {
     // The longest terms in the dictionary are the ones a wrapped column is most likely to split,
     // and nothing else exercises a break at more than one gap of the same term. Both breaks have
-    // to hold: with only the first gap flexible this reads as "posta elettronica" and the PEC
-    // mailbox disappears, which is the failure a wrapped PDF would have produced in the field.
+    // to hold: with only the first gap flexible the term does not match at all and the PEC mailbox
+    // disappears, which is the failure a wrapped PDF would have produced in the field.
     expect(found('Le pratiche passano per la posta\nelettronica\ncertificata.')).toEqual([
       'Certified email (PEC)',
-      'Email',
     ])
   })
 

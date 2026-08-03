@@ -413,19 +413,6 @@ function clauseSpans(sentence: string): Clause[] {
   return spans
 }
 
-/** Where the sentence names a category, whatever the term and whether or not it is denied. */
-function categorySpans(
-  sentence: string,
-  categories: ReadonlyArray<{ pattern: RegExp }>,
-): Array<{ start: number; end: number }> {
-  const lower = sentence.toLowerCase()
-  const out: Array<{ start: number; end: number }> = []
-  for (const { pattern } of categories)
-    for (const m of lower.matchAll(pattern))
-      out.push({ start: m.index + (m[1]?.length ?? 0), end: m.index + m[0].length })
-  return out
-}
-
 /**
  * True when the clause introduces a subject of its own rather than continuing the one before it:
  * it names a system the dictionary knows, or a domain, or it opens with an adversative.
@@ -438,33 +425,21 @@ function categorySpans(
  * all, however wordy an item gets, so the list survives whole -- and "dipendente" is a subject
  * group, not a system, which is why only the internal-systems dictionary and domains count here.
  *
- * A system term sitting inside a category the sentence names is not a subject, for the same reason
- * `dataCategoriesIn` lets a longer category outrank a shorter one written inside it: the longer
- * match is what the sentence is saying, and the shorter one is a coincidence of spelling. It is one
- * containment rule read at two levels. The shipped dictionaries collide three times -- "email"
- * inside "indirizzo email", "curriculum" inside "curriculum vitae", "posta elettronica" against
- * itself -- and an email address is the category an informativa names most often, so read as a
- * system it split a list wherever it appeared and every system that collects one lost it.
+ * A term in both dictionaries at once would break this: the words of a category would open a
+ * subject and cut a list off from the system that owns it. Nothing has to be done about it here,
+ * because nothing may be in both -- see "shares no term with the data-category dictionary" in
+ * tests/build/internalSystemsData.test.ts, which is what keeps that true.
  */
 function introducesSubject(
   sentence: string,
   span: Clause,
   systems: ReadonlyArray<{ pattern: RegExp }>,
-  categories: ReadonlyArray<{ start: number; end: number }>,
 ): boolean {
   if (span.adversative) return true
   const text = sentence.slice(span.start, span.end)
   if (text.matchAll(DOMAIN_PATTERN).next().done !== true) return true
   const lower = text.toLowerCase()
-  for (const { pattern } of systems) {
-    for (const m of lower.matchAll(pattern)) {
-      const start = span.start + m.index + (m[1]?.length ?? 0)
-      const end = span.start + m.index + m[0].length
-      if (categories.some((c) => c.start <= start && c.end >= end)) continue
-      return true
-    }
-  }
-  return false
+  return systems.some(({ pattern }) => lower.matchAll(pattern).next().done !== true)
 }
 
 /**
@@ -485,14 +460,12 @@ function clauseScope(
   sentence: string,
   termAt: number,
   systems: ReadonlyArray<{ pattern: RegExp }>,
-  categories: ReadonlyArray<{ pattern: RegExp }>,
 ): Scope {
   const spans = clauseSpans(sentence)
-  const named = categorySpans(sentence, categories)
   const runs: number[] = []
   let run = 0
   spans.forEach((span, i) => {
-    if (i > 0 && introducesSubject(sentence, span, systems, named)) run += 1
+    if (i > 0 && introducesSubject(sentence, span, systems)) run += 1
     runs[i] = run
   })
   let index = 0
@@ -783,7 +756,7 @@ export function extractCandidates(
       // The term's offset inside its own sentence, which is what every attribute is measured
       // against: the offsets above are offsets into the document.
       const termAt = at - sStart
-      const scope = clauseScope(sentence, termAt, terms, categoryTerms)
+      const scope = clauseScope(sentence, termAt, terms)
       add(
         {
           sort: 'place',
@@ -812,7 +785,7 @@ export function extractCandidates(
       const { start: sStart, end: sEnd } = sentenceBounds(text, at)
       const sentence = text.slice(sStart, sEnd)
       const termAt = at - sStart
-      const scope = clauseScope(sentence, termAt, terms, categoryTerms)
+      const scope = clauseScope(sentence, termAt, terms)
       add(
         {
           sort: 'place',
