@@ -23,6 +23,12 @@ const INTERNAL: InternalSystemDictionary = {
   payroll: { name: 'Payroll system', purposeGroup: 'Payroll & HR', layer: 'internal', holder: 'you' },
   salesforce: { name: 'Salesforce', purposeGroup: 'Sales & CRM', layer: 'internal', holder: 'supplier' },
   stripe: { name: 'Stripe', purposeGroup: 'Payments', layer: 'external', holder: 'supplier' },
+  gestionale: {
+    name: 'Management system',
+    purposeGroup: 'IT & Infrastructure',
+    layer: 'internal',
+    holder: 'you',
+  },
 }
 
 const SUBJECTS: SubjectGroupDictionary = {
@@ -38,6 +44,7 @@ const CATEGORIES: DataCategoryDictionary = {
   'dati di navigazione': { name: 'Browsing data' },
   'codice fiscale': { name: 'Tax identifier' },
   nome: { name: 'Name' },
+  telefono: { name: 'Phone number' },
 }
 
 /** A candidate is a place or a group of people; most of these cases are about the places. */
@@ -358,8 +365,10 @@ describe('a line wrapped by the page is not a new statement', () => {
   })
 
   it('does not read across a numbered or lettered list marker', () => {
+    // The number is written "2)" and not "2.": a dot with a space behind it ends a statement on
+    // its own, so a "2." fixture would pass whatever the marker rule did.
     expect(
-      saysOf('Il CRM è Salesforce\n2. I dati sono conservati per 24 mesi.', 'Salesforce')?.retention,
+      saysOf('Il CRM è Salesforce\n2) I dati sono conservati per 24 mesi.', 'Salesforce')?.retention,
     ).toBeUndefined()
     expect(
       saysOf('Il CRM è Salesforce\nb) I dati sono conservati per 24 mesi.', 'Salesforce')?.retention,
@@ -369,6 +378,33 @@ describe('a line wrapped by the page is not a new statement', () => {
   it('does not read across a dash used as a list marker', () => {
     expect(
       saysOf('Il CRM è Salesforce\n- I dati sono conservati per 24 mesi.', 'Salesforce')?.retention,
+    ).toBeUndefined()
+    expect(
+      saysOf('Il CRM è Salesforce\n— i dati sono conservati per 24 mesi', 'Salesforce')?.retention,
+    ).toBeUndefined()
+  })
+
+  it('reads on through a dash that opens a parenthesis rather than an item', () => {
+    // "— salvo obblighi di legge —" is an aside inside the sentence, and the line closes the dash
+    // it opened. A list item does not.
+    expect(
+      saysOf(
+        'I dati di Salesforce sono conservati\n— salvo obblighi di legge — per 24 mesi.',
+        'Salesforce',
+      )?.retention,
+    ).toBe('24 months')
+  })
+
+  it('reads across a wrap written with a carriage return', () => {
+    expect(
+      saysOf('I dati in Salesforce sono conservati\r\nper 24 mesi.', 'Salesforce')?.retention,
+    ).toBe('24 months')
+  })
+
+  it('still stops at a blank line written with carriage returns', () => {
+    expect(
+      saysOf('Il CRM è Salesforce\r\n\r\nI dati sono conservati per 24 mesi.', 'Salesforce')
+        ?.retention,
     ).toBeUndefined()
   })
 })
@@ -487,6 +523,26 @@ describe('retention read off the sentence', () => {
       ),
     ).toBe('24 months')
   })
+
+  it('does not reach into the clause of another subject, however near the figure sits', () => {
+    // Nothing separates the two figures but a "mentre", and raw distance alone read straight
+    // across it: the decoy is nearer to the term than the figure that belongs to it.
+    expect(
+      retentionFor(
+        'I documenti contabili sono conservati per 10 anni, mentre i dati di Salesforce sono ' +
+          'conservati per 12 mesi.',
+        'Salesforce',
+      ),
+    ).toBe('12 months')
+  })
+
+  it('takes the earlier figure when two are equally far from the term', () => {
+    // "24 mesi" ends 12 characters before the term and "90 giorni" starts 12 after it. The tie
+    // goes to the one in front, which is what the doc comment claims and what nothing pinned.
+    expect(
+      retentionFor('Conservazione 24 mesi per Salesforce, 90 giorni nei backup.', 'Salesforce'),
+    ).toBe('24 months')
+  })
 })
 
 describe('jurisdiction read off the sentence', () => {
@@ -553,6 +609,37 @@ describe('jurisdiction read off the sentence', () => {
         'Questa informativa descrive i trattamenti svolti dal titolare. ' +
           'I dati di Stripe sono conservati in Irlanda, mentre le buste paga restano archiviate in Italia.',
         'Stripe',
+      ),
+    ).toBe('Irlanda')
+  })
+
+  it('does not reach into the clause of another named system', () => {
+    // Both halves name their own system, so neither placement is available to the other however
+    // the character count falls out.
+    const text =
+      'I server di Salesforce sono ubicati in Irlanda e i backup di Stripe sono conservati ' +
+      'presso datacenter situati in Italia.'
+    expect(whereFor(text, 'Salesforce')).toBe('Irlanda')
+    expect(whereFor(text, 'Stripe')).toBe('Italia')
+  })
+
+  it('does not take another system’s placement even when that one sits nearer', () => {
+    // "in Irlanda" is 24 characters from the term and the term's own "negli Stati Uniti" is 49, so
+    // distance alone hands Salesforce the placement that belongs to Stripe.
+    expect(
+      whereFor(
+        'I dati di Stripe sono conservati in Irlanda e Salesforce, con tutta la rete aziendale ' +
+          'di sede, archivia i dati negli Stati Uniti.',
+        'Salesforce',
+      ),
+    ).toBe('Stati Uniti')
+  })
+
+  it('takes the earlier phrase when two are equally far from the term', () => {
+    expect(
+      whereFor(
+        'I dati ubicati in Irlanda di Salesforce sono anche archiviati in Italia.',
+        'Salesforce',
       ),
     ).toBe('Irlanda')
   })
@@ -655,13 +742,24 @@ describe('categories are read from the term’s own clause', () => {
   })
 
   it('still reads a whole list of categories attached to one term', () => {
-    // Commas separate clauses and they also separate the items of a list. A run that names a
-    // category and says almost nothing else is the second kind and stays with the clause before it.
+    // Commas separate clauses and they also separate the items of a list. A fragment that names no
+    // system of its own is the second kind and stays with the clause before it.
     expect(categoriesFor('Salesforce tratta nome, codice fiscale ed email.', 'Salesforce')).toEqual([
       'Name',
       'Tax identifier',
       'Email address',
     ])
+  })
+
+  it('keeps reading the list past a long item', () => {
+    // A heavy fragment is still part of the list as long as it names no system: the run continues
+    // through it rather than being truncated at the first wordy item.
+    expect(
+      categoriesFor(
+        'Salesforce tratta nome, indirizzo email personale del dipendente e telefono.',
+        'Salesforce',
+      ),
+    ).toEqual(['Name', 'Email address', 'Phone number'])
   })
 
   it('does not read across a contrast between two systems', () => {
@@ -670,13 +768,36 @@ describe('categories are read from the term’s own clause', () => {
     expect(categoriesFor(text, 'Salesforce')).toEqual(['Tax identifier'])
   })
 
-  it('does not read a short second clause back into the first across "mentre"', () => {
+  it('stops at "mentre" even when the clause after it names no system', () => {
     // "mentre" sets two subjects against each other, so what follows it is a claim of its own
-    // however briefly it is written -- otherwise a clause light enough to look like more of a list
-    // hands the second system's data to the first.
-    const text = 'Salesforce tratta il nome, mentre il payroll anche il codice fiscale.'
+    // however briefly it is written.
+    expect(
+      categoriesFor(
+        'Salesforce tratta il nome, mentre il codice fiscale resta al commercialista.',
+        'Salesforce',
+      ),
+    ).toEqual(['Name'])
+  })
+
+  it('stops where the next fragment names another system, verb or no verb', () => {
+    // An informativa drops the verb in a list of systems -- "Salesforce il nome, il payroll il
+    // codice fiscale" -- and a fragment that light looks like more of a list. The system named in
+    // it is what says otherwise.
+    const text = 'Salesforce tratta il nome, il payroll il codice fiscale.'
     expect(categoriesFor(text, 'Salesforce')).toEqual(['Name'])
     expect(categoriesFor(text, 'Payroll system')).toEqual(['Tax identifier'])
+  })
+
+  it('stops where the next fragment names a domain', () => {
+    const text = 'Il gestionale tratta il nome, google-analytics.com i dati di navigazione.'
+    expect(categoriesFor(text, 'Management system')).toEqual(['Name'])
+    expect(categoriesFor(text, 'Google Analytics')).toEqual(['Browsing data'])
+  })
+
+  it('does not rejoin a fragment that names a system even where the sentence flows on', () => {
+    const text = 'Salesforce tratta il nome e il gestionale riceve il codice fiscale.'
+    expect(categoriesFor(text, 'Salesforce')).toEqual(['Name'])
+    expect(categoriesFor(text, 'Management system')).toEqual(['Tax identifier'])
   })
 
   it('measures the term’s offset inside its sentence, not from the start of the document', () => {

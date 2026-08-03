@@ -109,14 +109,32 @@ const ALNUM = /[\p{L}\p{N}]/u
 /** Any whitespace, including the line break itself. */
 const SPACE = /\s/
 
+/** The dashes a document uses as a bullet, and as a pair of parentheses. */
+const DASHES = '-–—'
+
 /**
  * What a new claim opens with when it is an item in a list: a bullet of whatever shape the file
  * used, a numbered item, or a lettered one. Anything else at the start of a line is prose.
+ *
+ * A dash is both a bullet and half of a parenthesis, and a wrap can leave either at the start of a
+ * line: "sono conservati\n— salvo obblighi di legge — per 24 mesi" is one sentence with an aside in
+ * the middle, and reading its dash as a bullet lost the retention. The line closing the dash it
+ * opened is what tells them apart -- a list item does not close its bullet. The cost is that an
+ * item which happens to contain a second dash reads as prose, which loses a boundary rather than
+ * inventing one.
  */
 function startsListItem(text: string, i: number): boolean {
   const ch = text.charAt(i)
   if (ch === '') return false
-  if ('•‣▪·-–—*'.includes(ch)) return true
+  if ('•‣▪·*'.includes(ch)) return true
+  if (DASHES.includes(ch)) {
+    for (let k = i + 1; k < text.length; k += 1) {
+      const c = text.charAt(k)
+      if (c === '\n' || c === '\r') break
+      if (DASHES.includes(c) && SPACE.test(text.charAt(k - 1))) return false
+    }
+    return true
+  }
   if (/\d/.test(ch)) {
     let k = i
     while (/\d/.test(text.charAt(k))) k += 1
@@ -256,22 +274,25 @@ const RETENTION = new RegExp(
 /**
  * How long the sentence says something is kept, or undefined.
  *
- * `termAt` is the term's offset inside `sentence`, and the figure nearest it wins, as it does for
- * a placement phrase. One sentence carries two retentions as easily as it carries two countries --
- * "I dati contabili sono conservati per 10 anni …, mentre i dati raccolti tramite Salesforce sono
- * conservati per 24 mesi" -- and taking the first gave the CRM the ten years the accounting
- * records are kept for: inside the sentence, as §4.1 requires, and confidently wrong. On a tie the
- * figure before the term wins, for the reason set out above `jurisdictionIn`.
+ * `scope` is the stretch of the sentence that belongs to the term (see `clauseScope`) and nothing
+ * outside it is read: "I documenti contabili sono conservati per 10 anni, mentre i dati di
+ * Salesforce sono conservati per 12 mesi" places the decoy nearer the term than the figure that
+ * belongs to it, so distance alone read straight across the change of subject.
+ *
+ * Within the scope the figure nearest `termAt` wins, because a clause can still carry two -- "per
+ * 24 mesi, il backup per 90 giorni". On a tie the figure before the term wins, for the reason set
+ * out above `jurisdictionIn`.
  *
  * Not negation-guarded: "Non conserviamo i dati per 24 mesi" yields "24 months". The guard runs
  * on the term that anchors the sentence, not on the attributes read off it, and the confirm list
  * is the containment.
  */
-export function retentionIn(sentence: string, termAt: number): string | undefined {
+function retentionIn(sentence: string, termAt: number, scope: Scope): string | undefined {
   let best: string | undefined
   let bestDistance = Number.POSITIVE_INFINITY
   for (const m of sentence.matchAll(RETENTION)) {
     const at = m.index + (m[1]?.length ?? 0)
+    if (at < scope.start || at >= scope.end) continue
     const distance = Math.abs(at - termAt)
     if (distance >= bestDistance) continue
     const count = m[2]
@@ -320,11 +341,12 @@ const JURISDICTION = new RegExp(
  * capitalisation is the whole signal, and the lowercased copy used for term matching has thrown
  * it away.
  *
- * `termAt` is the term's offset inside `sentence`, and the phrase nearest it wins. One sentence
- * often places two things -- "I server sono ubicati in Irlanda e i backup sono conservati presso
- * datacenter situati in Italia" -- and taking the first phrase gave the backup Ireland: within the
- * sentence, as §4.1 requires, and confidently wrong, which §4.1 rates worse than a blank.
+ * Only the term's own scope is read (see `clauseScope`): "I server di Salesforce sono ubicati in
+ * Irlanda e i backup di Mailchimp sono conservati presso datacenter situati in Italia" names a
+ * system in each half, and neither placement is available to the other however the character count
+ * falls out.
  *
+ * Within the scope the phrase nearest `termAt` wins, since one clause can still place two things.
  * Distance is measured from the term to the placement verb that heads the phrase, not to the
  * country it ends in: the verb is what binds a placement to the thing it places, and a long phrase
  * would otherwise look far away from the very term it is about. On a tie the phrase before the
@@ -335,10 +357,11 @@ const JURISDICTION = new RegExp(
  * "Irlanda". The guard runs on the term that anchors the sentence, and the confirm list is the
  * containment.
  */
-export function jurisdictionIn(sentence: string, termAt: number): string | undefined {
+function jurisdictionIn(sentence: string, termAt: number, scope: Scope): string | undefined {
   let best: string | undefined
   let bestDistance = Number.POSITIVE_INFINITY
   for (const m of sentence.matchAll(JURISDICTION)) {
+    if (m.index < scope.start || m.index >= scope.end) continue
     const distance = Math.abs(m.index - termAt)
     if (distance >= bestDistance) continue
     bestDistance = distance
@@ -357,37 +380,14 @@ const CLAUSE_BREAK = /,|(^|[^\p{L}\p{N}-])(ed?|nonché|mentre|and|while)(?![\p{L
 /** The conjunctions that set two subjects against each other. Nothing is read across one. */
 const ADVERSATIVE = /^(?:mentre|while)$/iu
 
-/**
- * A placement phrase and a retention phrase, tested rather than searched. The source is shared
- * with the extractors so there is one definition of each; the copies drop the global flag, because
- * `test` on a global pattern advances its `lastIndex` and the next call would start mid-string.
- */
-const PLACEMENT_PHRASE = new RegExp(JURISDICTION.source, 'u')
-const RETENTION_PHRASE = new RegExp(RETENTION.source, 'iu')
-
-/**
- * Words too light to make a fragment a statement of its own: articles, prepositions, conjunctions,
- * relatives, determiners. Both languages, and deliberately not verbs -- a verb is exactly what
- * tells "e l'indirizzo di fatturazione" (more of the same list) from "e il gestionale riceve il
- * codice fiscale" (a new subject with its own data).
- */
-const LIGHT = new Set(
-  (
-    'il lo la i gli le l un uno una di del dello della dei degli delle dell d da dal dallo dalla ' +
-    'dai dagli dalle a al allo alla ai agli alle in nel nello nella nei negli nelle con col coi ' +
-    'su sul sullo sulla sui sugli sulle per tra fra e ed o od che chi cui quale quali anche solo ' +
-    'soltanto oltre inoltre nonché suo sua suoi sue loro nostro nostra nostri nostre vostro ' +
-    'vostra vostri vostre proprio propria questo questa questi queste ' +
-    'the an of and or to for on at with by from that which who whose its their our your his her ' +
-    'also only such as'
-  ).split(' '),
-)
-
 /** A clause of a sentence, and whether the break in front of it was an adversative one. */
 type Clause = { start: number; end: number; adversative: boolean }
 
 /** Where a category was named, and which one. */
 type CategoryHit = { name: string; at: number; end: number }
+
+/** Half-open bounds inside a sentence: everything an attribute may be read from. */
+type Scope = { start: number; end: number }
 
 /** The clauses of a sentence, in order, with the whitespace-only fragments dropped. */
 function clauseSpans(sentence: string): Clause[] {
@@ -414,63 +414,58 @@ function clauseSpans(sentence: string): Clause[] {
 }
 
 /**
- * True when the clause is more of the list the clause before it started, rather than a statement
- * of its own: it names a category and says almost nothing else. "nome, cognome, email" is one list
- * written with commas, and commas are also what separate clauses -- this is what tells the two
- * apart without a grammar. One content word is allowed, which is what a phrase like "l'indirizzo
- * di fatturazione" or a relative "che tratta i dati di navigazione" carries; two means a subject
- * and a verb, and that is a new claim.
+ * True when the clause introduces a subject of its own rather than continuing the one before it:
+ * it names a system the dictionary knows, or a domain, or it opens with an adversative.
+ *
+ * This is what tells a list of categories from a list of systems, and it is the only test either
+ * needs. "Salesforce tratta il nome, il payroll il codice fiscale" drops the second verb, which is
+ * ordinary in an informativa, and any rule counting words in the fragment reads it as more of the
+ * first list and hands each system the other's data. The word that settles it is the system's own
+ * name. Conversely "nome, indirizzo email personale del dipendente e telefono" names no system at
+ * all, however wordy an item gets, so the list survives whole -- and "dipendente" is a subject
+ * group, not a system, which is why only the internal-systems dictionary and domains count here.
  */
-function continuesList(sentence: string, span: Clause, hits: readonly CategoryHit[]): boolean {
-  const inside = hits
-    .filter((h) => h.at >= span.start && h.at < span.end)
-    .sort((a, b) => a.at - b.at)
-  if (inside.length === 0) return false
-  let rest = ''
-  let cursor = span.start
-  for (const h of inside) {
-    if (h.at > cursor) rest += sentence.slice(cursor, h.at)
-    cursor = Math.max(cursor, h.end)
-  }
-  rest += sentence.slice(Math.min(cursor, span.end), span.end)
-  const words = rest.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}’'-]*/gu) ?? []
-  return words.map((w) => w.replace(/[’']/g, '')).filter((w) => !LIGHT.has(w)).length <= 1
+function introducesSubject(
+  sentence: string,
+  span: Clause,
+  systems: ReadonlyArray<{ pattern: RegExp }>,
+): boolean {
+  if (span.adversative) return true
+  const text = sentence.slice(span.start, span.end)
+  if (text.matchAll(DOMAIN_PATTERN).next().done !== true) return true
+  const lower = text.toLowerCase()
+  return systems.some(({ pattern }) => lower.matchAll(pattern).next().done !== true)
 }
 
 /**
- * The stretch of the sentence a term's categories may be read from: the clause the term sits in,
- * plus any clause after it that only continues its list.
+ * The stretch of the sentence an attribute may be read off for a term: the run of clauses that
+ * begins where the term's own subject was introduced and ends where the next subject is.
  *
- * A clause that says nothing but where or how long -- "ubicati in Irlanda" -- is transparent when
- * a list is joined back to its subject, because such a clause describes the same subject rather
- * than introducing one: "google-analytics.com conserva i dati per 24 mesi, ubicati in Irlanda, e
- * riceve nome ed email" is one claim about one vendor with a placement parenthesis in the middle.
+ * Every clause after the first continues the clause before it unless it introduces a subject, so a
+ * clause stating only where or how long -- "ubicati in Irlanda" -- stays with the system it
+ * describes and does not cut a list off from its subject: "google-analytics.com conserva i dati per
+ * 24 mesi, ubicati in Irlanda, e riceve nome ed email" is one claim about one vendor with a
+ * placement parenthesis in the middle.
+ *
+ * A run only ever grows to the right of the subject that opened it. An attribute stated before any
+ * system is named -- "Conservati in Irlanda, i dati di Salesforce …" -- is not read, which loses a
+ * reading rather than inventing one.
  */
 function clauseScope(
   sentence: string,
   termAt: number,
-  hits: readonly CategoryHit[],
-): { start: number; end: number } {
+  systems: ReadonlyArray<{ pattern: RegExp }>,
+): Scope {
   const spans = clauseSpans(sentence)
-  const attributeOnly = spans.map(
-    (s) =>
-      !hits.some((h) => h.at >= s.start && h.at < s.end) &&
-      (PLACEMENT_PHRASE.test(sentence.slice(s.start, s.end)) ||
-        RETENTION_PHRASE.test(sentence.slice(s.start, s.end))),
-  )
-  const group = spans.map((_, i) => i)
-  for (let i = 1; i < spans.length; i += 1) {
-    const span = spans[i]
-    if (span === undefined || span.adversative) continue
-    if (!continuesList(sentence, span, hits)) continue
-    let j = i - 1
-    while (j > 0 && attributeOnly[j] === true && spans[j]?.adversative !== true) j -= 1
-    group[i] = group[j] ?? j
-  }
+  const runs: number[] = []
+  let run = 0
+  spans.forEach((span, i) => {
+    if (i > 0 && introducesSubject(sentence, span, systems)) run += 1
+    runs[i] = run
+  })
   let index = 0
   for (let i = 0; i < spans.length; i += 1) if ((spans[i]?.start ?? 0) <= termAt) index = i
-  const root = group[index] ?? index
-  const members = spans.filter((_, i) => (group[i] ?? i) === root || i === index)
+  const members = spans.filter((_, i) => runs[i] === runs[index])
   return {
     start: Math.min(...members.map((s) => s.start)),
     end: Math.max(...members.map((s) => s.end)),
@@ -482,13 +477,14 @@ function clauseScope(
  * once. Undefined rather than an empty array when it names none: an empty list on a printed sheet
  * reads as "no personal data here", which is a claim this function is in no position to make.
  *
- * The scope is the clause and not the whole sentence, because an informativa lists several
- * purposes in one breath -- "per la gestione della contabilità e delle buste paga, per l'invio
- * della newsletter tramite Mailchimp e per le statistiche raccolte da google-analytics.com, che
- * tratta i dati di navigazione" -- and the sentence as the scope gave the payroll, the accounting
- * system and the mailing list the browsing data that belongs to the analytics vendor. A term whose
- * own clause names no category reads as undefined rather than widening back out to the sentence: a
- * blank is the honest answer, and §4.4 rates it above a confident wrong one.
+ * The scope is the term's own run of clauses and not the whole sentence, because an informativa
+ * lists several purposes in one breath -- "per la gestione della contabilità e delle buste paga,
+ * per l'invio della newsletter tramite Mailchimp e per le statistiche raccolte da
+ * google-analytics.com, che tratta i dati di navigazione" -- and the sentence as the scope gave the
+ * payroll, the accounting system and the mailing list the browsing data that belongs to the
+ * analytics vendor. A term whose own scope names no category reads as undefined rather than
+ * widening back out to the sentence: a blank is the honest answer, and §4.4 rates it above a
+ * confident wrong one.
  *
  * Denial is judged per occurrence, as it is for a term: "non riceve il codice fiscale, solo il
  * nome" names two categories and asserts one.
@@ -501,9 +497,9 @@ function clauseScope(
  * written straight into the saved project. Containment is judged per occurrence, so the shorter
  * term still counts where the sentence writes it on its own.
  */
-export function dataCategoriesIn(
+function dataCategoriesIn(
   sentence: string,
-  termAt: number,
+  scope: Scope,
   categories: ReadonlyArray<{ entry: DataCategoryEntry; pattern: RegExp }>,
 ): string[] | undefined {
   const lower = sentence.toLowerCase()
@@ -517,8 +513,6 @@ export function dataCategoriesIn(
       hits.push({ name: entry.name, at: start, end: start + m[0].length - (m[1]?.length ?? 0) })
     }
   }
-  if (hits.length === 0) return undefined
-  const scope = clauseScope(sentence, termAt, hits)
   const within = hits.filter((h) => h.at >= scope.start && h.at < scope.end)
   const found = within.filter(
     (h) => !within.some((o) => o.at <= h.at && o.end >= h.end && o.end - o.at > h.end - h.at),
@@ -754,6 +748,10 @@ export function extractCandidates(
       if (at === -1) continue
       const { start: sStart, end: sEnd } = sentenceBounds(text, at)
       const sentence = text.slice(sStart, sEnd)
+      // The term's offset inside its own sentence, which is what every attribute is measured
+      // against: the offsets above are offsets into the document.
+      const termAt = at - sStart
+      const scope = clauseScope(sentence, termAt, terms)
       add(
         {
           sort: 'place',
@@ -763,9 +761,9 @@ export function extractCandidates(
           holder: entry.holder,
           kind: entry.layer === 'internal' ? 'internal' : 'processor',
           evidence: evidenceAround(text, at, matched),
-          retention: retentionIn(sentence, at - sStart),
-          jurisdiction: jurisdictionIn(sentence, at - sStart),
-          dataCategories: dataCategoriesIn(sentence, at - sStart, categoryTerms),
+          retention: retentionIn(sentence, termAt, scope),
+          jurisdiction: jurisdictionIn(sentence, termAt, scope),
+          dataCategories: dataCategoriesIn(sentence, scope, categoryTerms),
         },
         doc.name,
       )
@@ -781,6 +779,8 @@ export function extractCandidates(
       const at = m.index ?? 0
       const { start: sStart, end: sEnd } = sentenceBounds(text, at)
       const sentence = text.slice(sStart, sEnd)
+      const termAt = at - sStart
+      const scope = clauseScope(sentence, termAt, terms)
       add(
         {
           sort: 'place',
@@ -790,9 +790,9 @@ export function extractCandidates(
           holder: 'supplier',
           kind: 'processor',
           evidence: evidenceAround(text, at, m[0].length),
-          retention: retentionIn(sentence, at - sStart),
-          jurisdiction: jurisdictionIn(sentence, at - sStart),
-          dataCategories: dataCategoriesIn(sentence, at - sStart, categoryTerms),
+          retention: retentionIn(sentence, termAt, scope),
+          jurisdiction: jurisdictionIn(sentence, termAt, scope),
+          dataCategories: dataCategoriesIn(sentence, scope, categoryTerms),
         },
         doc.name,
       )
