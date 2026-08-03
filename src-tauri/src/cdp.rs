@@ -40,6 +40,110 @@ pub struct ObservedHost {
     pub request_count: u32,
 }
 
+/// One cookie the browser held when the scan ended, capped and sanitised —
+/// see [`sanitise_cookies`]. The cookie's own `value` is never extracted;
+/// only these four fields ever leave the page.
+///
+/// Serialises to `ScanResult["cookies"][n]` in `src/core/types.ts`, field for
+/// field with `RawScanCookie`: `name`, `domain`, `session`,
+/// `expiresEpochSeconds`. `f64` rather than an integer because CDP hands back
+/// `expires` as a float and core receives a JSON number either way.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanCookie {
+    pub name: String,
+    pub domain: String,
+    pub session: bool,
+    pub expires_epoch_seconds: f64,
+}
+
+/// The most cookies one scan will record. The browser is driving a page this
+/// app does not trust, so this is a bound on attacker-chosen data, the same
+/// reasoning as [`MAX_HOSTS`]. Reaching it is a gap, never a silent
+/// truncation.
+const MAX_COOKIES: usize = 512;
+/// The longest a cookie `name` may be after [`tame`].
+const MAX_COOKIE_NAME: usize = 256;
+/// The longest a cookie `domain` may be after [`tame`] — one hostname, the
+/// same bound as [`MAX_HOST_LEN`].
+const MAX_COOKIE_DOMAIN: usize = 253;
+
+/// Bounds and cleans a string read off a hostile page: at most `max_chars`
+/// **characters**, never bytes, and every Unicode `Cc` (control) or `Cf`
+/// (format — this is where the bidi override characters live: U+200E/U+200F,
+/// U+202A-U+202E, U+2066-U+2069) character replaced with `'?'` rather than
+/// deleted.
+///
+/// Characters, not bytes, because `s.chars().take(max_chars).collect()`
+/// cannot panic mid-codepoint on a hostile multibyte string the way a byte
+/// slice could. Replaced rather than deleted so a name is never silently
+/// rewritten into a *different valid* name — a cookie called
+/// `sess\u{200E}ion` truncated by deletion reads as `session`, a real cookie
+/// that never existed. Every other printable Unicode character — accented
+/// Italian letters, emoji — passes through untouched: this is not an
+/// ASCII-only filter, and must not be replaced with one (`redact_authority`
+/// is ASCII-only and would mangle "città", "cognome").
+///
+/// Shared by every sanitiser in this module that reads a string out of the
+/// page: cookies here, and later form fields and storage keys.
+fn tame(raw: &str, max_chars: usize) -> String {
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+    raw.chars()
+        .take(max_chars)
+        .map(|c| match c.general_category() {
+            GeneralCategory::Control | GeneralCategory::Format => '?',
+            _ => c,
+        })
+        .collect()
+}
+
+/// Reads exactly four named keys from each raw cookie object handed back by
+/// `Network.getAllCookies` — `name`, `domain`, `session`, `expires` — and
+/// nothing else. The cookie's own `value` is never read, never copied, never
+/// logged; there is no `#[serde(flatten)]` and no deserialising into a struct
+/// that carries it.
+///
+/// An entry of the wrong shape — including an `expires` that is not finite
+/// (`NaN`/`+-inf`, which `serde_json::to_string` errors on and would
+/// otherwise turn a completed scan into `SCAN_FAILED`) — is dropped and
+/// counted rather than propagated. A finite `expires` is clamped to
+/// `-1.0 ..= 4e9` before being retained. `name` and `domain` are run through
+/// [`tame`] and bounded by [`MAX_COOKIE_NAME`]/[`MAX_COOKIE_DOMAIN`].
+///
+/// Returns the retained cookies, capped at [`MAX_COOKIES`], and whether
+/// anything was dropped or capped — the caller folds that into
+/// `possible_gaps`; hitting the cap must never read as a clean sheet.
+fn sanitise_cookies(raw: &[serde_json::Value]) -> (Vec<ScanCookie>, bool) {
+    let mut gap = false;
+    let mut cookies = Vec::new();
+    for value in raw {
+        if cookies.len() >= MAX_COOKIES {
+            gap = true;
+            continue;
+        }
+        let name = value.get("name").and_then(|v| v.as_str());
+        let domain = value.get("domain").and_then(|v| v.as_str());
+        let session = value.get("session").and_then(|v| v.as_bool());
+        let expires = value
+            .get("expires")
+            .and_then(|v| v.as_f64())
+            .filter(|e| e.is_finite());
+        let (Some(name), Some(domain), Some(session), Some(expires)) =
+            (name, domain, session, expires)
+        else {
+            gap = true;
+            continue;
+        };
+        cookies.push(ScanCookie {
+            name: tame(name, MAX_COOKIE_NAME),
+            domain: tame(domain, MAX_COOKIE_DOMAIN),
+            session,
+            expires_epoch_seconds: expires.clamp(-1.0, 4e9),
+        });
+    }
+    (cookies, gap)
+}
+
 /// What one scan saw.
 ///
 /// Serialises to
@@ -47,7 +151,7 @@ pub struct ObservedHost {
 /// `ScanResult`'s remaining field, `scannedHost`, is the caller's — Task 8
 /// knows the URL the user typed and this module deliberately does not decide
 /// what "the scanned host" is.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Observation {
     pub hosts: Vec<ObservedHost>,
@@ -96,6 +200,13 @@ pub struct Observation {
     /// count as detail — never with the same signal a completed-but-holey scan
     /// gets.**
     pub stopped_early: bool,
+    /// The browser's cookie jar at the moment the scan ended, capped and
+    /// sanitised. Populated once, by `observe()`, after the page walk
+    /// completes — never by [`Driver::observation`] itself, which stays a
+    /// pure fold over what the driver already collected and is exercised
+    /// directly by most of this module's own tests without a transport that
+    /// answers `Network.getAllCookies` at all.
+    pub cookies: Vec<ScanCookie>,
 }
 
 /// The most distinct gap keys tracked before the ledger stops deduplicating.
@@ -1040,9 +1151,18 @@ impl<T: CdpTransport> Driver<T> {
              .filter(function (h) {{ return h.length <= {MAX_LINK_LEN}; }})\
              .slice(0, {MAX_LINKS_READ}))"
         ));
+        // [B2] The call contract every probe (`Runtime.evaluate`) follows:
+        // read the value back rather than a remote object handle, never pause
+        // the page on an uncaught throw, never wait on a promise this probe
+        // did not ask the page to make, and never let a poisoned prototype
+        // getter or a `Storage` subclass whose `length` hangs run past its own
+        // budget and take the whole scan down with it.
         params.return_by_value = Some(true);
-        // The page is untrusted; an expression that throws must not pause it.
         params.silent = Some(true);
+        params.await_promise = Some(false);
+        params.timeout = Some(chromiumoxide::cdp::js_protocol::runtime::TimeDelta::new(
+            2000.0,
+        ));
         let result = match self
             .call(
                 Some(session.clone()),
@@ -1052,9 +1172,21 @@ impl<T: CdpTransport> Driver<T> {
             .await
         {
             Ok(result) => result,
-            Err(CdpError::Protocol { .. }) => return Ok(Vec::new()),
-            Err(e) => return Err(e),
+            Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
+            // [B2] Any other error from a probe call is a gap, not a scan
+            // failure — including the timeout above firing.
+            Err(_) => {
+                self.gaps.note("links:probe-failed");
+                return Ok(Vec::new());
+            }
         };
+        if result.get("exceptionDetails").is_some() {
+            // [B2] The probe produced nothing: a hostile page that makes the
+            // querying call throw a fabricated value must not have that value
+            // read as the probe's answer.
+            self.gaps.note("links:probe-exception");
+            return Ok(Vec::new());
+        }
         let Some(json) = result
             .get("result")
             .and_then(|r| r.get("value"))
@@ -1093,21 +1225,21 @@ impl<T: CdpTransport> Driver<T> {
             .map_err(|e| CdpError::Serialisation(e.to_string()))?;
         let Some(session) = self.page_session(created.target_id.inner(), cancel).await? else {
             // Cancelled before the page even attached.
-            return Ok(self.observation(0, true));
+            return self.finish(0, true).await;
         };
 
         // `max_pages` counts the entry page, so a budget of zero loads
         // nothing rather than loading one page anyway.
         let mut pages_visited = 0u32;
         if cancel.is_cancelled() || max_pages == 0 {
-            return Ok(self.observation(pages_visited, cancel.is_cancelled()));
+            return self.finish(pages_visited, cancel.is_cancelled()).await;
         }
         if self.visit(&session, entry_url, cancel).await? {
             pages_visited += 1;
         }
 
         if cancel.is_cancelled() || max_pages <= 1 {
-            return Ok(self.observation(pages_visited, cancel.is_cancelled()));
+            return self.finish(pages_visited, cancel.is_cancelled()).await;
         }
         let hrefs = self.links(&session).await?;
         let refs: Vec<&str> = hrefs.iter().map(|s| s.as_str()).collect();
@@ -1120,7 +1252,7 @@ impl<T: CdpTransport> Driver<T> {
                 pages_visited += 1;
             }
         }
-        Ok(self.observation(pages_visited, cancel.is_cancelled()))
+        self.finish(pages_visited, cancel.is_cancelled()).await
     }
 
     fn observation(&mut self, pages_visited: u32, stopped_early: bool) -> Observation {
@@ -1137,7 +1269,61 @@ impl<T: CdpTransport> Driver<T> {
             pages_visited,
             possible_gaps: self.gaps.count(),
             stopped_early,
+            // Never fetched here — see the field's own doc comment.
+            cookies: Vec::new(),
         }
+    }
+
+    /// Sends `Network.getAllCookies` on the browser-level session — a fixed
+    /// method string, no parameters built from anything the page said — and
+    /// folds the result through [`sanitise_cookies`].
+    ///
+    /// [B2]: every `CdpError` here except [`CdpError::BrowserGone`] is
+    /// swallowed into zero cookies plus a reported gap, the same rule as
+    /// every other probe call in this module. `BrowserGone` is propagated: a
+    /// browser that died mid-scan fails the scan regardless of which command
+    /// was in flight when it happened.
+    async fn fetch_cookies(&mut self) -> Result<(Vec<ScanCookie>, bool), CdpError> {
+        match self
+            .call(
+                None,
+                MethodId::from("Network.getAllCookies"),
+                serde_json::json!({}),
+            )
+            .await
+        {
+            Ok(result) => {
+                let raw: Vec<serde_json::Value> = result
+                    .get("cookies")
+                    .and_then(|c| c.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                // A response with no `cookies` array at all is itself a gap:
+                // nothing here trusts the shape of what a browser answers.
+                let malformed = result.get("cookies").and_then(|c| c.as_array()).is_none();
+                let (cookies, sanitiser_gap) = sanitise_cookies(&raw);
+                Ok((cookies, sanitiser_gap || malformed))
+            }
+            Err(CdpError::BrowserGone) => Err(CdpError::BrowserGone),
+            Err(_) => Ok((Vec::new(), true)),
+        }
+    }
+
+    /// The one place that builds the [`Observation`] a completed, cancelled,
+    /// or budget-exhausted `run()` actually returns: folds in the cookie
+    /// jar, captured once here rather than in [`Driver::observation`] itself.
+    async fn finish(
+        &mut self,
+        pages_visited: u32,
+        stopped_early: bool,
+    ) -> Result<Observation, CdpError> {
+        let (cookies, gap) = self.fetch_cookies().await?;
+        if gap {
+            self.gaps.note("cookies:gap");
+        }
+        let mut observation = self.observation(pages_visited, stopped_early);
+        observation.cookies = cookies;
+        Ok(observation)
     }
 }
 
@@ -2242,6 +2428,7 @@ mod tests {
             pages_visited: 4,
             possible_gaps: 0,
             stopped_early: false,
+            cookies: Vec::new(),
         };
         assert_eq!(
             serde_json::to_value(&observation).expect("json"),
@@ -2249,8 +2436,115 @@ mod tests {
                 "hosts": [{"host": "doubleclick.net", "requestCount": 3}],
                 "pagesVisited": 4,
                 "possibleGaps": 0,
-                "stoppedEarly": false
+                "stoppedEarly": false,
+                "cookies": []
             })
         );
+    }
+
+    // --- Task 5: the cookie jar ---
+
+    #[test]
+    fn a_thousand_minted_cookies_cap_at_max_and_record_a_gap() {
+        let raw: Vec<serde_json::Value> = (0..1000)
+            .map(|i| {
+                json!({"name": format!("c{i}"), "domain": "evil.example", "session": false, "expires": 2e9})
+            })
+            .collect();
+        let (cookies, gap) = sanitise_cookies(&raw);
+        assert_eq!(cookies.len(), MAX_COOKIES);
+        assert!(gap, "hitting the cap must surface as a gap, never a clean sheet");
+    }
+
+    #[test]
+    fn control_characters_and_bidi_overrides_are_tamed_and_lengths_bounded() {
+        let raw = vec![json!({
+            "name": "a\u{0007}b".repeat(400),
+            "domain": "x.it",
+            "session": true,
+            "expires": -1.0
+        })];
+        let (cookies, _) = sanitise_cookies(&raw);
+        assert!(!cookies[0].name.contains('\u{0007}'));
+        assert_eq!(cookies[0].name.chars().count(), MAX_COOKIE_NAME);
+    }
+
+    #[test]
+    fn a_right_to_left_override_at_the_truncation_boundary_is_replaced_not_left_to_rewrite_the_line(
+    ) {
+        let raw = vec![json!({
+            "name": format!("{}\u{202E}", "x".repeat(MAX_COOKIE_NAME - 2)),
+            "domain": "x.it",
+            "session": true,
+            "expires": -1.0
+        })];
+        let (cookies, _) = sanitise_cookies(&raw);
+        assert!(!cookies[0].name.contains('\u{202E}'));
+    }
+
+    #[test]
+    fn a_cookie_of_invalid_shape_is_dropped_and_counted_not_propagated() {
+        let raw = vec![
+            json!({"name": 5}),
+            json!({"name": "ok", "domain": "x.it", "session": true, "expires": -1.0}),
+        ];
+        let (cookies, gap) = sanitise_cookies(&raw);
+        assert_eq!(cookies.len(), 1);
+        assert!(gap);
+    }
+
+    #[test]
+    fn a_cookie_whose_expiry_is_not_a_number_is_dropped_not_serialised() {
+        let raw = vec![json!({
+            "name": "ok",
+            "domain": "x.it",
+            "session": false,
+            "expires": f64::NAN
+        })];
+        let (cookies, gap) = sanitise_cookies(&raw);
+        assert_eq!(
+            cookies.len(),
+            0,
+            "a non-finite expires must never reach a ScanCookie"
+        );
+        assert!(gap);
+        for c in &cookies {
+            assert!(
+                serde_json::to_string(c).is_ok(),
+                "no non-finite float ever reaches serde_json::to_string"
+            );
+        }
+    }
+
+    #[test]
+    fn serialises_cookies_in_the_shape_the_renderer_expects() {
+        let json = serde_json::to_string(&ScanCookie {
+            name: "_ga".into(),
+            domain: "google.com".into(),
+            session: false,
+            expires_epoch_seconds: 2.0e9,
+        })
+        .unwrap();
+        for key in ["\"name\"", "\"domain\"", "\"session\"", "\"expiresEpochSeconds\""] {
+            assert!(json.contains(key), "missing {key}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_transport_that_refuses_runtime_evaluate_yields_a_gap_not_an_error() {
+        // [B2] Every CdpError from a probe call except BrowserGone is
+        // swallowed into zero results plus one possible_gaps note — the path
+        // that keeps a page hanging a probe past its own timeout from turning
+        // a whole scan into SCAN_FAILED.
+        let mut transport = FakeTransport::new();
+        transport.refuse_on("Runtime.evaluate", Some("SESSION-A"));
+        let mut driver = Driver::new(transport);
+        let session = SessionId::from("SESSION-A".to_string());
+        let hrefs = driver
+            .links(&session)
+            .await
+            .expect("a refused probe is a gap, not a scan failure");
+        assert!(hrefs.is_empty());
+        assert_eq!(driver.observation(1, false).possible_gaps, 1);
     }
 }
