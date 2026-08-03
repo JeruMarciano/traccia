@@ -1,6 +1,6 @@
 import { controllerName } from './controller'
 import { deriveDoors, tracePaths } from './doors'
-import type { DoorOrigin, Project } from './types'
+import type { DoorOrigin, Place, Project } from './types'
 
 /**
  * The map reads as a sentence: whose data -> through which door -> to the controller -> onward to
@@ -48,6 +48,21 @@ export interface LayoutResult {
   edges: LayoutEdge[]
   /** Which group is open, echoed back so the renderer does not re-derive it. */
   openGroup: string | null
+}
+
+/**
+ * Which places stand in a purpose group on the right-hand side. A door is already drawn on the
+ * inbound side and the controller is already the centre; counting either here would put one place
+ * on the sheet twice and the ring's count would say so.
+ *
+ * Exported because the detail panel lists the same members the map draws, and two copies of this
+ * rule would drift the moment one of them changed.
+ */
+export function groupMembers(project: Project, group: string): Place[] {
+  const controller = controllerName(project)
+  return project.places.filter(
+    (p) => p.purposeGroup === group && p.kind !== 'collection' && p.id !== controller.placeId,
+  )
 }
 
 /** How far an open ring's members sit from its centre. Grows a little past three members so

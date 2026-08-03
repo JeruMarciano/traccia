@@ -20,7 +20,9 @@ export interface IngestIds {
 }
 
 /** Shown for a host the dictionary does not recognise. Neutral by requirement. */
-const NOT_IDENTIFIED = 'Not yet identified'
+/** What a host the dictionary does not know is filed under. Exported because the detail panel
+ *  has to recognise it: it is a placeholder, not an answer, and must never render as a fact. */
+export const NOT_IDENTIFIED = 'Not yet identified'
 
 const VISITORS = 'Website visitors'
 
