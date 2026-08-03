@@ -207,6 +207,13 @@ pub struct Observation {
     /// directly by most of this module's own tests without a transport that
     /// answers `Network.getAllCookies` at all.
     pub cookies: Vec<ScanCookie>,
+    /// Consent-manager names the entry page's `CONSENT_PROBE` matched against
+    /// [`CONSENT_MARKERS`], in the order the probe found them, deduplicated.
+    /// Evaluated once, on the entry page only — the banner is a site-level
+    /// fact, not a per-page one. Empty means the probe found none of the four
+    /// known markers, not that no consent banner exists at all: a page using
+    /// a fifth product is indistinguishable from a page using none.
+    pub consent_markers: Vec<String>,
 }
 
 /// The most distinct gap keys tracked before the ledger stops deduplicating.
@@ -245,6 +252,47 @@ impl GapLedger {
             .unwrap_or(u32::MAX)
             .saturating_add(self.beyond_capacity)
     }
+}
+
+/// A fixed expression, evaluated once on the entry page: checks a handful of
+/// known consent-management-platform window globals and DOM ids and returns
+/// an array of the names it found. Nothing from the page is ever interpolated
+/// into this string — it is a `const`, sent byte for byte — and the *result*
+/// is only trusted after [`sanitise_consent_markers`] filters it back against
+/// [`CONSENT_MARKERS`], so a page that returns an arbitrary array (a poisoned
+/// `Array.prototype.push`, or simply a page that fabricates the return value)
+/// cannot inject a name this module did not already know.
+const CONSENT_PROBE: &str = r#"(() => {
+  const found = [];
+  try { if (window.OneTrust || document.getElementById('onetrust-banner-sdk')) found.push('OneTrust'); } catch (e) { }
+  try { if (window.Cookiebot || document.getElementById('CybotCookiebotDialog')) found.push('Cookiebot'); } catch (e) { }
+  try { if (window._iub || document.querySelector('[id^="iubenda"]')) found.push('Iubenda'); } catch (e) { }
+  try { if (window.UC_UI || document.querySelector('[id^="usercentrics"]')) found.push('Usercentrics'); } catch (e) { }
+  return found;
+})()"#;
+
+/// The only marker names [`sanitise_consent_markers`] will ever pass through.
+const CONSENT_MARKERS: [&str; 4] = ["OneTrust", "Cookiebot", "Iubenda", "Usercentrics"];
+
+/// Filters a raw `Runtime.evaluate` result against [`CONSENT_MARKERS`]: order
+/// preserved, duplicates dropped, anything not in the fixed set dropped. A
+/// non-array result — including a string, a number, `null`, or an object —
+/// yields no markers rather than an error: the probe's own return value is
+/// hostile-page-controlled and must never be trusted past this filter.
+fn sanitise_consent_markers(raw: &serde_json::Value) -> Vec<String> {
+    let Some(array) = raw.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in array {
+        let Some(name) = item.as_str() else {
+            continue;
+        };
+        if CONSENT_MARKERS.contains(&name) && !out.iter().any(|seen| seen == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
 }
 
 /// The longest a host may be before it is refused: RFC 1035's limit on a
@@ -794,6 +842,10 @@ struct Driver<T: CdpTransport> {
     /// Distinct places the map may be incomplete. See [`GapLedger`] and
     /// [`Observation::possible_gaps`].
     gaps: GapLedger,
+    /// Set once, by [`Driver::probe_consent`], right after the entry page's
+    /// own visit — never touched again afterwards, including on any
+    /// subsequent page in the walk.
+    consent_markers: Vec<String>,
 }
 
 impl<T: CdpTransport> Driver<T> {
@@ -805,6 +857,7 @@ impl<T: CdpTransport> Driver<T> {
             attached: Vec::new(),
             load_fired: false,
             gaps: GapLedger::default(),
+            consent_markers: Vec::new(),
         }
     }
 
@@ -1197,6 +1250,48 @@ impl<T: CdpTransport> Driver<T> {
         Ok(serde_json::from_str::<Vec<String>>(json).unwrap_or_default())
     }
 
+    /// Evaluates the fixed [`CONSENT_PROBE`] once, on the entry page's own
+    /// session, and filters the result through [`sanitise_consent_markers`].
+    ///
+    /// [B2]: the same call contract as [`Driver::links`] — `return_by_value`,
+    /// `silent`, `await_promise: false`, an explicit 2000 ms timeout.
+    /// `exceptionDetails` present, or any `CdpError` other than
+    /// [`CdpError::BrowserGone`], is zero markers plus one counted gap;
+    /// `result.value` is simply not read in that case. `BrowserGone` still
+    /// fails the scan, the one error this module never swallows.
+    async fn probe_consent(&mut self, session: &SessionId) -> Result<Vec<String>, CdpError> {
+        let mut params = EvaluateParams::new(CONSENT_PROBE.to_string());
+        params.return_by_value = Some(true);
+        params.silent = Some(true);
+        params.await_promise = Some(false);
+        params.timeout = Some(chromiumoxide::cdp::js_protocol::runtime::TimeDelta::new(
+            2000.0,
+        ));
+        let result = match self
+            .call(
+                Some(session.clone()),
+                MethodId::from(EvaluateParams::IDENTIFIER),
+                to_params(&params)?,
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
+            Err(_) => {
+                self.gaps.note("consent:probe-failed");
+                return Ok(Vec::new());
+            }
+        };
+        if result.get("exceptionDetails").is_some() {
+            self.gaps.note("consent:probe-exception");
+            return Ok(Vec::new());
+        }
+        let Some(value) = result.get("result").and_then(|r| r.get("value")) else {
+            return Ok(Vec::new());
+        };
+        Ok(sanitise_consent_markers(value))
+    }
+
     async fn run(
         &mut self,
         entry_url: &str,
@@ -1236,6 +1331,12 @@ impl<T: CdpTransport> Driver<T> {
         }
         if self.visit(&session, entry_url, cancel).await? {
             pages_visited += 1;
+            // Once, on the entry page's own session — the banner is a
+            // site-level fact, not a per-page one, so no later page in the
+            // walk ever repeats this call.
+            if !cancel.is_cancelled() {
+                self.consent_markers = self.probe_consent(&session).await?;
+            }
         }
 
         if cancel.is_cancelled() || max_pages <= 1 {
@@ -1271,6 +1372,7 @@ impl<T: CdpTransport> Driver<T> {
             stopped_early,
             // Never fetched here — see the field's own doc comment.
             cookies: Vec::new(),
+            consent_markers: std::mem::take(&mut self.consent_markers),
         }
     }
 
@@ -1522,6 +1624,28 @@ mod tests {
             same_origin_links("https://rossi-editore.it/", &refs, 10).len(),
             10
         );
+    }
+
+    #[test]
+    fn the_probe_expression_is_a_constant_and_never_interpolated() {
+        // The guarantee is structural: the probe is `const`, and the send site is asserted
+        // by the existing params_for harness to carry exactly this string.
+        assert!(CONSENT_PROBE.contains("OneTrust"));
+        assert!(!CONSENT_PROBE.contains("{}"), "no format holes in a fixed expression");
+    }
+
+    #[test]
+    fn a_page_claiming_a_marker_not_in_the_fixed_set_is_ignored() {
+        let raw = serde_json::json!(["OneTrust", "EvilCMP<script>", "Iubenda"]);
+        assert_eq!(
+            sanitise_consent_markers(&raw),
+            vec!["OneTrust".to_string(), "Iubenda".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_non_array_result_is_no_markers_not_an_error() {
+        assert!(sanitise_consent_markers(&serde_json::json!("OneTrust")).is_empty());
     }
 
     #[test]
@@ -2429,6 +2553,7 @@ mod tests {
             possible_gaps: 0,
             stopped_early: false,
             cookies: Vec::new(),
+            consent_markers: Vec::new(),
         };
         assert_eq!(
             serde_json::to_value(&observation).expect("json"),
@@ -2437,7 +2562,8 @@ mod tests {
                 "pagesVisited": 4,
                 "possibleGaps": 0,
                 "stoppedEarly": false,
-                "cookies": []
+                "cookies": [],
+                "consentMarkers": []
             })
         );
     }

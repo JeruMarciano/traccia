@@ -70,6 +70,10 @@ pub struct ScanOutput {
     pub possible_gaps: u32,
     pub stopped_early: bool,
     pub cookies: Vec<cdp::ScanCookie>,
+    /// Consent-manager names found on the entry page, from the fixed set in
+    /// `cdp::CONSENT_MARKERS`. Empty means none of those four were found, not
+    /// that no consent banner exists.
+    pub consent_markers: Vec<String>,
     /// When the cookie jar was captured — `SystemTime::now()` taken as close
     /// as this module can get to the moment `cdp::observe` actually sent
     /// `Network.getAllCookies`, deliberately not `profile_dir_path()` time,
@@ -486,6 +490,7 @@ async fn run_pipeline(
             possible_gaps: observation.possible_gaps,
             stopped_early: observation.stopped_early,
             cookies: observation.cookies,
+            consent_markers: observation.consent_markers,
             captured_at_epoch_seconds,
         })
     })();
@@ -742,6 +747,7 @@ mod tests {
                 session: false,
                 expires_epoch_seconds: 2.0e9,
             }],
+            consent_markers: vec!["OneTrust".into()],
             captured_at_epoch_seconds: 1_700_000_000,
         })
         .expect("serialise");
@@ -752,6 +758,7 @@ mod tests {
         assert!(json.contains("\"stoppedEarly\""));
         assert!(json.contains("\"cookies\""));
         assert!(json.contains("\"expiresEpochSeconds\""));
+        assert!(json.contains("\"consentMarkers\""));
         assert!(json.contains("\"capturedAtEpochSeconds\""));
     }
 

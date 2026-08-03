@@ -107,4 +107,7 @@ export const STRINGS = {
       : `Scan stopped before it finished — ${n} ${n === 1 ? 'place' : 'places'} where the map may be incomplete.`,
   cookiesRecorded: (n: number, thirdParty: number): string =>
     `${n} cookies recorded (${thirdParty} third-party).`,
+  consentBannerDetected: (marker: string): string =>
+    `A consent banner appears to be present (${marker}).`,
+  consentBannerNotDetected: 'No consent banner was detected.',
 } as const

@@ -13,8 +13,22 @@ function cookieNotice(result: ScanResult): string | null {
   return STRINGS.cookiesRecorded(result.cookies.length, thirdParty)
 }
 
-function join(base: string, extra: string | null): string {
-  return extra === null ? base : `${base} ${extra}`
+/** Joins whichever of several sentences apply, in order, dropping the ones that do not. */
+function joinAll(...parts: (string | null)[]): string {
+  return parts.filter((p): p is string => p !== null).join(' ')
+}
+
+/**
+ * Whether a consent banner was detected, neutrally stated either way: unlike the cookie count,
+ * which says nothing when there is nothing to report, the absence of a known consent-manager
+ * marker is itself a fact worth stating — "No consent banner was detected." — never "missing",
+ * never "required". `consentMarkers[0]` names the marker when more than one fixed name matched;
+ * matching more than one is not expected in practice, and either way it does not change what the
+ * sentence should say.
+ */
+function consentNotice(result: ScanResult): string {
+  const [first] = result.consentMarkers
+  return first === undefined ? STRINGS.consentBannerNotDetected : STRINGS.consentBannerDetected(first)
 }
 
 /**
@@ -31,12 +45,14 @@ function join(base: string, extra: string | null): string {
  * that situation — this notice must agree with it rather than say the opposite.
  *
  * The cookie count, when there is one, is appended to whichever sentence above applies — or
- * stands alone when none of them do.
+ * stands alone when none of them do. The consent-banner sentence is always appended last: it is
+ * always a fact, one way or the other, so it never leaves the whole notice empty.
  */
-export function scanResultNotice(result: ScanResult): string | null {
+export function scanResultNotice(result: ScanResult): string {
   const cookies = cookieNotice(result)
-  if (result.stoppedEarly) return join(STRINGS.scanStopped(result.possibleGaps), cookies)
-  if (result.possibleGaps > 0) return join(STRINGS.scanIncomplete(result.possibleGaps), cookies)
-  if (result.hosts.length <= 1) return join(STRINGS.scanFoundNothing, cookies)
-  return cookies
+  const consent = consentNotice(result)
+  if (result.stoppedEarly) return joinAll(STRINGS.scanStopped(result.possibleGaps), cookies, consent)
+  if (result.possibleGaps > 0) return joinAll(STRINGS.scanIncomplete(result.possibleGaps), cookies, consent)
+  if (result.hosts.length <= 1) return joinAll(STRINGS.scanFoundNothing, cookies, consent)
+  return joinAll(cookies, consent)
 }
