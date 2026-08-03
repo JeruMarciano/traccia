@@ -422,6 +422,31 @@ describe('ingestScan', () => {
       expect(supplier?.holder).toBe('supplier')
     })
 
+  })
+
+  describe('collection points', () => {
+    it('a page with collecting fields becomes one collection point', () => {
+      const result = scanResultWith({ formFields: [
+        { page: 'https://rossi-editore.it/contatti', name: 'email', type: 'email', autocomplete: '', label: '' },
+        { page: 'https://rossi-editore.it/contatti', name: 'csrf', type: 'hidden', autocomplete: '', label: '' },
+      ]})
+      const after = ingestScan(emptyProject(), result, DICT, { prefix: 's1' })
+      expect(after.collectionPoints).toEqual([
+        { id: 's1-cp-1', page: 'https://rossi-editore.it/contatti', fields: [{ name: 'email', kind: 'email' }], sources: [], confidence: 'observed' },
+      ])
+    })
+    it('a page with only non-collecting fields creates no door', () => {
+      const result = scanResultWith({ formFields: [{ page: 'https://x.it/', name: 'go', type: 'submit', autocomplete: '', label: '' }] })
+      expect(ingestScan(emptyProject(), result, DICT, { prefix: 's1' }).collectionPoints).toEqual([])
+    })
+    it('rescanning a page replaces its door rather than duplicating it', () => {
+      const r = scanResultWith({ formFields: [{ page: 'https://x.it/c', name: 'email', type: 'email', autocomplete: '', label: '' }] })
+      const twice = ingestScan(ingestScan(emptyProject(), r, DICT, { prefix: 's1' }), r, DICT, { prefix: 's2' })
+      expect(twice.collectionPoints).toHaveLength(1)
+    })
+  })
+
+  describe('own-subdomain skipping (suffix)', () => {
     it('does NOT skip a suffix-trick host where the scanned host appears as a prefix label chain', () => {
       const p = ingestScan(
         emptyProject(),

@@ -1,7 +1,18 @@
 import { bucketLifetime, cookieOwnerName, isThirdPartyCookie } from './cookies'
+import { classifyField, isCollectingField } from './forms'
 import { addFlow, addPlace } from './graph'
 import { classifyHost, identify } from './vendors'
-import type { CapturedCookie, Flow, Observation, Place, Project, ScanResult, VendorDictionary } from './types'
+import type {
+  CapturedCookie,
+  CollectionPoint,
+  Flow,
+  Observation,
+  Place,
+  Project,
+  RawFormField,
+  ScanResult,
+  VendorDictionary,
+} from './types'
 
 export interface IngestIds {
   /** Prefix for generated ids, e.g. "scan1". Callers pass a fresh one per scan. */
@@ -106,6 +117,7 @@ export function ingestScan(
     ...project.places.map((p) => p.id),
     ...project.subjectGroups.map((s) => s.id),
     ...project.flows.map((f) => f.id),
+    ...(project.collectionPoints ?? []).map((cp) => cp.id),
   ])
 
   // 1. Whose data this is. For a website scan the answer is not in doubt, so it
@@ -253,10 +265,57 @@ export function ingestScan(
     if (captured !== undefined) freshCookies.push(captured)
   }
 
+  // 6. Doors: pages where a form collected something. Grouped by `page` (an opaque key Rust
+  //    has already reduced to scheme+authority+path — never interpolated), filtered through
+  //    `isCollectingField` so a hidden CSRF token or a submit button never becomes a "door", and
+  //    classified per Task 9's precedence table. A page with zero collecting fields gets no
+  //    CollectionPoint at all — a form that only ever posted an antiforgery token is not a place
+  //    where personal data was written down. Deduped by page, same shape as cookies and
+  //    observations above: the newer scan's reading of a page replaces the older one rather than
+  //    duplicating it, and position is preserved rather than moved to the end.
+  const pageOrder: string[] = []
+  const fieldsByPage = new Map<string, RawFormField[]>()
+  for (const field of result.formFields) {
+    if (!fieldsByPage.has(field.page)) {
+      fieldsByPage.set(field.page, [])
+      pageOrder.push(field.page)
+    }
+    fieldsByPage.get(field.page)?.push(field)
+  }
+
+  const newCollectionPointByPage = new Map<string, CollectionPoint>()
+  for (const page of pageOrder) {
+    const collecting = (fieldsByPage.get(page) ?? []).filter(isCollectingField)
+    if (collecting.length === 0) continue
+    newCollectionPointByPage.set(page, {
+      id: nextId(taken, ids.prefix, 'cp'),
+      page,
+      fields: collecting.map((field) => ({ name: field.name, kind: classifyField(field) })),
+      sources: [],
+      confidence: 'observed',
+    })
+  }
+
+  const existingCollectionPoints = working.collectionPoints ?? []
+  const updatedExistingCollectionPoints = existingCollectionPoints.map(
+    (cp) => newCollectionPointByPage.get(cp.page) ?? cp,
+  )
+
+  const alreadyKnownPages = new Set(existingCollectionPoints.map((cp) => cp.page))
+  const seenPagesThisScan = new Set<string>()
+  const freshCollectionPoints: CollectionPoint[] = []
+  for (const page of pageOrder) {
+    const cp = newCollectionPointByPage.get(page)
+    if (cp === undefined || alreadyKnownPages.has(page) || seenPagesThisScan.has(page)) continue
+    seenPagesThisScan.add(page)
+    freshCollectionPoints.push(cp)
+  }
+
   return {
     ...working,
     observations: [...updatedExisting, ...fresh],
     cookies: [...updatedExistingCookies, ...freshCookies],
+    collectionPoints: [...updatedExistingCollectionPoints, ...freshCollectionPoints],
   }
 }
 

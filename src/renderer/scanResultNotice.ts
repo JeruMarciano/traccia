@@ -1,4 +1,5 @@
 import { isThirdPartyCookie } from '../core/cookies'
+import { isCollectingField } from '../core/forms'
 import type { ScanResult } from '../core/types'
 import { STRINGS } from './strings'
 
@@ -11,6 +12,19 @@ function cookieNotice(result: ScanResult): string | null {
   if (result.cookies.length === 0) return null
   const thirdParty = result.cookies.filter((c) => isThirdPartyCookie(c.domain, result.scannedHost)).length
   return STRINGS.cookiesRecorded(result.cookies.length, thirdParty)
+}
+
+/**
+ * The collection-point count to append, or null when the scan found no page with a collecting
+ * field — mirrors `cookieNotice`: a scan that discovered no door says nothing about doors, rather
+ * than reporting a hollow "0 collection points discovered".
+ */
+function collectionPointsNotice(result: ScanResult): string | null {
+  const pages = new Set<string>()
+  for (const field of result.formFields) {
+    if (isCollectingField(field)) pages.add(field.page)
+  }
+  return pages.size === 0 ? null : STRINGS.collectionPointsDiscovered(pages.size)
 }
 
 /** Joins whichever of several sentences apply, in order, dropping the ones that do not. */
@@ -50,9 +64,14 @@ function consentNotice(result: ScanResult): string {
  */
 export function scanResultNotice(result: ScanResult): string {
   const cookies = cookieNotice(result)
+  const collectionPoints = collectionPointsNotice(result)
   const consent = consentNotice(result)
-  if (result.stoppedEarly) return joinAll(STRINGS.scanStopped(result.possibleGaps), cookies, consent)
-  if (result.possibleGaps > 0) return joinAll(STRINGS.scanIncomplete(result.possibleGaps), cookies, consent)
-  if (result.hosts.length <= 1) return joinAll(STRINGS.scanFoundNothing, cookies, consent)
-  return joinAll(cookies, consent)
+  if (result.stoppedEarly) {
+    return joinAll(STRINGS.scanStopped(result.possibleGaps), cookies, collectionPoints, consent)
+  }
+  if (result.possibleGaps > 0) {
+    return joinAll(STRINGS.scanIncomplete(result.possibleGaps), cookies, collectionPoints, consent)
+  }
+  if (result.hosts.length <= 1) return joinAll(STRINGS.scanFoundNothing, cookies, collectionPoints, consent)
+  return joinAll(cookies, collectionPoints, consent)
 }

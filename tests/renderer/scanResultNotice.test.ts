@@ -111,6 +111,22 @@ describe('scanResultNotice', () => {
     })
   })
 
+  describe('collection points', () => {
+    it('names the door count when a collecting field was seen', () => {
+      const notice = scanResultNotice(
+        result({ formFields: [{ page: 'https://rossi-editore.it/contatti', name: 'email', type: 'email', autocomplete: '', label: '' }] }),
+      )
+      expect(notice).toBe(`${STRINGS.collectionPointsDiscovered(1)} ${STRINGS.consentBannerNotDetected}`)
+    })
+
+    it('says nothing about collection points when no collecting field was seen', () => {
+      const notice = scanResultNotice(
+        result({ formFields: [{ page: 'https://rossi-editore.it/x', name: 'csrf', type: 'hidden', autocomplete: '', label: '' }] }),
+      )
+      expect(notice).toBe(STRINGS.consentBannerNotDetected)
+    })
+  })
+
   describe('consent banner', () => {
     it('names the marker when one was detected', () => {
       const notice = scanResultNotice(result({ consentMarkers: ['OneTrust'] }))
