@@ -115,6 +115,48 @@ describe('reading an Italian document', () => {
     ])
   })
 
+  it('recognises the systems an SME register names in Italian', () => {
+    const text =
+      'Il gestionale aziendale e il registro protocollo sono interni. Le pratiche passano ' +
+      'per la posta elettronica certificata. La formazione del personale è tracciata a parte.'
+    // "Email" is the shorter term "posta elettronica" sitting inside "posta elettronica
+    // certificata". Both are offered, the way "cookie" and "banner cookie" both are above: the
+    // dictionary has no notion of one term outranking another, and inventing one here would be a
+    // code change dressed as data. A PEC mailbox is an email system, so the extra line is honest
+    // rather than wrong, and the user ticks what belongs on the map.
+    expect(found(text)).toEqual([
+      'Certified email (PEC)',
+      'Document register',
+      'Email',
+      'Management system',
+      'Training records',
+    ])
+  })
+
+  it('recognises the payroll consultant an Italian SME actually uses', () => {
+    expect(found('Le buste paga sono elaborate dal consulente del lavoro.')).toEqual([
+      'Payroll adviser',
+      'Payroll system',
+    ])
+  })
+
+  it('recognises a medical-surveillance clause', () => {
+    expect(found('È previsto il medico competente per la sorveglianza sanitaria.')).toEqual([
+      'Occupational health',
+    ])
+  })
+
+  it('recognises a three-word term a PDF broke across two lines', () => {
+    // The longest terms in the dictionary are the ones a wrapped column is most likely to split,
+    // and nothing else exercises a break at more than one gap of the same term. Both breaks have
+    // to hold: with only the first gap flexible this reads as "posta elettronica" and the PEC
+    // mailbox disappears, which is the failure a wrapped PDF would have produced in the field.
+    expect(found('Le pratiche passano per la posta\nelettronica\ncertificata.')).toEqual([
+      'Certified email (PEC)',
+      'Email',
+    ])
+  })
+
   it('still reads an English document', () => {
     expect(found('We run payroll in Workday and keep accounting in Xero.')).toEqual([
       'Accounting system',
