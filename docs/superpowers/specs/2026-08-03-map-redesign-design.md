@@ -1,7 +1,7 @@
 # The controller-centred map — design
 
 **Date:** 2026-08-03
-**Status:** agreed (mockup approved against the v0.2 map, both drawn from the same sample project), awaiting the detail-panel section and then an implementation plan.
+**Status:** agreed (mockup approved against the v0.2 map, both drawn from the same sample project), complete, including the detail panel (§7). Awaiting implementation plans, extraction steps 5-8 first.
 **Builds on:** `2026-07-30-data-flow-mapper-design.md` (the core model), the v0.2 internal map, §2 of `2026-08-03-extraction-depth-design.md` (where this redesign was agreed in one paragraph).
 **Sequenced after:** §5 of the extraction-depth spec (cookies, consent banner, form fields, storage keys). Those steps produce the doors this map draws; drawing them first would mean an inbound side with one door on it. Decided 2026-08-03.
 
@@ -84,10 +84,33 @@ The fact is kept; the mark is retired.
 
 ## 7. The detail panel
 
-Kept as in v0.2 for now — list on group selection, place facts on place selection, EEA stated
-there per §6. Its redesign is the next design conversation and will be added to this spec as an
-agreed section before the implementation plan is written. This spec deliberately does not
-constrain it beyond: the panel is where facts live that the sheet no longer draws.
+Agreed 2026-08-03 against a mockup, replacing the v0.2 below-the-map section, whose two defects
+the mockup made visible: the answer to a click appears below the fold, and "not yet identified"
+repeated per empty field is the loudest thing on the page.
+
+- **A side panel; the map compresses and stays visible.** Selecting a node slides the panel in
+  from the right and the map narrows to fit beside it. The selection stays at full strength
+  while the rest dims (v0.2's dimming, kept). Click and answer are on screen together; nothing
+  appears below the fold. *The wrong answer:* a panel that covers the map, or a click whose
+  visible effect is nothing.
+- **Facts first.** Only answered fields render as fields. Field copy stays in the v0.2 voice
+  (WHERE, RETENTION, WHAT IS HELD) via `strings.ts`.
+- **Every fact says who said it.** Under each fact, one small line: confidence plus source —
+  "declared · informativa-clienti.pdf", "observed · scan of rossi-editore.it". Drawn from
+  `sources` and `confidence`, which the model already carries. *The wrong answer:* a fact
+  displayed with no attribution line because its `sources` array is empty — that renders as
+  "recorded by hand", never invents a source, and never hides the fact.
+- **Unknowns rolled up.** One line per selection: "N things not yet identified ▾", opening on
+  click to the list of unanswered fields, in the same neutral words the gaps printout uses.
+  Computed on demand, never stored, per the non-negotiable. *The wrong answer:* "0 things not
+  yet identified" — when nothing is unknown the line is absent, not zero.
+- **The panel speaks the map's colour language.** A door referenced in the panel ("reached
+  from") carries its door colour chip.
+- **Per node type:** a *place* shows its facts as above; a *door* shows who comes through and
+  what is asked (form fields, from the scan — observed vs declared stated); the *controller*
+  shows its name, the document that named it, and project totals; a *closed ring* shows its
+  member list, each member opening the place panel; the EEA fact for a place is stated here and
+  only here (§6).
 
 ## 8. What this means in code
 
