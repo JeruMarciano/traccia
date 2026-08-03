@@ -28,6 +28,11 @@ export interface Place {
   jurisdiction?: string
   leavesEEA: Tri
   retention?: string
+  /**
+   * Which categories of personal data this holds, as an informativa lists them. Absent when
+   * nobody has said; never an empty array, which would read as "none" rather than "not asked".
+   */
+  dataCategories?: string[]
   sources: SourceRef[]
   confidence: Confidence
 }
@@ -89,6 +94,13 @@ export interface InternalSystemEntry {
 
 export type InternalSystemDictionary = Readonly<Record<string, InternalSystemEntry>>
 
+/** One entry in the bundled data-category dictionary. Data only; never fetched. */
+export interface DataCategoryEntry {
+  name: string
+}
+
+export type DataCategoryDictionary = Readonly<Record<string, DataCategoryEntry>>
+
 /** One document's extracted text, as returned by the Rust side. The text is session-only. */
 export interface DocumentText {
   name: string
@@ -110,6 +122,19 @@ export interface Candidate {
   kind: PlaceKind
   /** A short passage around the first match, so the user can judge it. */
   evidence: string
+  /**
+   * What the document said about this system in the sentence that named it. Free text as the
+   * document wrote it, normalised only enough to read in an English interface. Absent when the
+   * sentence said nothing -- which is the common case and not a failure.
+   */
+  retention?: string
+  /** Where the document says this sits. A label as the document wrote it, never a coordinate. */
+  jurisdiction?: string
+  /**
+   * Which categories of personal data the sentence named. Absent when it named none; never an
+   * empty array, which would read as "none" rather than "not asked".
+   */
+  dataCategories?: string[]
   /** Every document (by name) this candidate was found in. */
   sourceNames: string[]
 }

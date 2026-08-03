@@ -2,10 +2,16 @@ import { describe, it, expect } from 'vitest'
 import dictionary from '../../src/data/internalSystems.json'
 import vendors from '../../src/data/vendors.json'
 import { extractCandidates } from '../../src/core/documents'
-import type { InternalSystemDictionary, VendorDictionary } from '../../src/core/types'
+import dataCategoriesJson from '../../src/data/dataCategories.json'
+import type {
+  DataCategoryDictionary,
+  InternalSystemDictionary,
+  VendorDictionary,
+} from '../../src/core/types'
 
 const dict = dictionary as InternalSystemDictionary
 const V = vendors as VendorDictionary
+const CATEGORIES = dataCategoriesJson as DataCategoryDictionary
 
 // Closed, because `purposeGroup` is only a `string` in types.ts and the map groups by its exact
 // value. A typo -- "Payroll & Hr" -- would pass any truthiness check and quietly draw two points
@@ -26,7 +32,7 @@ const PURPOSE_GROUPS = new Set([
 
 /** What the shipped documents say, read straight out of a real Italian informativa. */
 const found = (text: string): string[] =>
-  extractCandidates([{ name: 'informativa.pdf', text }], V, dict)
+  extractCandidates([{ name: 'informativa.pdf', text }], V, dict, CATEGORIES)
     .map((c) => c.name)
     .sort()
 

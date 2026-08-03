@@ -3,6 +3,8 @@ import { displayName } from './scan'
 import { identify } from './vendors'
 import type {
   Candidate,
+  DataCategoryDictionary,
+  DataCategoryEntry,
   DocumentText,
   InternalSystemDictionary,
   Place,
@@ -107,16 +109,154 @@ const SENTENCE_END = /[.!?;:\n\r•]/
  */
 const NEGATION_REACH = 60
 
-/** True when the text just before `at` denies whatever is at `at`. */
-function isDenied(lower: string, at: number): boolean {
-  let sentenceStart = 0
+/**
+ * The sentence containing `at`, as half-open bounds. One definition of how far a statement
+ * reaches, shared by the negation guard and by every attribute read off a sentence -- so there is
+ * one rule to argue about rather than two that drift apart.
+ */
+function sentenceBounds(text: string, at: number): { start: number; end: number } {
+  let start = 0
   for (let i = at - 1; i >= 0; i -= 1) {
-    if (SENTENCE_END.test(lower.charAt(i))) {
-      sentenceStart = i + 1
+    if (SENTENCE_END.test(text.charAt(i))) {
+      start = i + 1
       break
     }
   }
-  return NEGATIONS.test(lower.slice(Math.max(sentenceStart, at - NEGATION_REACH), at))
+  let end = text.length
+  for (let i = at; i < text.length; i += 1) {
+    if (SENTENCE_END.test(text.charAt(i))) {
+      end = i
+      break
+    }
+  }
+  return { start, end }
+}
+
+/**
+ * Words that close a denial and open an assertion. "Non riceve il codice fiscale, solo il nome"
+ * names two things and denies one of them; without this the denial runs to the end of its reach
+ * and the sentence reads as denying both. A comma cannot do this job -- "non trattiamo dati
+ * sanitari, dati giudiziari" is a list under one denial, and every item in it is denied -- so the
+ * contrast has to be a word that says so.
+ */
+const CONTRAST =
+  /(^|[^\p{L}\p{N}])(solo|soltanto|unicamente|esclusivamente|only|but)(?![\p{L}\p{N}])/gu
+
+/** True when the text just before `at` denies whatever is at `at`. */
+function isDenied(lower: string, at: number): boolean {
+  const { start } = sentenceBounds(lower, at)
+  let window = lower.slice(Math.max(start, at - NEGATION_REACH), at)
+  CONTRAST.lastIndex = 0
+  let last = -1
+  for (const m of window.matchAll(CONTRAST)) last = m.index + m[0].length
+  if (last !== -1) window = window.slice(last)
+  return NEGATIONS.test(window)
+}
+
+/**
+ * Durations, in both languages, mapped to the plural English noun the interface prints. The
+ * interface is English (see src/renderer/strings.ts) and the document is usually not, so what is
+ * read in Italian is stored in English: "24 mesi" on a printed sheet that says "Retention" in
+ * English reads as an oversight rather than as faithfulness.
+ */
+const RETENTION_UNITS: Readonly<Record<string, string>> = {
+  giorno: 'days', giorni: 'days', day: 'days', days: 'days',
+  settimana: 'weeks', settimane: 'weeks', week: 'weeks', weeks: 'weeks',
+  mese: 'months', mesi: 'months', month: 'months', months: 'months',
+  anno: 'years', anni: 'years', year: 'years', years: 'years',
+}
+
+/**
+ * A figure and a unit, separated by whitespace. Digits only: "ventiquattro mesi" is a
+ * word-number dictionary in two languages, and the phrasing an informativa actually uses is
+ * numeric. Boundaries are the \p{L} kind the rest of this module uses rather than \b, for the
+ * reason set out above `wholeWord`.
+ */
+const RETENTION = new RegExp(
+  `(^|[^\\p{L}\\p{N}])(\\d{1,4})\\s+(${Object.keys(RETENTION_UNITS).join('|')})(?![\\p{L}\\p{N}])`,
+  'iu',
+)
+
+/**
+ * How long the sentence says something is kept, or undefined. The first figure wins when a
+ * sentence carries two: that is ambiguous by construction, and the user is shown the sentence.
+ */
+export function retentionIn(sentence: string): string | undefined {
+  const m = RETENTION.exec(sentence)
+  if (m === null) return undefined
+  const count = m[2]
+  const unit = RETENTION_UNITS[(m[3] ?? '').toLowerCase()]
+  if (count === undefined || unit === undefined) return undefined
+  return `${count} ${count === '1' ? unit.slice(0, -1) : unit}`
+}
+
+/**
+ * Verbs that place a thing somewhere, in both languages. The Italian participles carry their whole
+ * inflection (ubicato/ubicata/ubicati/ubicate) because a dictionary of stems would match
+ * "ubicazione" too, which introduces the topic rather than answering it. The present tense is
+ * spelled out alongside the participle for the same reason: "archivia i dati negli Stati Uniti"
+ * is how an informativa writes it about as often as "archiviati".
+ */
+const PLACED =
+  'ubicat[oaie]|situat[oaie]|ospitat[oaie]|archiviat[oaie]|conservat[oaie]|memorizzat[oaie]|' +
+  'archivia|conserva|ospita|memorizza|' +
+  'hosted|located|stored|held|based|situated'
+
+/**
+ * Words allowed to sit between the verb and the preposition. Italian puts the object there --
+ * "archivia i dati negli Stati Uniti" -- so requiring the two to be adjacent would read only half
+ * the phrasings. Lowercase only and at most three, so the run cannot swallow the capitalised name
+ * the pattern exists to find, nor reach into a clause about something else.
+ */
+const PLACED_FILLER = `(?:\\s+[\\p{Ll}\\p{N}’'-]+){0,3}`
+
+/**
+ * A placement verb, a preposition, and a capitalised name. Capitalisation is what separates a
+ * place from a manner -- "conservati in Irlanda" against "conservati in modo sicuro" -- and it is
+ * the only signal available without a gazetteer, which would be a bundled dataset of its own.
+ * Two words at most, so "Stati Uniti" and "United Kingdom" survive and a run-on clause does not.
+ */
+const JURISDICTION = new RegExp(
+  `(?:${PLACED})${PLACED_FILLER}\\s+(?:in|nel|nella|nelle|nei|negli|presso|su)\\s+` +
+    `(\\p{Lu}[\\p{L}’'-]+(?:\\s+\\p{Lu}[\\p{L}’'-]+)?)`,
+  'u',
+)
+
+/**
+ * Where the sentence says this sits, or undefined. Run against the sentence in its original case:
+ * capitalisation is the whole signal, and the lowercased copy used for term matching has thrown
+ * it away.
+ */
+export function jurisdictionIn(sentence: string): string | undefined {
+  const m = JURISDICTION.exec(sentence)
+  return m?.[1]
+}
+
+/**
+ * Which categories of personal data the sentence names, in the order it names them, each once.
+ * Undefined rather than an empty array when it names none: an empty list on a printed sheet reads
+ * as "no personal data here", which is a claim this function is in no position to make.
+ *
+ * Denial is judged per occurrence, as it is for a term: "non riceve il codice fiscale, solo il
+ * nome" names two categories and asserts one.
+ */
+export function dataCategoriesIn(
+  sentence: string,
+  categories: ReadonlyArray<{ entry: DataCategoryEntry; pattern: RegExp }>,
+): string[] | undefined {
+  const lower = sentence.toLowerCase()
+  const found: Array<{ name: string; at: number }> = []
+  for (const { entry, pattern } of categories) {
+    for (const m of lower.matchAll(pattern)) {
+      const start = m.index + (m[1]?.length ?? 0)
+      if (isDenied(lower, start)) continue
+      found.push({ name: entry.name, at: start })
+      break
+    }
+  }
+  if (found.length === 0) return undefined
+  found.sort((a, b) => a.at - b.at)
+  return [...new Set(found.map((f) => f.name))]
 }
 
 /**
@@ -128,6 +268,7 @@ export function extractCandidates(
   documents: DocumentText[],
   vendors: VendorDictionary,
   internal: InternalSystemDictionary,
+  categories: DataCategoryDictionary,
 ): Candidate[] {
   const byKey = new Map<string, Candidate>()
 
@@ -139,13 +280,24 @@ export function extractCandidates(
     pattern: wholeWord(term.toLowerCase()),
   }))
 
+  const categoryTerms = Object.entries(categories).map(([term, entry]) => ({
+    entry,
+    pattern: wholeWord(term.toLowerCase()),
+  }))
+
   const add = (candidate: Omit<Candidate, 'id' | 'sourceNames'>, sourceName: string): void => {
     const key = candidate.name.toLowerCase()
     const existing = byKey.get(key)
     if (existing === undefined) {
       byKey.set(key, { ...candidate, id: slug(candidate.name), sourceNames: [sourceName] })
-    } else if (!existing.sourceNames.includes(sourceName)) {
-      existing.sourceNames.push(sourceName)
+    } else {
+      if (!existing.sourceNames.includes(sourceName)) existing.sourceNames.push(sourceName)
+      // First document to say something wins. A second document that says something different is
+      // a contradiction, and this list is not where a contradiction gets resolved -- the user
+      // sees both files named under the candidate and decides.
+      existing.retention ??= candidate.retention
+      existing.jurisdiction ??= candidate.jurisdiction
+      existing.dataCategories ??= candidate.dataCategories
     }
   }
 
@@ -172,6 +324,8 @@ export function extractCandidates(
         break
       }
       if (at === -1) continue
+      const { start: sStart, end: sEnd } = sentenceBounds(text, at)
+      const sentence = text.slice(sStart, sEnd)
       add(
         {
           name: entry.name,
@@ -180,6 +334,9 @@ export function extractCandidates(
           holder: entry.holder,
           kind: entry.layer === 'internal' ? 'internal' : 'processor',
           evidence: evidenceAround(text, at, matched),
+          retention: retentionIn(sentence),
+          jurisdiction: jurisdictionIn(sentence),
+          dataCategories: dataCategoriesIn(sentence, categoryTerms),
         },
         doc.name,
       )
@@ -193,6 +350,9 @@ export function extractCandidates(
       const host = m[0].toLowerCase()
       const hit = identify(host, vendors)
       if (hit === null) continue
+      const at = m.index ?? 0
+      const { start: sStart, end: sEnd } = sentenceBounds(text, at)
+      const sentence = text.slice(sStart, sEnd)
       add(
         {
           name: displayName(host, vendors),
@@ -200,7 +360,10 @@ export function extractCandidates(
           purposeGroup: hit.purposeGroup,
           holder: 'supplier',
           kind: 'processor',
-          evidence: evidenceAround(text, m.index ?? 0, m[0].length),
+          evidence: evidenceAround(text, at, m[0].length),
+          retention: retentionIn(sentence),
+          jurisdiction: jurisdictionIn(sentence),
+          dataCategories: dataCategoriesIn(sentence, categoryTerms),
         },
         doc.name,
       )
@@ -237,11 +400,25 @@ export function ingestDocument(project: Project, confirmed: Candidate[]): Projec
       const fresh = candidate.sourceNames
         .filter((n) => !known.has(n))
         .map((n) => ({ documentId: n, documentName: n }))
-      if (fresh.length === 0) continue
+      // A scan never sets retention, so filling a blank one is enrichment rather than the
+      // downgrade the comment above this function forbids. A retention already on the place
+      // stands: it was either confirmed earlier or typed by the user.
+      const retention = existing.retention ?? candidate.retention
+      const jurisdiction = existing.jurisdiction ?? candidate.jurisdiction
+      const dataCategories = existing.dataCategories ?? candidate.dataCategories
+      if (
+        fresh.length === 0 &&
+        retention === existing.retention &&
+        jurisdiction === existing.jurisdiction &&
+        dataCategories === existing.dataCategories
+      )
+        continue
       working = {
         ...working,
         places: working.places.map((p) =>
-          p.id === existing.id ? { ...p, sources: [...p.sources, ...fresh] } : p,
+          p.id === existing.id
+            ? { ...p, retention, jurisdiction, dataCategories, sources: [...p.sources, ...fresh] }
+            : p,
         ),
       }
       continue
@@ -257,7 +434,10 @@ export function ingestDocument(project: Project, confirmed: Candidate[]): Projec
       kind: candidate.kind,
       purposeGroup: candidate.purposeGroup,
       holder: candidate.holder,
+      jurisdiction: candidate.jurisdiction,
       leavesEEA: 'unknown',
+      retention: candidate.retention,
+      dataCategories: candidate.dataCategories,
       // The document's name and nothing else. The passage that produced the match is shown
       // while confirming and then dropped with the text it came from: what survives into the
       // project is which file said so, never what it said.

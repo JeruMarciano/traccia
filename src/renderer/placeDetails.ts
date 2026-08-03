@@ -27,6 +27,8 @@ export interface PlaceDetail {
   purposeGroup: string
   whereLabel: string
   retentionLabel: string
+  /** Which categories of personal data this holds, as one line. */
+  dataCategoriesLabel: string
   observations: ObservationDetail[]
   /** Names of the documents that declared this place, deduplicated. */
   declaredIn: string[]
@@ -92,6 +94,10 @@ export function placeDetails(
     purposeGroup: place.purposeGroup,
     whereLabel: whereLabel(place.jurisdiction, place.leavesEEA),
     retentionLabel: place.retention ?? STRINGS.notYetIdentified,
+    dataCategoriesLabel:
+      place.dataCategories === undefined || place.dataCategories.length === 0
+        ? STRINGS.notYetIdentified
+        : place.dataCategories.join(', '),
     observations,
     declaredIn: [...new Set(place.sources.map((s) => s.documentName))],
   }

@@ -6,6 +6,7 @@ import { emptyProject, place } from '../fixtures/projects'
 import { addPlace } from '../../src/core/graph'
 import type {
   Candidate,
+  DataCategoryDictionary,
   InternalSystemDictionary,
   VendorDictionary,
 } from '../../src/core/types'
@@ -20,10 +21,17 @@ const INTERNAL: InternalSystemDictionary = {
   stripe: { name: 'Stripe', purposeGroup: 'Payments', layer: 'external', holder: 'supplier' },
 }
 
+const CATEGORIES: DataCategoryDictionary = {
+  email: { name: 'Email address' },
+  'dati di navigazione': { name: 'Browsing data' },
+  'codice fiscale': { name: 'Tax identifier' },
+  nome: { name: 'Name' },
+}
+
 describe('extractCandidates', () => {
   it('finds an internal system by term, case-insensitively, with evidence around the match', () => {
     const docs = [{ name: 'contract.pdf', text: 'The monthly PAYROLL run is outsourced.' }]
-    const out = extractCandidates(docs, VENDORS, INTERNAL)
+    const out = extractCandidates(docs, VENDORS, INTERNAL, CATEGORIES)
     expect(out).toHaveLength(1)
     expect(out[0]?.name).toBe('Payroll system')
     expect(out[0]?.layer).toBe('internal')
@@ -35,12 +43,12 @@ describe('extractCandidates', () => {
 
   it('does not match a term inside a longer word', () => {
     const docs = [{ name: 'a.txt', text: 'the stripes on the flag' }]
-    expect(extractCandidates(docs, VENDORS, INTERNAL)).toHaveLength(0)
+    expect(extractCandidates(docs, VENDORS, INTERNAL, CATEGORIES)).toHaveLength(0)
   })
 
   it('finds a vendor by domain and names it exactly as a scan would', () => {
     const docs = [{ name: 'invoice.pdf', text: 'Billed for www.google-analytics.com usage.' }]
-    const out = extractCandidates(docs, VENDORS, INTERNAL)
+    const out = extractCandidates(docs, VENDORS, INTERNAL, CATEGORIES)
     expect(out).toHaveLength(1)
     expect(out[0]?.name).toBe('Google Analytics')
     expect(out[0]?.layer).toBe('external')
@@ -49,7 +57,7 @@ describe('extractCandidates', () => {
 
   it('ignores a domain the vendor dictionary does not know', () => {
     const docs = [{ name: 'a.txt', text: 'see internal-wiki.example for details' }]
-    expect(extractCandidates(docs, VENDORS, INTERNAL)).toHaveLength(0)
+    expect(extractCandidates(docs, VENDORS, INTERNAL, CATEGORIES)).toHaveLength(0)
   })
 
   it('deduplicates across documents, collecting every source name once', () => {
@@ -57,13 +65,13 @@ describe('extractCandidates', () => {
       { name: 'one.docx', text: 'Payroll data is processed monthly. Payroll again.' },
       { name: 'two.csv', text: 'payroll;employee;amount' },
     ]
-    const out = extractCandidates(docs, VENDORS, INTERNAL)
+    const out = extractCandidates(docs, VENDORS, INTERNAL, CATEGORIES)
     expect(out).toHaveLength(1)
     expect(out[0]?.sourceNames).toEqual(['one.docx', 'two.csv'])
   })
 
   it('is empty for empty documents', () => {
-    expect(extractCandidates([{ name: 'x.txt', text: '' }], VENDORS, INTERNAL)).toHaveLength(0)
+    expect(extractCandidates([{ name: 'x.txt', text: '' }], VENDORS, INTERNAL, CATEGORIES)).toHaveLength(0)
   })
 })
 
@@ -76,7 +84,7 @@ describe('a term the document denies', () => {
     cookie: { name: 'Cookies', purposeGroup: 'Website tracking', layer: 'external', holder: 'supplier' },
   }
   const names = (text: string): string[] =>
-    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, DENIABLE)
+    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, DENIABLE, CATEGORIES)
       .map((c) => c.name)
       .sort()
 
@@ -104,6 +112,7 @@ describe('a term the document denies', () => {
       [{ name: 'a.pdf', text: 'Non utilizziamo Hotjar per la pubblicità. Hotjar resta attivo per le heatmap.' }],
       VENDORS,
       DENIABLE,
+      CATEGORIES,
     )
     if (c === undefined) throw new Error('expected a candidate')
     // Evidence stays a window around the match rather than being clipped to one sentence: a
@@ -148,24 +157,24 @@ describe('matching terms that are not ASCII', () => {
 
   it('finds a term ending in an accented letter', () => {
     const docs = [{ name: 'nota.pdf', text: 'La contabilità è tenuta internamente.' }]
-    const out = extractCandidates(docs, VENDORS, ACCENTED)
+    const out = extractCandidates(docs, VENDORS, ACCENTED, CATEGORIES)
     expect(out.map((c) => c.name)).toEqual(['Accounting system'])
   })
 
   it('still refuses a term that is only part of a longer word', () => {
     const docs = [{ name: 'a.txt', text: 'contabilitàaziendale videosorveglianzaX' }]
-    expect(extractCandidates(docs, VENDORS, ACCENTED)).toHaveLength(0)
+    expect(extractCandidates(docs, VENDORS, ACCENTED, CATEGORIES)).toHaveLength(0)
   })
 
   it('treats an accented letter next to the term as part of a longer word', () => {
     // "è" is a letter, so "èvideosorveglianza" is one word and holds no term.
     const docs = [{ name: 'a.txt', text: 'èvideosorveglianza' }]
-    expect(extractCandidates(docs, VENDORS, ACCENTED)).toHaveLength(0)
+    expect(extractCandidates(docs, VENDORS, ACCENTED, CATEGORIES)).toHaveLength(0)
   })
 
   it('matches a term sitting against punctuation', () => {
     const docs = [{ name: 'a.txt', text: 'Impianti: videosorveglianza, badge.' }]
-    const out = extractCandidates(docs, VENDORS, ACCENTED)
+    const out = extractCandidates(docs, VENDORS, ACCENTED, CATEGORIES)
     expect(out.map((c) => c.name)).toEqual(['Video surveillance'])
   })
 })
@@ -189,7 +198,7 @@ describe('a term broken across a line', () => {
     },
   }
   const names = (text: string): string[] =>
-    extractCandidates([{ name: 'a.pdf', text }], VENDORS, MULTIWORD)
+    extractCandidates([{ name: 'a.pdf', text }], VENDORS, MULTIWORD, CATEGORIES)
       .map((c) => c.name)
       .sort()
 
@@ -227,6 +236,7 @@ describe('a term broken across a line', () => {
       [{ name: 'a.pdf', text: 'Elaborazione delle buste\npaga mensili per i dipendenti.' }],
       VENDORS,
       MULTIWORD,
+      CATEGORIES,
     )
     if (c === undefined) throw new Error('expected a candidate')
     expect(c.evidence).toContain('mensili')
@@ -248,9 +258,148 @@ describe('a term broken across a line', () => {
       ],
       VENDORS,
       MULTIWORD,
+      CATEGORIES,
     )
     if (c === undefined) throw new Error('expected a candidate')
     expect(c.evidence).toContain('deposito')
+  })
+})
+
+// What a document says about a system, not only that it names one. See §4.1 of
+// docs/superpowers/specs/2026-08-03-extraction-depth-design.md. Attribution is the risk, and the
+// containment is that a phrase must share a sentence with the term, and that whatever is read is
+// shown next to the evidence the user ticks.
+describe('retention read off the sentence', () => {
+  const retentionFor = (text: string, name: string): string | undefined =>
+    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, CATEGORIES).find(
+      (c) => c.name === name,
+    )?.retention
+
+  it('reads an Italian retention phrase', () => {
+    expect(retentionFor('I dati in Salesforce sono conservati per 24 mesi.', 'Salesforce')).toBe(
+      '24 months',
+    )
+  })
+
+  it('reads an English retention phrase', () => {
+    expect(retentionFor('Payroll records are kept for 30 days.', 'Payroll system')).toBe('30 days')
+  })
+
+  it('reads "per un periodo di 10 anni"', () => {
+    expect(
+      retentionFor('Salesforce li conserva per un periodo di 10 anni.', 'Salesforce'),
+    ).toBe('10 years')
+  })
+
+  it('says one year rather than 1 years', () => {
+    expect(retentionFor('Stripe keeps this for 1 year.', 'Stripe')).toBe('1 year')
+  })
+
+  it('does not reach across a sentence boundary', () => {
+    // The phrase is real and the term is real and they have nothing to do with each other.
+    expect(
+      retentionFor('I log sono conservati per 24 mesi. Il CRM è Salesforce.', 'Salesforce'),
+    ).toBeUndefined()
+  })
+
+  it('is undefined when the sentence says nothing about how long', () => {
+    expect(retentionFor('Il CRM aziendale è Salesforce.', 'Salesforce')).toBeUndefined()
+  })
+
+  it('takes the first phrase when a sentence carries two', () => {
+    // Two figures in one sentence is ambiguous by construction. The first is reported and the
+    // user sees the sentence, which is the whole point of the confirm step.
+    expect(
+      retentionFor('Salesforce conserva i dati per 24 mesi, il backup per 90 giorni.', 'Salesforce'),
+    ).toBe('24 months')
+  })
+
+  it('does not read a number that is not a duration', () => {
+    expect(retentionFor('Salesforce gestisce 24 utenti.', 'Salesforce')).toBeUndefined()
+  })
+})
+
+describe('jurisdiction read off the sentence', () => {
+  const whereFor = (text: string, name: string): string | undefined =>
+    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, CATEGORIES).find(
+      (c) => c.name === name,
+    )?.jurisdiction
+
+  it('reads an Italian placement phrase', () => {
+    expect(whereFor('I server di Salesforce sono ubicati in Irlanda.', 'Salesforce')).toBe('Irlanda')
+  })
+
+  it('reads an English placement phrase', () => {
+    expect(whereFor('Stripe data is hosted in Frankfurt.', 'Stripe')).toBe('Frankfurt')
+  })
+
+  it('reads a two-word country', () => {
+    expect(whereFor('Salesforce archivia i dati negli Stati Uniti.', 'Salesforce')).toBe(
+      'Stati Uniti',
+    )
+  })
+
+  it('does not reach across a sentence boundary', () => {
+    expect(
+      whereFor('I server sono ubicati in Irlanda. Il CRM è Salesforce.', 'Salesforce'),
+    ).toBeUndefined()
+  })
+
+  it('is undefined when the sentence says nothing about where', () => {
+    expect(whereFor('Il CRM aziendale è Salesforce.', 'Salesforce')).toBeUndefined()
+  })
+
+  it('does not read a lowercase word after the preposition as a place', () => {
+    // "conservati in modo sicuro" is about manner, not location. A place name is capitalised.
+    expect(whereFor('I dati di Salesforce sono conservati in modo sicuro.', 'Salesforce')).toBeUndefined()
+  })
+
+  it('stops at the punctuation after the place name', () => {
+    expect(
+      whereFor('Salesforce, con server ubicati in Irlanda, tratta i dati.', 'Salesforce'),
+    ).toBe('Irlanda')
+  })
+})
+
+// The question a client asks first, and the model had nowhere to put the answer. See §4.7.
+describe('categories of personal data', () => {
+  const categoriesFor = (text: string, name: string): string[] | undefined =>
+    extractCandidates([{ name: 'a.pdf', text }], VENDORS, INTERNAL, CATEGORIES).find(
+      (c) => c.name === name,
+    )?.dataCategories
+
+  it('reads one category from the sentence that names the system', () => {
+    expect(categoriesFor('Salesforce conserva il codice fiscale del cliente.', 'Salesforce')).toEqual([
+      'Tax identifier',
+    ])
+  })
+
+  it('reads several, in the order the sentence names them', () => {
+    expect(
+      categoriesFor('In Salesforce trattiamo nome, email e dati di navigazione.', 'Salesforce'),
+    ).toEqual(['Name', 'Email address', 'Browsing data'])
+  })
+
+  it('lists a category once however many times the sentence says it', () => {
+    expect(categoriesFor('Salesforce riceve email; l’email è obbligatoria.', 'Salesforce')).toEqual([
+      'Email address',
+    ])
+  })
+
+  it('does not reach across a sentence boundary', () => {
+    expect(
+      categoriesFor('Raccogliamo nome ed email. Il CRM è Salesforce.', 'Salesforce'),
+    ).toBeUndefined()
+  })
+
+  it('is undefined rather than empty when the sentence names none', () => {
+    expect(categoriesFor('Il CRM aziendale è Salesforce.', 'Salesforce')).toBeUndefined()
+  })
+
+  it('does not read a category the sentence denies', () => {
+    expect(
+      categoriesFor('Salesforce non riceve il codice fiscale, solo il nome.', 'Salesforce'),
+    ).toEqual(['Name'])
   })
 })
 
@@ -311,6 +460,50 @@ describe('ingestDocument', () => {
     const p = emptyProject()
     expect(ingestDocument(p, [])).toEqual(p)
   })
+
+  it('carries a retention read from the document onto the new place', () => {
+    const p = ingestDocument(emptyProject(), [confirmed({ retention: '24 months' })])
+    expect(p.places[0]?.retention).toBe('24 months')
+  })
+
+  it('fills a blank retention on an existing place without touching anything else', () => {
+    let p = emptyProject()
+    // The shared fixture carries a retention of its own; this case is about a place that has
+    // none, which is what a scan leaves behind.
+    p = addPlace(
+      p,
+      { ...place(), name: 'Payroll System', retention: undefined, confidence: 'observed' as const },
+      'pl-1',
+    )
+    const out = ingestDocument(p, [confirmed({ retention: '24 months' })])
+    expect(out.places).toHaveLength(1)
+    expect(out.places[0]?.retention).toBe('24 months')
+    expect(out.places[0]?.confidence).toBe('observed')
+  })
+
+  it('does not overwrite a retention the place already has', () => {
+    let p = emptyProject()
+    p = addPlace(p, { ...place(), name: 'Payroll System', retention: '10 years' }, 'pl-1')
+    const out = ingestDocument(p, [confirmed({ retention: '24 months' })])
+    expect(out.places[0]?.retention).toBe('10 years')
+  })
+
+  it('carries a jurisdiction onto the new place, where the detail panel already reads it', () => {
+    const p = ingestDocument(emptyProject(), [confirmed({ jurisdiction: 'Irlanda' })])
+    expect(p.places[0]?.jurisdiction).toBe('Irlanda')
+  })
+
+  it('carries data categories onto the new place', () => {
+    const p = ingestDocument(emptyProject(), [confirmed({ dataCategories: ['Name', 'Email address'] })])
+    expect(p.places[0]?.dataCategories).toEqual(['Name', 'Email address'])
+  })
+
+  it('does not overwrite a jurisdiction the place already has', () => {
+    let p = emptyProject()
+    p = addPlace(p, { ...place(), name: 'Payroll System', jurisdiction: 'Italia' }, 'pl-1')
+    const out = ingestDocument(p, [confirmed({ jurisdiction: 'Irlanda' })])
+    expect(out.places[0]?.jurisdiction).toBe('Italia')
+  })
 })
 
 describe('trackers and cookies named in prose', () => {
@@ -327,14 +520,14 @@ describe('trackers and cookies named in prose', () => {
         text: 'We use profiling cookies and a Facebook Pixel, plus Hotjar for session replay.',
       },
     ]
-    const out = extractCandidates(docs, VENDORS, TRACKING)
+    const out = extractCandidates(docs, VENDORS, TRACKING, CATEGORIES)
     expect(out.map((c) => c.name).sort()).toEqual(['Cookies', 'Hotjar', 'Meta Pixel'])
     expect(out.every((c) => c.layer === 'external')).toBe(true)
   })
 
   it('keeps the file name as the source and nothing of what the file said', () => {
     const docs = [{ name: 'policy.pdf', text: 'The site sets profiling cookies on first visit.' }]
-    const [candidate] = extractCandidates(docs, VENDORS, TRACKING)
+    const [candidate] = extractCandidates(docs, VENDORS, TRACKING, CATEGORIES)
     if (candidate === undefined) throw new Error('expected a candidate')
     // The evidence exists while confirming -- it is what the user judges the suggestion on --
     // and must not survive into the project.

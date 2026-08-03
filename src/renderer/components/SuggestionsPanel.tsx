@@ -53,6 +53,17 @@ export function SuggestionsPanel({ candidates, read, onConfirm, onCancel }: Prop
               <span className="suggestion-group">{c.purposeGroup}</span>
             </label>
             <p className="suggestion-evidence">“{c.evidence}”</p>
+            {c.retention === undefined ? null : (
+              <p className="suggestion-attribute">{STRINGS.suggestionRetention(c.retention)}</p>
+            )}
+            {c.jurisdiction === undefined ? null : (
+              <p className="suggestion-attribute">{STRINGS.suggestionJurisdiction(c.jurisdiction)}</p>
+            )}
+            {c.dataCategories === undefined ? null : (
+              <p className="suggestion-attribute">
+                {STRINGS.suggestionDataCategories(c.dataCategories.join(', '))}
+              </p>
+            )}
             <p className="suggestion-sources">{STRINGS.suggestionFoundIn(c.sourceNames.join(', '))}</p>
           </li>
         ))}
