@@ -67,6 +67,64 @@ describe('extractCandidates', () => {
   })
 })
 
+// A document that denies doing something must not put it on the map. See src/core/documents.ts
+// and §4.4 of docs/superpowers/specs/2026-08-03-extraction-depth-design.md.
+describe('a term the document denies', () => {
+  const DENIABLE: InternalSystemDictionary = {
+    hotjar: { name: 'Hotjar', purposeGroup: 'Marketing', layer: 'external', holder: 'supplier' },
+    matomo: { name: 'Matomo', purposeGroup: 'Marketing', layer: 'external', holder: 'supplier' },
+    cookie: { name: 'Cookies', purposeGroup: 'Website tracking', layer: 'external', holder: 'supplier' },
+  }
+  const names = (text: string): string[] =>
+    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, DENIABLE)
+      .map((c) => c.name)
+      .sort()
+
+  it('is not offered when the sentence denies it, in Italian', () => {
+    expect(names('Non utilizziamo cookie di profilazione.')).toEqual([])
+  })
+
+  it('is not offered when the sentence denies it, in English', () => {
+    expect(names('We do not use Hotjar on this site.')).toEqual([])
+  })
+
+  it('reads "nessun" and "senza" as denials too', () => {
+    expect(names('Nessun cookie di terze parti. Il sito funziona senza Hotjar.')).toEqual([])
+  })
+
+  it('is still offered when a different sentence asserts it', () => {
+    // Denial reaches to the end of its own sentence and no further.
+    expect(names('Non utilizziamo Matomo. Utilizziamo Hotjar per le mappe di calore.')).toEqual([
+      'Hotjar',
+    ])
+  })
+
+  it('anchors its evidence on the sentence that asserts it', () => {
+    const [c] = extractCandidates(
+      [{ name: 'a.pdf', text: 'Non utilizziamo Hotjar per la pubblicità. Hotjar resta attivo per le heatmap.' }],
+      VENDORS,
+      DENIABLE,
+    )
+    if (c === undefined) throw new Error('expected a candidate')
+    // Evidence stays a window around the match rather than being clipped to one sentence: a
+    // reader deciding whether to tick this is better served seeing the denial next to the
+    // assertion than seeing half the story.
+    expect(c.evidence).toContain('resta attivo')
+  })
+
+  it('does not let a denial far off in the same sentence suppress an unrelated mention', () => {
+    // "non" governs the retention clause, not the vendor named much later in the same sentence.
+    const text =
+      'Non conserviamo i dati oltre i ventiquattro mesi previsti dal contratto quadro ' +
+      'sottoscritto con il fornitore, e per le statistiche il sito usa Matomo.'
+    expect(names(text)).toEqual(['Matomo'])
+  })
+
+  it('is unaffected when the denial comes after the term', () => {
+    expect(names('Hotjar è installato, non è disattivato.')).toEqual(['Hotjar'])
+  })
+})
+
 // A term is matched on letter boundaries, not on ASCII word boundaries. `\b` treats every
 // accented letter as a non-letter, so `\bcontabilità\b` never matches anything at all: the
 // trailing boundary asks for a letter-to-non-letter transition and finds non-letter on both

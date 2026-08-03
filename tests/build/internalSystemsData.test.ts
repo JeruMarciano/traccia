@@ -62,6 +62,15 @@ describe('reading an Italian document', () => {
     expect(found(text)).toEqual(['Consent management', 'Cookie banner', 'Cookies', 'Trackers'])
   })
 
+  it('does not put on the map what the informativa says it does not do', () => {
+    // The denial and the admission sit in the same paragraph, which is how these are written.
+    const text =
+      'Il sito non utilizza cookie di profilazione né strumenti di remarketing. ' +
+      'Sono installati esclusivamente Google Analytics in forma anonimizzata e Iubenda ' +
+      'per la gestione del consenso.'
+    expect(found(text)).toEqual(['Consent management', 'Google Analytics', 'Iubenda'])
+  })
+
   it('does not read a shipment-tracking clause as web tracking', () => {
     // "tracciamento" is ordinary Italian for tracking of any kind. Only the terms that mean
     // the web sense are in the dictionary, so a logistics sentence contributes nothing.

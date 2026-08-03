@@ -72,7 +72,43 @@ function escapeRegExp(s: string): string {
  * could not be read". A capture group costs one offset at the call site and nothing else.
  */
 function wholeWord(term: string): RegExp {
-  return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, 'u')
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, 'gu')
+}
+
+/**
+ * Words that turn a mention into a denial. Both languages the dictionary covers.
+ *
+ * A privacy notice says what an organisation does *not* do at least as often as what it does, and
+ * "non utilizziamo cookie di profilazione" was being read as a cookie: the map showed the opposite
+ * of what the document said. One confident false positive costs more than ten honest blanks, and
+ * the whole register of this tool is that an unanswered question is work still to do.
+ */
+const NEGATIONS =
+  /(^|[^\p{L}\p{N}])(non|nessun|nessuna|nessuno|né|senza|esclus[oaie]|not|no|never|without|nor|neither)(?![\p{L}\p{N}])/u
+
+/** Where a statement stops. Bullets count: a list item is its own claim. */
+const SENTENCE_END = /[.!?;:\n\r•]/
+
+/**
+ * How far back a denial reaches, in characters.
+ *
+ * The sentence alone is too generous. "Non conserviamo i dati oltre i ventiquattro mesi …, e per le
+ * statistiche il sito usa Matomo" is one sentence in which the denial governs the first clause and
+ * has nothing to do with the vendor named at the end. Requiring the denial to be *near* the term as
+ * well as in its sentence keeps the common phrasing working without swallowing the rest of the line.
+ */
+const NEGATION_REACH = 60
+
+/** True when the text just before `at` denies whatever is at `at`. */
+function isDenied(lower: string, at: number): boolean {
+  let sentenceStart = 0
+  for (let i = at - 1; i >= 0; i -= 1) {
+    if (SENTENCE_END.test(lower.charAt(i))) {
+      sentenceStart = i + 1
+      break
+    }
+  }
+  return NEGATIONS.test(lower.slice(Math.max(sentenceStart, at - NEGATION_REACH), at))
 }
 
 /**
@@ -110,13 +146,20 @@ export function extractCandidates(
     const text = doc.text
     const lower = text.toLowerCase()
 
-    // 1. Internal-systems dictionary: whole-word term match, case-insensitive.
+    // 1. Internal-systems dictionary: whole-word term match, case-insensitive. Denial is judged
+    //    per occurrence, so a term denied in one sentence and asserted in another is still offered
+    //    -- carrying the sentence that asserts it as its evidence, which is what the user judges.
     for (const { entry, length, pattern } of terms) {
-      const m = pattern.exec(lower)
-      if (m === null) continue
-      // The match starts after whatever the opening group swallowed: one character mid-text,
-      // nothing at all at the very start of the document.
-      const at = m.index + (m[1]?.length ?? 0)
+      let at = -1
+      for (const m of lower.matchAll(pattern)) {
+        // The match starts after whatever the opening group swallowed: one character mid-text,
+        // nothing at all at the very start of the document.
+        const start = m.index + (m[1]?.length ?? 0)
+        if (isDenied(lower, start)) continue
+        at = start
+        break
+      }
+      if (at === -1) continue
       add(
         {
           name: entry.name,
