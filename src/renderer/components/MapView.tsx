@@ -42,28 +42,6 @@ function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): str
   return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`
 }
 
-/** Two slanted strokes across the middle of a line: the data crosses out of the area. */
-function breakStrokes(
-  a: LayoutNode,
-  b: LayoutNode,
-): { x1: number; y1: number; x2: number; y2: number }[] {
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  const len = Math.hypot(dx, dy) || 1
-  const ux = dx / len
-  const uy = dy / len
-  return [-1, 1].map((k) => {
-    const cx = a.x + dx * 0.5 + ux * k * 4
-    const cy = a.y + dy * 0.5 + uy * k * 4
-    return {
-      x1: cx - uy * 5.5 + ux * 2.2,
-      y1: cy + ux * 5.5 + uy * 2.2,
-      x2: cx + uy * 5.5 - ux * 2.2,
-      y2: cy - ux * 5.5 - uy * 2.2,
-    }
-  })
-}
-
 export function MapView({ layout, selected, onSelect }: Props) {
   const byId = new Map(layout.nodes.map((n) => [n.id, n]))
   // Isolation has to isolate something. A selection can name a place no ring stands for, and
@@ -138,11 +116,6 @@ export function MapView({ layout, selected, onSelect }: Props) {
                     y2={b.y - uy * r}
                     data-internal={internal ? 'yes' : undefined}
                   />
-                  {b.leavesEEA
-                    ? breakStrokes(a, b).map((s, i) => (
-                        <line key={i} className="crossing" x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} />
-                      ))
-                    : null}
                 </g>
               )
             })}
@@ -202,11 +175,6 @@ export function MapView({ layout, selected, onSelect }: Props) {
                   <text className="node-label" x={n.x} y={n.y + r + 15} textAnchor="middle">
                     {n.label}
                   </text>
-                  {n.leavesEEA ? (
-                    <text className="node-eea" x={n.x} y={n.y + r + 27} textAnchor="middle">
-                      {STRINGS.leavingCount(n.leavesEEA)}
-                    </text>
-                  ) : null}
                 </g>
               )
             })}
