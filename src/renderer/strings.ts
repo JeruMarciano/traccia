@@ -70,6 +70,10 @@ export const STRINGS = {
   suggestionFoundIn: (names: string): string => `Found in ${names}`,
   suggestionInternal: 'Internal',
   suggestionExternal: 'Supplier',
+  suggestionSubjectGroup: 'People',
+  suggestionRetention: (value: string): string => `Kept for ${value}`,
+  suggestionJurisdiction: (value: string): string => `Located in ${value}`,
+  suggestionDataCategories: (values: string): string => `Holds ${values}`,
   detailPurpose: 'Purpose',
   declaredIn: (names: string): string => `Declared: ${names}`,
 
@@ -79,6 +83,7 @@ export const STRINGS = {
   detailWhereOutsideEEA: 'Outside the EEA',
   detailWhereInsideEEA: 'Inside the EEA',
   detailRetention: 'Retention',
+  detailDataCategories: 'What is held',
   detailObservationsHeading: 'Trackers observed',
   detailObservation: (domain: string, requestCount: number, beforeConsent: boolean): string => {
     const requests = `${requestCount} ${requestCount === 1 ? 'request' : 'requests'}`

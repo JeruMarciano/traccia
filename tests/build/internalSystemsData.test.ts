@@ -1,0 +1,275 @@
+import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import dictionary from '../../src/data/internalSystems.json'
+import vendors from '../../src/data/vendors.json'
+import { extractCandidates } from '../../src/core/documents'
+import subjectGroupsJson from '../../src/data/subjectGroups.json'
+import dataCategoriesJson from '../../src/data/dataCategories.json'
+import type {
+  DataCategoryDictionary,
+  InternalSystemDictionary,
+  SubjectGroupDictionary,
+  VendorDictionary,
+} from '../../src/core/types'
+
+const dict = dictionary as InternalSystemDictionary
+const V = vendors as VendorDictionary
+const SUBJECTS = subjectGroupsJson as SubjectGroupDictionary
+const CATEGORIES = dataCategoriesJson as DataCategoryDictionary
+
+// Closed, because `purposeGroup` is only a `string` in types.ts and the map groups by its exact
+// value. A typo -- "Payroll & Hr" -- would pass any truthiness check and quietly draw two points
+// where there is one thing.
+const PURPOSE_GROUPS = new Set([
+  'Payroll & HR',
+  'Finance & Accounting',
+  'Payments',
+  'Sales & CRM',
+  'Marketing',
+  'Office & Email',
+  'Communication',
+  'Customer Support',
+  'IT & Infrastructure',
+  'Website tracking',
+  'Facilities & Security',
+])
+
+/** What the shipped documents say, read straight out of a real Italian informativa. */
+const found = (text: string): string[] =>
+  extractCandidates([{ name: 'informativa.pdf', text }], V, dict, SUBJECTS, CATEGORIES)
+    .filter((c) => c.sort === 'place')
+    .map((c) => c.name)
+    .sort()
+
+/**
+ * The same call, read for the categories of data the sentence attaches to a place. One sentence
+ * can name several systems and each carries the same reading of it, so the names are deduplicated:
+ * what is under test is which categories the sentence yields, not how many places carry them.
+ */
+const catsFound = (text: string): string[] => [
+  ...new Set(
+    extractCandidates([{ name: 'informativa.pdf', text }], V, dict, SUBJECTS, CATEGORIES)
+      .filter((c) => c.sort === 'place')
+      .flatMap((c) => (c.sort === 'place' ? (c.dataCategories ?? []) : [])),
+  ),
+]
+
+/** The same call, read for the other half of what a document says: whose data it is. */
+const subjectsFound = (text: string): string[] =>
+  extractCandidates([{ name: 'informativa.pdf', text }], V, dict, SUBJECTS, CATEGORIES)
+    .filter((c) => c.sort === 'subjectGroup')
+    .map((c) => c.name)
+    .sort()
+
+describe('the shipped internal-systems dictionary', () => {
+  it('gives every entry a name, a purpose group, a layer and a holder', () => {
+    for (const [term, entry] of Object.entries(dict)) {
+      expect(entry.name, term).toBeTruthy()
+      expect(PURPOSE_GROUPS.has(entry.purposeGroup), `${term} → ${entry.purposeGroup}`).toBe(true)
+      expect(['internal', 'external'], term).toContain(entry.layer)
+      expect(['you', 'supplier'], term).toContain(entry.holder)
+    }
+  })
+
+  it('keys every entry by a lowercase term, so matching is case-insensitive', () => {
+    for (const term of Object.keys(dict)) {
+      expect(term, term).toBe(term.toLowerCase())
+    }
+  })
+
+  it('carries nothing that could be fetched at runtime', () => {
+    expect(JSON.stringify(dict)).not.toMatch(/https?:\/\//)
+  })
+
+  it('shares no term with the data-category dictionary', () => {
+    // A word cannot be both a system the organisation runs and a category of data it collects.
+    // "email", "posta elettronica" and "curriculum" were in both, so "Raccogliamo nome, cognome e
+    // indirizzo email dei clienti" -- a sentence naming no system at all -- minted a place called
+    // Email, carrying whatever the neighbouring clause said about retention. The evidence snippet
+    // reads like support for it, which is what the confirm step cannot contain.
+    //
+    // Whichever side a new term belongs on, it belongs on one of them: a system is something the
+    // organisation runs, a category is something it holds.
+    const shared = Object.keys(dict).filter((term) => term in CATEGORIES)
+    expect(
+      shared,
+      `these terms are in both src/data/internalSystems.json and src/data/dataCategories.json: ${shared.join(', ')}`,
+    ).toEqual([])
+  })
+})
+
+// Documents arrive in whatever language the client wrote them in, and for this tool that is
+// usually Italian. The terms are Italian; the names they produce stay English, because the
+// names are what the interface prints and the interface is English.
+describe('reading an Italian document', () => {
+  it('recognises tracking technologies named in Italian prose', () => {
+    const text =
+      'Il sito utilizza cookie tecnici e cookie di profilazione, oltre a pixel di ' +
+      'tracciamento di terze parti. La gestione del consenso avviene tramite un banner cookie.'
+    expect(found(text)).toEqual(['Consent management', 'Cookie banner', 'Cookies', 'Trackers'])
+  })
+
+  it('does not put on the map what the informativa says it does not do', () => {
+    // The denial and the admission sit in the same paragraph, which is how these are written.
+    const text =
+      'Il sito non utilizza cookie di profilazione né strumenti di remarketing. ' +
+      'Sono installati esclusivamente Google Analytics in forma anonimizzata e Iubenda ' +
+      'per la gestione del consenso.'
+    expect(found(text)).toEqual(['Consent management', 'Google Analytics', 'Iubenda'])
+  })
+
+  it('does not read a shipment-tracking clause as web tracking', () => {
+    // "tracciamento" is ordinary Italian for tracking of any kind. Only the terms that mean
+    // the web sense are in the dictionary, so a logistics sentence contributes nothing.
+    expect(found('Il tracciamento delle spedizioni è affidato al corriere.')).toEqual([])
+  })
+
+  it('recognises internal operations named in Italian, including accented terms', () => {
+    const text =
+      'La contabilità e la fatturazione elettronica sono interne. Le buste paga sono ' +
+      'elaborate mensilmente. È attiva la videosorveglianza con controllo accessi.'
+    expect(found(text)).toEqual([
+      'Access control',
+      'Accounting system',
+      'Invoicing',
+      'Payroll system',
+      'Video surveillance',
+    ])
+  })
+
+  it('names an Italian term and its English equivalent as one thing, not two', () => {
+    // A bilingual policy naming both must not put two "Video surveillance" points on the map.
+    expect(found('CCTV, ovvero videosorveglianza, è installata all’ingresso.')).toEqual([
+      'Video surveillance',
+    ])
+  })
+
+  it('recognises the systems an SME register names in Italian', () => {
+    const text =
+      'Il gestionale aziendale e il registro protocollo sono interni. Le pratiche passano ' +
+      'per la posta elettronica certificata. La formazione del personale è tracciata a parte.'
+    // The PEC mailbox is offered and a bare "Email" is not: "posta elettronica" is a category of
+    // data in this build, not a system, so only the three-word term names something the
+    // organisation runs. See "shares no term with the data-category dictionary" above.
+    expect(found(text)).toEqual([
+      'Certified email (PEC)',
+      'Document register',
+      'Management system',
+      'Training records',
+    ])
+  })
+
+  it('recognises the payroll consultant an Italian SME actually uses', () => {
+    expect(found('Le buste paga sono elaborate dal consulente del lavoro.')).toEqual([
+      'Payroll adviser',
+      'Payroll system',
+    ])
+  })
+
+  it('recognises a medical-surveillance clause', () => {
+    expect(found('È previsto il medico competente per la sorveglianza sanitaria.')).toEqual([
+      'Occupational health',
+    ])
+  })
+
+  it('recognises a three-word term a PDF broke across two lines', () => {
+    // The longest terms in the dictionary are the ones a wrapped column is most likely to split,
+    // and nothing else exercises a break at more than one gap of the same term. Both breaks have
+    // to hold: with only the first gap flexible the term does not match at all and the PEC mailbox
+    // disappears, which is the failure a wrapped PDF would have produced in the field.
+    expect(found('Le pratiche passano per la posta\nelettronica\ncertificata.')).toEqual([
+      'Certified email (PEC)',
+    ])
+  })
+
+  it('does not read a geolocation clause as fleet tracking', () => {
+    // "geolocalizzazione" means the browser or device sense at least as often as the vehicle one,
+    // and a confirm row offering "Vehicle tracking" does not read as a guess. The unambiguous
+    // phrase "localizzazione veicoli" carries that case on its own.
+    expect(
+      found('Il sito utilizza la geolocalizzazione del dispositivo per mostrare il negozio più vicino.'),
+    ).toEqual([])
+    expect(found('La localizzazione veicoli è attiva sulla flotta aziendale.')).toEqual([
+      'Vehicle tracking',
+    ])
+  })
+
+  it('does not assert a postal address from "indirizzo email" or "indirizzo IP"', () => {
+    // "indirizzo" is a category term in its own right and sits inside both of these. A longer
+    // term outranks a shorter one it contains, so only the category actually named is offered.
+    expect(catsFound('Il gestionale conserva il vostro indirizzo email.')).toEqual([
+      'Email address',
+    ])
+    expect(catsFound('Il gestionale conserva l’indirizzo IP per 30 giorni.')).toEqual([
+      'Browsing data',
+    ])
+    expect(catsFound('Il gestionale conserva l’indirizzo di residenza.')).toEqual([
+      'Postal address',
+    ])
+  })
+
+  it('still reads an English document', () => {
+    expect(found('We run payroll in Workday and keep accounting in Xero.')).toEqual([
+      'Accounting system',
+      'Payroll system',
+      'Workday',
+      'Xero',
+    ])
+  })
+})
+
+describe('the shipped subject-group dictionary', () => {
+  it('keys every entry by a lowercase term', () => {
+    for (const term of Object.keys(SUBJECTS)) expect(term, term).toBe(term.toLowerCase())
+  })
+
+  it('spells the scan-seeded group exactly as ingestScan does, so the two merge', () => {
+    expect(Object.values(SUBJECTS).map((e) => e.name)).toContain('Website visitors')
+  })
+
+  it('reads the second paragraph of a real informativa', () => {
+    const text =
+      'Il Titolare tratta i dati personali di clienti, fornitori, dipendenti e candidati, ' +
+      'nonché degli utenti del sito che navigano le pagine pubbliche.'
+    expect(subjectsFound(text)).toEqual([
+      'Customers',
+      'Employees',
+      'Job applicants',
+      'Suppliers',
+      'Website visitors',
+    ])
+  })
+
+  it('is passed in its own parameter and not in the data-category one', () => {
+    // SubjectGroupDictionary and DataCategoryDictionary are the same shape -- a record of term to
+    // { name } -- so transposing the two arguments at a call site compiles and typecheck says
+    // nothing. This is what catches it: one sentence carrying a term from each dictionary, read
+    // for both answers at once. Swap the two arguments below and both assertions fail.
+    const text = 'Le buste paga dei dipendenti riportano il codice fiscale.'
+    const out = extractCandidates([{ name: 'informativa.pdf', text }], V, dict, SUBJECTS, CATEGORIES)
+    expect(out.filter((c) => c.sort === 'subjectGroup').map((c) => c.name)).toEqual(['Employees'])
+    expect(
+      out.filter((c) => c.sort === 'place').flatMap((c) => c.dataCategories ?? []),
+    ).toEqual(['Tax identifier'])
+  })
+
+  it('is wired into the app in its own position', () => {
+    // The assertion above covers the call sites a test controls. The one that matters most is in
+    // App.tsx, which no test calls: transposing the two arguments there compiles, passes the whole
+    // suite, and silently searches documents for subject groups using the category dictionary. So
+    // the order is read out of the source, the way the loose-strings guard reads the components.
+    const source = readFileSync('src/renderer/App.tsx', 'utf8')
+    const call = /extractCandidates\(([^)]*)\)/u.exec(source)
+    const args = (call?.[1] ?? '')
+      .split(',')
+      .map((a) => a.trim())
+      .filter((a) => a !== '')
+    expect(args).toEqual([
+      'documents',
+      'VENDORS',
+      'INTERNAL_SYSTEMS',
+      'SUBJECT_GROUPS',
+      'DATA_CATEGORIES',
+    ])
+  })
+})

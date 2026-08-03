@@ -58,6 +58,10 @@ export function DetailPanel({ project, selected, dictionary }: Props) {
               <dt>{STRINGS.detailRetention}</dt>
               <dd>{d.retentionLabel}</dd>
             </div>
+            <div>
+              <dt>{STRINGS.detailDataCategories}</dt>
+              <dd>{d.dataCategoriesLabel}</dd>
+            </div>
           </dl>
           {d.declaredIn.length === 0 ? null : (
             <p className="detail-declared">{STRINGS.declaredIn(d.declaredIn.join(', '))}</p>
