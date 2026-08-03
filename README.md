@@ -1,5 +1,7 @@
 # Traccia
 
+[![build](https://github.com/JeruMarciano/traccia/actions/workflows/build.yml/badge.svg)](https://github.com/JeruMarciano/traccia/actions/workflows/build.yml)
+
 A local-only desktop app that maps where an organisation's personal data goes.
 
 Enter a website URL, run a scan, and Traccia draws a single picture: the third-party
@@ -80,10 +82,32 @@ The core domain logic lives in `src/core/` and is deliberately pure: no filesyst
 no network, no Electron/Tauri APIs, no clocks or randomness. Timestamps and IDs are
 always passed in as parameters, which keeps it fully testable.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — it covers the checks a change has to pass and the
+constraints that are load-bearing rather than stylistic (chiefly: the app makes no network
+request other than the scan the user asked for, and `src/core/` stays free of I/O and clocks).
+
+The design documents behind each release are in [`docs/design/`](docs/design), and what was
+decided and measured along the way — including where an earlier measurement turned out to be
+wrong — is in [`docs/decisions/`](docs/decisions).
+
 ## Status
 
-v0.1 — external map. Scans a website, maps the third-party services it sends data to,
-shows details per service, and prints the map to PDF.
+Working, and used on real sites. Not yet released as a versioned build.
+
+- **The external map** — scan a website, map the third-party services it contacts, print to PDF.
+- **Documents** — read a privacy notice or a DPA and offer what it appears to describe, for
+  confirmation. Nothing lands on the map without being accepted, and the documents themselves
+  are never kept.
+- **Depth** — cookies with their lifetimes, the pages that collect data, storage keys by name
+  and size (never value), and whether a consent mechanism was present.
+- **The controller-centred map** — the sheet reads as a sentence: whose data, through which door,
+  to the organisation answering for it, onward to whom. A side panel states what is known about
+  any point, with the source of each fact, and rolls what is not yet known into one line.
+
+Installers are built for macOS and Windows from the build workflow; releases are made by hand,
+because the app never contacts a server and so cannot update itself.
 
 ## License
 

@@ -3,11 +3,17 @@ dist/
 .DS_Store
 *.local
 
-# Local agent-tooling scratch. Holds absolute paths and working history, so it must
-# never reach a shared repository. Previously excluded only via .git/info/exclude,
-# which is local to one clone and does not travel with it.
+# Local editor and assistant tooling: scratch state, machine-specific config, and the
+# task-by-task working plans written against it. All of it holds absolute paths and
+# working history, so it stays out of the repository.
+#
+# These are listed here rather than in .git/info/exclude on purpose: an exclude file is
+# local to one clone and does not travel, so a fresh clone would start committing this
+# material again. The design documents in docs/design and the measurements in
+# docs/decisions are the record that is meant to be shared.
 .claude-flow/
 .superpowers/
-.claude/proven-config.json
-.claude/.proven-config-version
-.claude/settings.local.json
+.claude/
+CLAUDE.md
+AGENTS.md
+docs/plans/

@@ -40,7 +40,7 @@ Neither half needs a new source of information. Both need to stop throwing away 
   door, rings opening on click, EEA no longer drawn — is designed and agreed, and is the *next*
   release. It is better served by having real paths to draw, which this release produces.
 - **Any AI or language model**, local or remote. A remote one breaks the first non-negotiable in
-  `CLAUDE.md` and would mean uploading a client's processing records to a third party, which is the
+  `CONTRIBUTING.md` and would mean uploading a client's processing records to a third party, which is the
   practice this tool exists to examine. A bundled local one keeps the promise and loses the
   download size.
 - **ROPA as a separate importer.** A register is one document among others: optional, accepted
@@ -230,14 +230,14 @@ die.
 ## 9. Testing
 
 Tests before implementation, per the existing method. `tests/core` goes from 117 toward roughly 150,
-accounted for per task in the commit message as `CLAUDE.md` requires.
+accounted for per task in the commit message, as `CONTRIBUTING.md` requires.
 
 Rust gets cases for the caps and for hostile input: a page minting a thousand cookies, a storage key
 of a megabyte, control characters in a field name, a cap being hit and surfacing as a gap.
 
 ## 10. Gates
 
-Per `CLAUDE.md`: coder implements, reviewer reviews every task, security-auditor gates any task
+Each task is implemented, then reviewed independently; a security review gates any task
 touching network, filesystem, IPC or preload — which is steps 5–8, since they touch CDP, script
 injection into untrusted pages, and new data crossing IPC into the renderer. The security review is
 wanted on the design of those steps before implementation, not only on the diff after.

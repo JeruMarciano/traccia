@@ -41,7 +41,7 @@ permissions:
 # note exists to break. Tick the `macos` input, or push a tag, when the full matrix is wanted.
 #
 # What this gives up is macOS CI coverage between releases, which is the coverage a developer
-# working on a Mac already performs by hand before every commit (CLAUDE.md's gates: cargo test,
+# working on a Mac already performs by hand before every commit (CONTRIBUTING.md's checks: cargo test,
 # clippy).
 #
 # If the repository is ever made public, Actions is free and unlimited and both of these

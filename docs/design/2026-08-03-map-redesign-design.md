@@ -130,7 +130,7 @@ repeated per empty field is the loudest thing on the page.
 - Layout fixtures: a project with zero doors, one door, seven doors (palette cycles), a place
   fed by two doors (two parallel lines), a declared place with no flows (neutral line), no
   controller named yet ("Your organisation").
-- The real-fixture rule from CLAUDE.md applies from task one: the sample project used to approve
+- The real-fixture rule from CONTRIBUTING.md applies from the first task: the sample project used to approve
   this design (Rossi Editore srl — three subject groups, three doors, five purpose groups, two
   unknowns) becomes a committed fixture, and every layout claim is checked against what it
   actually draws.
