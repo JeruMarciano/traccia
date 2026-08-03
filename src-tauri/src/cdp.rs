@@ -40,6 +40,309 @@ pub struct ObservedHost {
     pub request_count: u32,
 }
 
+/// One cookie the browser held when the scan ended, capped and sanitised —
+/// see [`sanitise_cookies`]. The cookie's own `value` is never extracted;
+/// only these four fields ever leave the page.
+///
+/// Serialises to `ScanResult["cookies"][n]` in `src/core/types.ts`, field for
+/// field with `RawScanCookie`: `name`, `domain`, `session`,
+/// `expiresEpochSeconds`. `f64` rather than an integer because CDP hands back
+/// `expires` as a float and core receives a JSON number either way.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanCookie {
+    pub name: String,
+    pub domain: String,
+    pub session: bool,
+    pub expires_epoch_seconds: f64,
+}
+
+/// One form field found on one visited page — never its value, see
+/// [`FORM_PROBE`].
+///
+/// Serialises to `ScanResult["formFields"][n]` in `src/core/types.ts`, field
+/// for field with `RawFormField`: `page`, `name`, `type`, `autocomplete`,
+/// `label`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormField {
+    pub page: String,
+    pub name: String,
+    pub r#type: String,
+    pub autocomplete: String,
+    pub label: String,
+}
+
+/// One `localStorage`/`sessionStorage` entry found on a visited page — its
+/// key name and the byte length of its value, never the value itself. See
+/// [`STORAGE_PROBE`].
+///
+/// Serialises to `ScanResult["storageKeys"][n]` in `src/core/types.ts`, field
+/// for field with `RawStorageKey`: `scope`, `key`, `bytes`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageKey {
+    pub scope: String,
+    pub key: String,
+    pub bytes: u64,
+}
+
+/// The most cookies one scan will record. The browser is driving a page this
+/// app does not trust, so this is a bound on attacker-chosen data, the same
+/// reasoning as [`MAX_HOSTS`]. Reaching it is a gap, never a silent
+/// truncation.
+const MAX_COOKIES: usize = 512;
+/// The most form fields one whole scan will record, across every page — not
+/// per page. [`FORM_PROBE`] itself already stops at 64 per page, so an
+/// ordinary ten-page walk (the [`crate::scan`] budget) can still trip this at
+/// 640; hitting it is a gap, the designed behaviour, not an accident.
+const MAX_FORM_FIELDS: usize = 256;
+/// The longest any one captured form-field string may be after [`tame`] —
+/// `name`, `type`, `autocomplete`, `label`. **Not** `page` — see
+/// [`MAX_PAGE_URL`] — a real URL routinely exceeds 128 characters, and
+/// truncating it here would merge two distinct long URLs into the one
+/// collection point Task 9 groups by `page`. The same number is baked into
+/// [`FORM_PROBE`] itself as the in-page `.slice(0, 128)` on every element
+/// string before it ever becomes a WebSocket frame — see that constant's doc
+/// comment for why capping the element count alone is not enough.
+const MAX_FIELD_TEXT: usize = 128;
+/// The longest [`page_identity`] will return, after [`tame`]. Aligned with
+/// `scan::MAX_URL_LEN` (2048) — the bound already enforced on any URL this
+/// module is ever handed, by `scan::parse_target` on the entry URL and by
+/// [`same_origin_links`]'s own filtering on every link followed after it —
+/// rather than with [`MAX_FIELD_TEXT`], which is sized for a short attribute
+/// value, not a path. A page's own bound, not a shared one: two distinct long
+/// URLs must not truncate to the same prefix and merge into one door.
+const MAX_PAGE_URL: usize = 2048;
+/// The longest a cookie `name` may be after [`tame`].
+const MAX_COOKIE_NAME: usize = 256;
+/// The longest a cookie `domain` may be after [`tame`] — one hostname, the
+/// same bound as [`MAX_HOST_LEN`].
+const MAX_COOKIE_DOMAIN: usize = 253;
+/// The most storage keys one whole scan will record, across every page and
+/// both `localStorage` and `sessionStorage`, after deduplication on
+/// `(scope, key)`. Reaching it is a gap, the same designed behaviour as
+/// [`MAX_FORM_FIELDS`].
+const MAX_STORAGE_KEYS: usize = 256;
+/// The longest a storage `key` may be after [`tame`] — the same number is
+/// baked into [`STORAGE_PROBE`] itself as the in-page `.slice(0, 128)` on the
+/// unsliced key before it ever becomes a WebSocket frame, for the same
+/// reason as [`MAX_FIELD_TEXT`]: capping the entry count alone does not bound
+/// the bytes a single unsliced `DOMString` could carry.
+const MAX_KEY_LEN: usize = 128;
+
+/// Bounds and cleans a string read off a hostile page: at most `max_chars`
+/// **characters**, never bytes, and every Unicode `Cc` (control) or `Cf`
+/// (format — this is where the bidi override characters live: U+200E/U+200F,
+/// U+202A-U+202E, U+2066-U+2069) character replaced with `'?'` rather than
+/// deleted.
+///
+/// Characters, not bytes, because `s.chars().take(max_chars).collect()`
+/// cannot panic mid-codepoint on a hostile multibyte string the way a byte
+/// slice could. Replaced rather than deleted so a name is never silently
+/// rewritten into a *different valid* name — a cookie called
+/// `sess\u{200E}ion` truncated by deletion reads as `session`, a real cookie
+/// that never existed. Every other printable Unicode character — accented
+/// Italian letters, emoji — passes through untouched: this is not an
+/// ASCII-only filter, and must not be replaced with one (`redact_authority`
+/// is ASCII-only and would mangle "città", "cognome").
+///
+/// Shared by every sanitiser in this module that reads a string out of the
+/// page: cookies here, and later form fields and storage keys.
+fn tame(raw: &str, max_chars: usize) -> String {
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+    raw.chars()
+        .take(max_chars)
+        .map(|c| match c.general_category() {
+            GeneralCategory::Control | GeneralCategory::Format => '?',
+            _ => c,
+        })
+        .collect()
+}
+
+/// Reads exactly four named keys from each raw cookie object handed back by
+/// `Network.getAllCookies` — `name`, `domain`, `session`, `expires` — and
+/// nothing else. The cookie's own `value` is never read, never copied, never
+/// logged; there is no `#[serde(flatten)]` and no deserialising into a struct
+/// that carries it.
+///
+/// An entry of the wrong shape — including an `expires` that is not finite
+/// (`NaN`/`+-inf`, which `serde_json::to_string` errors on and would
+/// otherwise turn a completed scan into `SCAN_FAILED`) — is dropped and
+/// counted rather than propagated. A finite `expires` is clamped to
+/// `-1.0 ..= 4e9` before being retained. `name` and `domain` are run through
+/// [`tame`] and bounded by [`MAX_COOKIE_NAME`]/[`MAX_COOKIE_DOMAIN`].
+///
+/// Returns the retained cookies, capped at [`MAX_COOKIES`], and whether
+/// anything was dropped or capped — the caller folds that into
+/// `possible_gaps`; hitting the cap must never read as a clean sheet.
+fn sanitise_cookies(raw: &[serde_json::Value]) -> (Vec<ScanCookie>, bool) {
+    let mut gap = false;
+    let mut cookies = Vec::new();
+    for value in raw {
+        if cookies.len() >= MAX_COOKIES {
+            gap = true;
+            continue;
+        }
+        let name = value.get("name").and_then(|v| v.as_str());
+        let domain = value.get("domain").and_then(|v| v.as_str());
+        let session = value.get("session").and_then(|v| v.as_bool());
+        let expires = value
+            .get("expires")
+            .and_then(|v| v.as_f64())
+            .filter(|e| e.is_finite());
+        let (Some(name), Some(domain), Some(session), Some(expires)) =
+            (name, domain, session, expires)
+        else {
+            gap = true;
+            continue;
+        };
+        cookies.push(ScanCookie {
+            name: tame(name, MAX_COOKIE_NAME),
+            domain: tame(domain, MAX_COOKIE_DOMAIN),
+            session,
+            expires_epoch_seconds: expires.clamp(-1.0, 4e9),
+        });
+    }
+    (cookies, gap)
+}
+
+/// Reads the `name`, `type`, `autocomplete` and `label` keys [`FORM_PROBE`]
+/// hands back for one page, and nothing else — in particular, never a
+/// `value` (there is none in the probe's own shape) and never anything the
+/// page itself might claim about its own URL, such as a `location` key
+/// planted in `raw` [B4].
+///
+/// `page` is not read from `raw` at all: it is `page_url`, exactly as
+/// [`Driver::run`]'s own walk already knows it, reduced by [`page_identity`]
+/// to scheme + authority + path with the query and fragment stripped. An
+/// entry of the wrong shape is dropped and counted rather than propagated,
+/// the same rule as [`sanitise_cookies`]. `already` is how many fields this
+/// scan has retained on earlier pages; the scan-wide [`MAX_FORM_FIELDS`] cap
+/// is enforced against `already + fields.len()`, so a page-by-page walk stays
+/// bounded across the whole scan and not just within one page's probe.
+fn sanitise_form_fields(
+    page_url: &str,
+    raw: &serde_json::Value,
+    already: usize,
+) -> (Vec<FormField>, bool) {
+    let mut gap = false;
+    let mut fields = Vec::new();
+    let page = page_identity(page_url);
+    let Some(array) = raw.as_array() else {
+        return (fields, true);
+    };
+    for item in array {
+        if already + fields.len() >= MAX_FORM_FIELDS {
+            gap = true;
+            continue;
+        }
+        let name = item.get("name").and_then(|v| v.as_str());
+        let field_type = item.get("type").and_then(|v| v.as_str());
+        let autocomplete = item.get("autocomplete").and_then(|v| v.as_str());
+        let label = item.get("label").and_then(|v| v.as_str());
+        let (Some(name), Some(field_type), Some(autocomplete), Some(label)) =
+            (name, field_type, autocomplete, label)
+        else {
+            gap = true;
+            continue;
+        };
+        fields.push(FormField {
+            page: page.clone(),
+            name: tame(name, MAX_FIELD_TEXT),
+            r#type: tame(field_type, MAX_FIELD_TEXT),
+            autocomplete: tame(autocomplete, MAX_FIELD_TEXT),
+            label: tame(label, MAX_FIELD_TEXT),
+        });
+    }
+    (fields, gap)
+}
+
+/// Reads the `scope`, `key` and `bytes` keys [`STORAGE_PROBE`] hands back,
+/// and nothing else — in particular never a value: `bytes` is the length the
+/// probe computed *inside the page*, and the value string itself is never
+/// part of the probe's own return shape.
+///
+/// An entry of the wrong shape, a `scope` outside `{local, session}`, or a
+/// `bytes` that is not a non-negative integer is dropped and counted rather
+/// than propagated, the same rule as [`sanitise_form_fields`]. `key` is run
+/// through [`tame`] and bounded by [`MAX_KEY_LEN`] — defensively, since
+/// [`STORAGE_PROBE`] already slices it in the page.
+///
+/// `existing` is every storage key this scan has already retained, on
+/// earlier pages; deduplication is on `(scope, key)`, first-seen wins, so a
+/// key already retained is silently skipped rather than counted twice or
+/// treated as a gap — that is normal behaviour, not a defect. The scan-wide
+/// [`MAX_STORAGE_KEYS`] cap is enforced against `existing.len()` plus what
+/// this call retains, so a page-by-page walk stays bounded across the whole
+/// scan and not just within one page's probe, mirroring
+/// [`sanitise_form_fields`]'s `already` parameter.
+fn sanitise_storage_keys(
+    raw: &serde_json::Value,
+    existing: &[StorageKey],
+) -> (Vec<StorageKey>, bool) {
+    let mut gap = false;
+    let mut keys = Vec::new();
+    let Some(array) = raw.as_array() else {
+        return (keys, true);
+    };
+    for item in array {
+        let scope = item.get("scope").and_then(|v| v.as_str());
+        let key = item.get("key").and_then(|v| v.as_str());
+        let bytes = item.get("bytes").and_then(|v| v.as_u64());
+        let (Some(scope), Some(key), Some(bytes)) = (scope, key, bytes) else {
+            gap = true;
+            continue;
+        };
+        if scope != "local" && scope != "session" {
+            gap = true;
+            continue;
+        }
+        let key = tame(key, MAX_KEY_LEN);
+        // Dedupe before the cap check: a later-page repeat of a key this scan
+        // already retained is not a new entry, so it must not be charged
+        // against MAX_STORAGE_KEYS — only a genuinely new key can trip the
+        // cap. Checking the cap first would record a gap at exactly the cap
+        // for a duplicate that cost nothing, which is not the honest claim
+        // `possible_gaps` makes.
+        if existing.iter().chain(keys.iter()).any(|k| k.scope == scope && k.key == key) {
+            continue;
+        }
+        if existing.len() + keys.len() >= MAX_STORAGE_KEYS {
+            gap = true;
+            continue;
+        }
+        keys.push(StorageKey {
+            scope: scope.to_string(),
+            key,
+            // The byte length as first observed: if this key's value grows or
+            // shrinks later in the walk, dedupe (first-seen wins) means this
+            // scan keeps reporting the size it saw the first time, never the
+            // current one.
+            bytes,
+        });
+    }
+    (keys, gap)
+}
+
+/// The visited URL reduced to what identifies the page in a form-field
+/// report: scheme + authority + path, with the query and fragment stripped
+/// and the result run through [`tame`] and bounded by [`MAX_PAGE_URL`] — not
+/// [`MAX_FIELD_TEXT`], which is too short for a real path and would merge two
+/// distinct long URLs into the one collection point Task 9 groups by `page`.
+///
+/// This is *the walk's own knowledge* of what it navigated to [B4] — the
+/// argument is always the URL [`Driver::run`] itself passed to
+/// [`Driver::visit`], never anything read off the page (`location.href` is
+/// page-controlled and must never stand in for it: a hostile page could
+/// rewrite `history.replaceState` to attribute its fields to a different
+/// page entirely).
+fn page_identity(url: &str) -> String {
+    let without_fragment = url.split('#').next().unwrap_or("");
+    let without_query = without_fragment.split('?').next().unwrap_or("");
+    tame(without_query, MAX_PAGE_URL)
+}
+
 /// What one scan saw.
 ///
 /// Serialises to
@@ -47,7 +350,7 @@ pub struct ObservedHost {
 /// `ScanResult`'s remaining field, `scannedHost`, is the caller's — Task 8
 /// knows the URL the user typed and this module deliberately does not decide
 /// what "the scanned host" is.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Observation {
     pub hosts: Vec<ObservedHost>,
@@ -96,6 +399,33 @@ pub struct Observation {
     /// count as detail — never with the same signal a completed-but-holey scan
     /// gets.**
     pub stopped_early: bool,
+    /// The browser's cookie jar at the moment the scan ended, capped and
+    /// sanitised. Populated once, by `observe()`, after the page walk
+    /// completes — never by [`Driver::observation`] itself, which stays a
+    /// pure fold over what the driver already collected and is exercised
+    /// directly by most of this module's own tests without a transport that
+    /// answers `Network.getAllCookies` at all.
+    pub cookies: Vec<ScanCookie>,
+    /// Consent-manager names the entry page's `CONSENT_PROBE` matched against
+    /// [`CONSENT_MARKERS`], in the order the probe found them, deduplicated.
+    /// Evaluated once, on the entry page only — the banner is a site-level
+    /// fact, not a per-page one. Empty means the probe found none of the four
+    /// known markers, not that no consent banner exists at all: a page using
+    /// a fifth product is indistinguishable from a page using none.
+    pub consent_markers: Vec<String>,
+    /// Form fields found across every visited page, capped scan-wide at
+    /// [`MAX_FORM_FIELDS`] — never a value, only the field's own shape. A
+    /// page whose navigation was refused (`Driver::visit` returned `false`)
+    /// contributes nothing here: it was never loaded under its own identity,
+    /// so nothing on it was ever this walk's to attribute.
+    pub form_fields: Vec<FormField>,
+    /// `localStorage`/`sessionStorage` key names and value sizes found across
+    /// every visited page, deduplicated on `(scope, key)` first-seen wins and
+    /// capped scan-wide at [`MAX_STORAGE_KEYS`] — never a value, only the
+    /// key's own name and size. A page whose navigation was refused
+    /// (`Driver::visit` returned `false`) contributes nothing here, the same
+    /// rule as [`Self::form_fields`].
+    pub storage_keys: Vec<StorageKey>,
 }
 
 /// The most distinct gap keys tracked before the ledger stops deduplicating.
@@ -134,6 +464,112 @@ impl GapLedger {
             .unwrap_or(u32::MAX)
             .saturating_add(self.beyond_capacity)
     }
+}
+
+/// A fixed expression, evaluated once on the entry page: checks a handful of
+/// known consent-management-platform window globals and DOM ids and returns
+/// an array of the names it found. Nothing from the page is ever interpolated
+/// into this string — it is a `const`, sent byte for byte — and the *result*
+/// is only trusted after [`sanitise_consent_markers`] filters it back against
+/// [`CONSENT_MARKERS`], so a page that returns an arbitrary array (a poisoned
+/// `Array.prototype.push`, or simply a page that fabricates the return value)
+/// cannot inject a name this module did not already know.
+const CONSENT_PROBE: &str = r#"(() => {
+  const found = [];
+  try { if (window.OneTrust || document.getElementById('onetrust-banner-sdk')) found.push('OneTrust'); } catch (e) { }
+  try { if (window.Cookiebot || document.getElementById('CybotCookiebotDialog')) found.push('Cookiebot'); } catch (e) { }
+  try { if (window._iub || document.querySelector('[id^="iubenda"]')) found.push('Iubenda'); } catch (e) { }
+  try { if (window.UC_UI || document.querySelector('[id^="usercentrics"]')) found.push('Usercentrics'); } catch (e) { }
+  return found;
+})()"#;
+
+/// The only marker names [`sanitise_consent_markers`] will ever pass through.
+const CONSENT_MARKERS: [&str; 4] = ["OneTrust", "Cookiebot", "Iubenda", "Usercentrics"];
+
+/// A fixed expression, evaluated once per visited page: reads `name`, `type`,
+/// `autocomplete` and a best-effort `label` off every `input`/`select`/
+/// `textarea` element — never `value` (spec §5.3, "Never values — nothing is
+/// ever typed"). Nothing from the page is interpolated into this string; it
+/// is a `const`, sent byte for byte, the same discipline as [`CONSENT_PROBE`].
+///
+/// **[B1]** Every string is sliced *inside the page*, at [`MAX_FIELD_TEXT`] —
+/// the same number [`sanitise_form_fields`] uses on the Rust side — before
+/// any of it becomes a WebSocket frame: chromiumoxide's `Connection` is built
+/// with `max_message_size: None, max_frame_size: None` (`conn.rs:43-46`), so
+/// capping the element count at 64 alone would not bound the bytes a single
+/// unsliced DOMString could carry.
+///
+/// `label` is coerced with `String(...)` before `.slice()` runs, even though
+/// it is only ever assigned a string (`|| ''`) inside its own `try`: a page
+/// that poisons `Node.prototype.textContent`'s getter to return an object
+/// instead of a string would otherwise throw on the bare `.slice()` call,
+/// which sits outside that `try` — and that throw would zero every field on
+/// the whole page, not just the poisoned one.
+const FORM_PROBE: &str = r#"(() => {
+  const out = [];
+  const els = document.querySelectorAll('input, select, textarea');
+  for (let i = 0; i < els.length && out.length < 64; i++) {
+    const el = els[i];
+    let label = '';
+    try { if (el.labels && el.labels[0]) label = el.labels[0].textContent || ''; } catch (e) {}
+    out.push({ name: String(el.name || el.id || '').slice(0, 128), type: String(el.type || el.tagName || '').toLowerCase().slice(0, 128),
+               autocomplete: String(el.getAttribute('autocomplete') || '').slice(0, 128), label: String(label).slice(0, 128) });
+  }
+  return out;
+})()"#;
+
+/// A fixed expression, evaluated once per visited page: reads the key names
+/// and value sizes of `window.localStorage` and `window.sessionStorage` —
+/// never a value itself (spec §5.3, "Never values"). Nothing from the page
+/// is interpolated into this string; it is a `const`, sent byte for byte,
+/// the same discipline as [`CONSENT_PROBE`]/[`FORM_PROBE`].
+///
+/// **[B1]** The key is sliced *inside the page*, at [`MAX_KEY_LEN`] (128) —
+/// the same number [`sanitise_storage_keys`] uses on the Rust side — before
+/// it ever becomes a WebSocket frame, the same reasoning as [`FORM_PROBE`]'s
+/// own doc comment: `store.key(i)` is a page-controlled `DOMString` of
+/// arbitrary length, and capping the entry count at 128 alone would not
+/// bound the bytes a single unsliced key could carry.
+///
+/// The byte length is read from the **unsliced** key, before the key is
+/// truncated for return: `getItem` is only ever called with the full key, so
+/// a key longer than [`MAX_KEY_LEN`] still reports its value's true length
+/// rather than a spurious zero from `getItem` on a truncated name that no
+/// longer exists in the store.
+const STORAGE_PROBE: &str = r#"(() => {
+  const out = [];
+  const read = (store, scope) => {
+    try {
+      for (let i = 0; i < store.length && out.length < 128; i++) {
+        const full = String(store.key(i));
+        out.push({ scope, key: full.slice(0, 128), bytes: (store.getItem(full) || '').length });
+      }
+    } catch (e) {}
+  };
+  read(window.localStorage, 'local');
+  read(window.sessionStorage, 'session');
+  return out;
+})()"#;
+
+/// Filters a raw `Runtime.evaluate` result against [`CONSENT_MARKERS`]: order
+/// preserved, duplicates dropped, anything not in the fixed set dropped. A
+/// non-array result — including a string, a number, `null`, or an object —
+/// yields no markers rather than an error: the probe's own return value is
+/// hostile-page-controlled and must never be trusted past this filter.
+fn sanitise_consent_markers(raw: &serde_json::Value) -> Vec<String> {
+    let Some(array) = raw.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in array {
+        let Some(name) = item.as_str() else {
+            continue;
+        };
+        if CONSENT_MARKERS.contains(&name) && !out.iter().any(|seen| seen == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
 }
 
 /// The longest a host may be before it is refused: RFC 1035's limit on a
@@ -683,6 +1119,18 @@ struct Driver<T: CdpTransport> {
     /// Distinct places the map may be incomplete. See [`GapLedger`] and
     /// [`Observation::possible_gaps`].
     gaps: GapLedger,
+    /// Set once, by [`Driver::probe_consent`], right after the entry page's
+    /// own visit — never touched again afterwards, including on any
+    /// subsequent page in the walk.
+    consent_markers: Vec<String>,
+    /// Form fields accumulated across every page [`Driver::visit`] actually
+    /// loaded, via [`Driver::probe_form_fields`] — see
+    /// [`Observation::form_fields`].
+    form_fields: Vec<FormField>,
+    /// Storage keys accumulated across every page [`Driver::visit`] actually
+    /// loaded, via [`Driver::probe_storage_keys`] — see
+    /// [`Observation::storage_keys`].
+    storage_keys: Vec<StorageKey>,
 }
 
 impl<T: CdpTransport> Driver<T> {
@@ -694,6 +1142,9 @@ impl<T: CdpTransport> Driver<T> {
             attached: Vec::new(),
             load_fired: false,
             gaps: GapLedger::default(),
+            consent_markers: Vec::new(),
+            form_fields: Vec::new(),
+            storage_keys: Vec::new(),
         }
     }
 
@@ -1040,9 +1491,18 @@ impl<T: CdpTransport> Driver<T> {
              .filter(function (h) {{ return h.length <= {MAX_LINK_LEN}; }})\
              .slice(0, {MAX_LINKS_READ}))"
         ));
+        // [B2] The call contract every probe (`Runtime.evaluate`) follows:
+        // read the value back rather than a remote object handle, never pause
+        // the page on an uncaught throw, never wait on a promise this probe
+        // did not ask the page to make, and never let a poisoned prototype
+        // getter or a `Storage` subclass whose `length` hangs run past its own
+        // budget and take the whole scan down with it.
         params.return_by_value = Some(true);
-        // The page is untrusted; an expression that throws must not pause it.
         params.silent = Some(true);
+        params.await_promise = Some(false);
+        params.timeout = Some(chromiumoxide::cdp::js_protocol::runtime::TimeDelta::new(
+            2000.0,
+        ));
         let result = match self
             .call(
                 Some(session.clone()),
@@ -1052,9 +1512,21 @@ impl<T: CdpTransport> Driver<T> {
             .await
         {
             Ok(result) => result,
-            Err(CdpError::Protocol { .. }) => return Ok(Vec::new()),
-            Err(e) => return Err(e),
+            Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
+            // [B2] Any other error from a probe call is a gap, not a scan
+            // failure — including the timeout above firing.
+            Err(_) => {
+                self.gaps.note("links:probe-failed");
+                return Ok(Vec::new());
+            }
         };
+        if result.get("exceptionDetails").is_some() {
+            // [B2] The probe produced nothing: a hostile page that makes the
+            // querying call throw a fabricated value must not have that value
+            // read as the probe's answer.
+            self.gaps.note("links:probe-exception");
+            return Ok(Vec::new());
+        }
         let Some(json) = result
             .get("result")
             .and_then(|r| r.get("value"))
@@ -1063,6 +1535,154 @@ impl<T: CdpTransport> Driver<T> {
             return Ok(Vec::new());
         };
         Ok(serde_json::from_str::<Vec<String>>(json).unwrap_or_default())
+    }
+
+    /// Evaluates the fixed [`CONSENT_PROBE`] once, on the entry page's own
+    /// session, and filters the result through [`sanitise_consent_markers`].
+    ///
+    /// [B2]: the same call contract as [`Driver::links`] — `return_by_value`,
+    /// `silent`, `await_promise: false`, an explicit 2000 ms timeout.
+    /// `exceptionDetails` present, or any `CdpError` other than
+    /// [`CdpError::BrowserGone`], is zero markers plus one counted gap;
+    /// `result.value` is simply not read in that case. `BrowserGone` still
+    /// fails the scan, the one error this module never swallows.
+    async fn probe_consent(&mut self, session: &SessionId) -> Result<Vec<String>, CdpError> {
+        let mut params = EvaluateParams::new(CONSENT_PROBE.to_string());
+        params.return_by_value = Some(true);
+        params.silent = Some(true);
+        params.await_promise = Some(false);
+        params.timeout = Some(chromiumoxide::cdp::js_protocol::runtime::TimeDelta::new(
+            2000.0,
+        ));
+        let result = match self
+            .call(
+                Some(session.clone()),
+                MethodId::from(EvaluateParams::IDENTIFIER),
+                to_params(&params)?,
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
+            Err(_) => {
+                self.gaps.note("consent:probe-failed");
+                return Ok(Vec::new());
+            }
+        };
+        if result.get("exceptionDetails").is_some() {
+            self.gaps.note("consent:probe-exception");
+            return Ok(Vec::new());
+        }
+        let Some(value) = result.get("result").and_then(|r| r.get("value")) else {
+            return Ok(Vec::new());
+        };
+        Ok(sanitise_consent_markers(value))
+    }
+
+    /// Evaluates the fixed [`FORM_PROBE`] on `session` and folds the result
+    /// through [`sanitise_form_fields`], attributing every retained field to
+    /// `page_url`.
+    ///
+    /// [B2]: the same call contract as [`Driver::links`]/[`Driver::probe_consent`]
+    /// — `return_by_value`, `silent`, `await_promise: false`, an explicit
+    /// 2000 ms timeout. `exceptionDetails` present, or any `CdpError` other
+    /// than [`CdpError::BrowserGone`], is zero fields plus one counted gap.
+    ///
+    /// **[B4]** Callers must only ever pass `session` for the page's own
+    /// top-level session, never any attached cross-origin iframe session —
+    /// that would capture a third party's fields under the scanned site's
+    /// name — and only after [`Driver::visit`] returned `true` for `page_url`.
+    async fn probe_form_fields(
+        &mut self,
+        session: &SessionId,
+        page_url: &str,
+    ) -> Result<Vec<FormField>, CdpError> {
+        let mut params = EvaluateParams::new(FORM_PROBE.to_string());
+        params.return_by_value = Some(true);
+        params.silent = Some(true);
+        params.await_promise = Some(false);
+        params.timeout = Some(chromiumoxide::cdp::js_protocol::runtime::TimeDelta::new(
+            2000.0,
+        ));
+        let result = match self
+            .call(
+                Some(session.clone()),
+                MethodId::from(EvaluateParams::IDENTIFIER),
+                to_params(&params)?,
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
+            Err(_) => {
+                self.gaps.note("form_fields:probe-failed");
+                return Ok(Vec::new());
+            }
+        };
+        if result.get("exceptionDetails").is_some() {
+            self.gaps.note("form_fields:probe-exception");
+            return Ok(Vec::new());
+        }
+        let Some(value) = result.get("result").and_then(|r| r.get("value")) else {
+            return Ok(Vec::new());
+        };
+        let (fields, sanitiser_gap) =
+            sanitise_form_fields(page_url, value, self.form_fields.len());
+        if sanitiser_gap {
+            self.gaps.note("form_fields:sanitiser");
+        }
+        Ok(fields)
+    }
+
+    /// Evaluates the fixed [`STORAGE_PROBE`] on `session` and folds the
+    /// result through [`sanitise_storage_keys`], deduplicating against every
+    /// key this scan has already retained.
+    ///
+    /// [B2]: the same call contract as [`Driver::links`]/[`Driver::probe_consent`]/
+    /// [`Driver::probe_form_fields`] — `return_by_value`, `silent`,
+    /// `await_promise: false`, an explicit 2000 ms timeout. `exceptionDetails`
+    /// present, or any `CdpError` other than [`CdpError::BrowserGone`], is
+    /// zero keys plus one counted gap.
+    ///
+    /// **[B4]** Callers must only ever pass `session` for the page's own
+    /// top-level session, never any attached cross-origin iframe session —
+    /// that would capture a third party's storage keys and attribute them to
+    /// the scanned site — and only after [`Driver::visit`] returned `true`.
+    async fn probe_storage_keys(&mut self, session: &SessionId) -> Result<Vec<StorageKey>, CdpError> {
+        let mut params = EvaluateParams::new(STORAGE_PROBE.to_string());
+        params.return_by_value = Some(true);
+        params.silent = Some(true);
+        params.await_promise = Some(false);
+        params.timeout = Some(chromiumoxide::cdp::js_protocol::runtime::TimeDelta::new(
+            2000.0,
+        ));
+        let result = match self
+            .call(
+                Some(session.clone()),
+                MethodId::from(EvaluateParams::IDENTIFIER),
+                to_params(&params)?,
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
+            Err(_) => {
+                self.gaps.note("storage_keys:probe-failed");
+                return Ok(Vec::new());
+            }
+        };
+        if result.get("exceptionDetails").is_some() {
+            self.gaps.note("storage_keys:probe-exception");
+            return Ok(Vec::new());
+        }
+        let Some(value) = result.get("result").and_then(|r| r.get("value")) else {
+            return Ok(Vec::new());
+        };
+        let (keys, sanitiser_gap) = sanitise_storage_keys(value, &self.storage_keys);
+        if sanitiser_gap {
+            self.gaps.note("storage_keys:sanitiser");
+        }
+        Ok(keys)
     }
 
     async fn run(
@@ -1093,21 +1713,42 @@ impl<T: CdpTransport> Driver<T> {
             .map_err(|e| CdpError::Serialisation(e.to_string()))?;
         let Some(session) = self.page_session(created.target_id.inner(), cancel).await? else {
             // Cancelled before the page even attached.
-            return Ok(self.observation(0, true));
+            return self.finish(0, true).await;
         };
 
         // `max_pages` counts the entry page, so a budget of zero loads
         // nothing rather than loading one page anyway.
         let mut pages_visited = 0u32;
         if cancel.is_cancelled() || max_pages == 0 {
-            return Ok(self.observation(pages_visited, cancel.is_cancelled()));
+            return self.finish(pages_visited, cancel.is_cancelled()).await;
         }
         if self.visit(&session, entry_url, cancel).await? {
             pages_visited += 1;
+            // Once, on the entry page's own session — the banner is a
+            // site-level fact, not a per-page one, so no later page in the
+            // walk ever repeats this call.
+            if !cancel.is_cancelled() {
+                self.consent_markers = self.probe_consent(&session).await?;
+            }
+            // [B4] Only for a page this walk actually loaded, only on the
+            // page's own top-level session, and attributed to `entry_url` as
+            // the walk itself knows it — never to anything the page's own
+            // `location` might report.
+            if !cancel.is_cancelled() {
+                let fields = self.probe_form_fields(&session, entry_url).await?;
+                self.form_fields.extend(fields);
+            }
+            // [B4] Same discipline as the form-field probe above: only a page
+            // this walk actually loaded, only on the page's own top-level
+            // session.
+            if !cancel.is_cancelled() {
+                let keys = self.probe_storage_keys(&session).await?;
+                self.storage_keys.extend(keys);
+            }
         }
 
         if cancel.is_cancelled() || max_pages <= 1 {
-            return Ok(self.observation(pages_visited, cancel.is_cancelled()));
+            return self.finish(pages_visited, cancel.is_cancelled()).await;
         }
         let hrefs = self.links(&session).await?;
         let refs: Vec<&str> = hrefs.iter().map(|s| s.as_str()).collect();
@@ -1118,9 +1759,17 @@ impl<T: CdpTransport> Driver<T> {
             }
             if self.visit(&session, &url, cancel).await? {
                 pages_visited += 1;
+                if !cancel.is_cancelled() {
+                    let fields = self.probe_form_fields(&session, &url).await?;
+                    self.form_fields.extend(fields);
+                }
+                if !cancel.is_cancelled() {
+                    let keys = self.probe_storage_keys(&session).await?;
+                    self.storage_keys.extend(keys);
+                }
             }
         }
-        Ok(self.observation(pages_visited, cancel.is_cancelled()))
+        self.finish(pages_visited, cancel.is_cancelled()).await
     }
 
     fn observation(&mut self, pages_visited: u32, stopped_early: bool) -> Observation {
@@ -1137,7 +1786,64 @@ impl<T: CdpTransport> Driver<T> {
             pages_visited,
             possible_gaps: self.gaps.count(),
             stopped_early,
+            // Never fetched here — see the field's own doc comment.
+            cookies: Vec::new(),
+            consent_markers: std::mem::take(&mut self.consent_markers),
+            form_fields: std::mem::take(&mut self.form_fields),
+            storage_keys: std::mem::take(&mut self.storage_keys),
         }
+    }
+
+    /// Sends `Network.getAllCookies` on the browser-level session — a fixed
+    /// method string, no parameters built from anything the page said — and
+    /// folds the result through [`sanitise_cookies`].
+    ///
+    /// [B2]: every `CdpError` here except [`CdpError::BrowserGone`] is
+    /// swallowed into zero cookies plus a reported gap, the same rule as
+    /// every other probe call in this module. `BrowserGone` is propagated: a
+    /// browser that died mid-scan fails the scan regardless of which command
+    /// was in flight when it happened.
+    async fn fetch_cookies(&mut self) -> Result<(Vec<ScanCookie>, bool), CdpError> {
+        match self
+            .call(
+                None,
+                MethodId::from("Network.getAllCookies"),
+                serde_json::json!({}),
+            )
+            .await
+        {
+            Ok(result) => {
+                let raw: Vec<serde_json::Value> = result
+                    .get("cookies")
+                    .and_then(|c| c.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                // A response with no `cookies` array at all is itself a gap:
+                // nothing here trusts the shape of what a browser answers.
+                let malformed = result.get("cookies").and_then(|c| c.as_array()).is_none();
+                let (cookies, sanitiser_gap) = sanitise_cookies(&raw);
+                Ok((cookies, sanitiser_gap || malformed))
+            }
+            Err(CdpError::BrowserGone) => Err(CdpError::BrowserGone),
+            Err(_) => Ok((Vec::new(), true)),
+        }
+    }
+
+    /// The one place that builds the [`Observation`] a completed, cancelled,
+    /// or budget-exhausted `run()` actually returns: folds in the cookie
+    /// jar, captured once here rather than in [`Driver::observation`] itself.
+    async fn finish(
+        &mut self,
+        pages_visited: u32,
+        stopped_early: bool,
+    ) -> Result<Observation, CdpError> {
+        let (cookies, gap) = self.fetch_cookies().await?;
+        if gap {
+            self.gaps.note("cookies:gap");
+        }
+        let mut observation = self.observation(pages_visited, stopped_early);
+        observation.cookies = cookies;
+        Ok(observation)
     }
 }
 
@@ -1336,6 +2042,28 @@ mod tests {
             same_origin_links("https://rossi-editore.it/", &refs, 10).len(),
             10
         );
+    }
+
+    #[test]
+    fn the_probe_expression_is_a_constant_and_never_interpolated() {
+        // The guarantee is structural: the probe is `const`, and the send site is asserted
+        // by the existing params_for harness to carry exactly this string.
+        assert!(CONSENT_PROBE.contains("OneTrust"));
+        assert!(!CONSENT_PROBE.contains("{}"), "no format holes in a fixed expression");
+    }
+
+    #[test]
+    fn a_page_claiming_a_marker_not_in_the_fixed_set_is_ignored() {
+        let raw = serde_json::json!(["OneTrust", "EvilCMP<script>", "Iubenda"]);
+        assert_eq!(
+            sanitise_consent_markers(&raw),
+            vec!["OneTrust".to_string(), "Iubenda".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_non_array_result_is_no_markers_not_an_error() {
+        assert!(sanitise_consent_markers(&serde_json::json!("OneTrust")).is_empty());
     }
 
     #[test]
@@ -2242,6 +2970,10 @@ mod tests {
             pages_visited: 4,
             possible_gaps: 0,
             stopped_early: false,
+            cookies: Vec::new(),
+            consent_markers: Vec::new(),
+            form_fields: Vec::new(),
+            storage_keys: Vec::new(),
         };
         assert_eq!(
             serde_json::to_value(&observation).expect("json"),
@@ -2249,8 +2981,500 @@ mod tests {
                 "hosts": [{"host": "doubleclick.net", "requestCount": 3}],
                 "pagesVisited": 4,
                 "possibleGaps": 0,
-                "stoppedEarly": false
+                "stoppedEarly": false,
+                "cookies": [],
+                "consentMarkers": [],
+                "formFields": [],
+                "storageKeys": []
             })
         );
+    }
+
+    // --- Task 5: the cookie jar ---
+
+    #[test]
+    fn a_thousand_minted_cookies_cap_at_max_and_record_a_gap() {
+        let raw: Vec<serde_json::Value> = (0..1000)
+            .map(|i| {
+                json!({"name": format!("c{i}"), "domain": "evil.example", "session": false, "expires": 2e9})
+            })
+            .collect();
+        let (cookies, gap) = sanitise_cookies(&raw);
+        assert_eq!(cookies.len(), MAX_COOKIES);
+        assert!(gap, "hitting the cap must surface as a gap, never a clean sheet");
+    }
+
+    #[test]
+    fn control_characters_and_bidi_overrides_are_tamed_and_lengths_bounded() {
+        let raw = vec![json!({
+            "name": "a\u{0007}b".repeat(400),
+            "domain": "x.it",
+            "session": true,
+            "expires": -1.0
+        })];
+        let (cookies, _) = sanitise_cookies(&raw);
+        assert!(!cookies[0].name.contains('\u{0007}'));
+        assert_eq!(cookies[0].name.chars().count(), MAX_COOKIE_NAME);
+    }
+
+    #[test]
+    fn a_right_to_left_override_at_the_truncation_boundary_is_replaced_not_left_to_rewrite_the_line(
+    ) {
+        let raw = vec![json!({
+            "name": format!("{}\u{202E}", "x".repeat(MAX_COOKIE_NAME - 2)),
+            "domain": "x.it",
+            "session": true,
+            "expires": -1.0
+        })];
+        let (cookies, _) = sanitise_cookies(&raw);
+        assert!(!cookies[0].name.contains('\u{202E}'));
+    }
+
+    #[test]
+    fn a_cookie_of_invalid_shape_is_dropped_and_counted_not_propagated() {
+        let raw = vec![
+            json!({"name": 5}),
+            json!({"name": "ok", "domain": "x.it", "session": true, "expires": -1.0}),
+        ];
+        let (cookies, gap) = sanitise_cookies(&raw);
+        assert_eq!(cookies.len(), 1);
+        assert!(gap);
+    }
+
+    #[test]
+    fn a_cookie_whose_expiry_is_not_a_number_is_dropped_not_serialised() {
+        let raw = vec![json!({
+            "name": "ok",
+            "domain": "x.it",
+            "session": false,
+            "expires": f64::NAN
+        })];
+        let (cookies, gap) = sanitise_cookies(&raw);
+        assert_eq!(
+            cookies.len(),
+            0,
+            "a non-finite expires must never reach a ScanCookie"
+        );
+        assert!(gap);
+        for c in &cookies {
+            assert!(
+                serde_json::to_string(c).is_ok(),
+                "no non-finite float ever reaches serde_json::to_string"
+            );
+        }
+    }
+
+    #[test]
+    fn serialises_cookies_in_the_shape_the_renderer_expects() {
+        let json = serde_json::to_string(&ScanCookie {
+            name: "_ga".into(),
+            domain: "google.com".into(),
+            session: false,
+            expires_epoch_seconds: 2.0e9,
+        })
+        .unwrap();
+        for key in ["\"name\"", "\"domain\"", "\"session\"", "\"expiresEpochSeconds\""] {
+            assert!(json.contains(key), "missing {key}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_transport_that_refuses_runtime_evaluate_yields_a_gap_not_an_error() {
+        // [B2] Every CdpError from a probe call except BrowserGone is
+        // swallowed into zero results plus one possible_gaps note — the path
+        // that keeps a page hanging a probe past its own timeout from turning
+        // a whole scan into SCAN_FAILED.
+        let mut transport = FakeTransport::new();
+        transport.refuse_on("Runtime.evaluate", Some("SESSION-A"));
+        let mut driver = Driver::new(transport);
+        let session = SessionId::from("SESSION-A".to_string());
+        let hrefs = driver
+            .links(&session)
+            .await
+            .expect("a refused probe is a gap, not a scan failure");
+        assert!(hrefs.is_empty());
+        assert_eq!(driver.observation(1, false).possible_gaps, 1);
+    }
+
+    // --- Task 8: form fields ---
+
+    #[test]
+    fn the_in_page_slice_matches_the_rust_side_cap() {
+        // [B1]. Mirrors caps_the_length_of_each_href_inside_the_page above:
+        // capping the element count (64) alone does not bound the bytes a
+        // single unsliced DOMString can carry, since chromiumoxide's
+        // Connection sets max_frame_size to None. There is one number, used
+        // both here and as MAX_FIELD_TEXT.
+        //
+        // Asserted by *count*, not mere presence: four strings are captured
+        // per field (name, type, autocomplete, label) and every one of them
+        // must be sliced, so a future edit that adds a fifth captured string
+        // without slicing it — or removes the slice from just one of the
+        // four — must fail here rather than pass on the other three still
+        // matching.
+        let needle = format!("slice(0, {MAX_FIELD_TEXT})");
+        let count = FORM_PROBE.matches(&needle).count();
+        assert_eq!(
+            count, 4,
+            "expected exactly 4 in-page slices to MAX_FIELD_TEXT (name, type, \
+             autocomplete, label), found {count}: {FORM_PROBE}"
+        );
+    }
+
+    #[test]
+    fn a_page_is_reduced_to_scheme_authority_and_path_never_the_pages_own_report() {
+        // [B4]. Query and fragment stripped; the value comes from the walk's
+        // own URL knowledge, never from anything the page could claim about
+        // itself.
+        let raw = json!([{
+            "name": "email",
+            "type": "email",
+            "autocomplete": "email",
+            "label": "Email",
+            // A hostile or merely confused page reporting its own location —
+            // must never be read for `page`.
+            "location": "https://evil.example/somewhere-else",
+        }]);
+        let (fields, _) = sanitise_form_fields("https://x.it/c?utm=1&id=abc#frag", &raw, 0);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].page, "https://x.it/c");
+    }
+
+    #[test]
+    fn a_page_url_longer_than_max_field_text_survives_untruncated() {
+        // Security advisory: `page` must not share MAX_FIELD_TEXT (128) with
+        // the short field attributes — a real URL routinely exceeds that,
+        // and two distinct long URLs truncated to the same 128-char prefix
+        // would merge into one collection point once Task 9 groups by
+        // `page`. It gets its own bound, MAX_PAGE_URL, aligned with
+        // scan::MAX_URL_LEN (2048).
+        let long_path = "a".repeat(200);
+        let url = format!("https://x.it/{long_path}");
+        assert!(url.len() > MAX_FIELD_TEXT, "the fixture must exceed the old shared bound");
+        let raw = json!([{"name": "n", "type": "text", "autocomplete": "off", "label": ""}]);
+        let (fields, _) = sanitise_form_fields(&url, &raw, 0);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].page, url, "a long real URL must not be truncated");
+    }
+
+    #[test]
+    fn strings_are_tamed_and_bounded_to_max_field_text() {
+        let raw = json!([{
+            "name": "a\u{0007}b".repeat(200),
+            "type": "text",
+            "autocomplete": "off",
+            "label": format!("{}\u{202E}", "x".repeat(MAX_FIELD_TEXT - 2)),
+        }]);
+        let (fields, _) = sanitise_form_fields("https://x.it/page", &raw, 0);
+        assert_eq!(fields.len(), 1);
+        assert!(!fields[0].name.contains('\u{0007}'));
+        assert_eq!(fields[0].name.chars().count(), MAX_FIELD_TEXT);
+        assert!(!fields[0].label.contains('\u{202E}'));
+    }
+
+    #[test]
+    fn a_form_field_of_invalid_shape_is_dropped_and_counted_not_propagated() {
+        let raw = json!([
+            {"name": 5},
+            {"name": "ok", "type": "text", "autocomplete": "off", "label": ""},
+        ]);
+        let (fields, gap) = sanitise_form_fields("https://x.it/", &raw, 0);
+        assert_eq!(fields.len(), 1);
+        assert!(gap);
+    }
+
+    #[test]
+    fn hitting_the_scan_wide_cap_records_a_gap_never_a_clean_sheet() {
+        // MAX_FORM_FIELDS bounds the whole scan, not one page's probe (which
+        // already stops at 64 in FORM_PROBE itself), so the cap is enforced
+        // against `already` plus what this call would add.
+        let raw: Vec<serde_json::Value> = (0..10)
+            .map(|i| {
+                json!({"name": format!("f{i}"), "type": "text", "autocomplete": "off", "label": ""})
+            })
+            .collect();
+        let (fields, gap) =
+            sanitise_form_fields("https://x.it/", &json!(raw), MAX_FORM_FIELDS - 2);
+        assert_eq!(fields.len(), 2);
+        assert!(gap, "hitting the cap must surface as a gap, never a clean sheet");
+    }
+
+    #[test]
+    fn a_non_array_probe_result_yields_no_fields_and_a_gap() {
+        let (fields, gap) = sanitise_form_fields("https://x.it/", &json!("not-an-array"), 0);
+        assert!(fields.is_empty());
+        assert!(gap);
+    }
+
+    #[test]
+    fn serialises_form_fields_in_the_shape_the_renderer_expects() {
+        let json = serde_json::to_string(&FormField {
+            page: "https://x.it/contatti".into(),
+            name: "email".into(),
+            r#type: "email".into(),
+            autocomplete: "email".into(),
+            label: "Email".into(),
+        })
+        .unwrap();
+        for key in ["\"page\"", "\"name\"", "\"type\"", "\"autocomplete\"", "\"label\""] {
+            assert!(json.contains(key), "missing {key}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_transport_that_refuses_the_form_probe_yields_a_gap_not_an_error() {
+        // [B2], same call contract as links()/probe_consent().
+        let mut transport = FakeTransport::new();
+        transport.refuse_on("Runtime.evaluate", Some("SESSION-A"));
+        let mut driver = Driver::new(transport);
+        let session = SessionId::from("SESSION-A".to_string());
+        let fields = driver
+            .probe_form_fields(&session, "https://x.it/")
+            .await
+            .expect("a refused probe is a gap, not a scan failure");
+        assert!(fields.is_empty());
+        assert_eq!(driver.observation(1, false).possible_gaps, 1);
+    }
+
+    #[tokio::test]
+    async fn visits_the_entry_page_and_attributes_its_form_fields_to_the_walks_own_url() {
+        let mut transport = FakeTransport::new();
+        transport
+            .results
+            .insert("Target.createTarget".to_string(), json!({"targetId": "T-1"}));
+        transport.inject_on(
+            "Target.createTarget",
+            None,
+            attached_event("SESSION-A", "T-1", "page", true),
+        );
+        transport.inject_on(
+            "Page.navigate",
+            Some("SESSION-A"),
+            CdpJsonEventMessage {
+                method: MethodId::from(EventLoadEventFired::IDENTIFIER),
+                session_id: Some("SESSION-A".to_string()),
+                params: json!({"timestamp": 0.0}),
+            },
+        );
+        transport.results.insert(
+            "Runtime.evaluate".to_string(),
+            json!({"result": {"value": [
+                {"name": "email", "type": "email", "autocomplete": "email", "label": "Email"}
+            ]}}),
+        );
+        // The post-load settle window reads with no more events queued; a
+        // transport that ends the stream there reads as `BrowserGone`
+        // (correctly, for a live browser), so this fake — the one transport
+        // in this suite that actually drives a `visit()` all the way through
+        // a load — has to look like a browser that is merely quiet rather
+        // than one that hung up.
+        transport.hang_when_empty = true;
+        let mut driver = Driver::new(transport);
+        let observation = driver
+            .run(
+                "https://rossi-editore.it/c?utm=1&id=abc#frag",
+                1,
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("run");
+        assert_eq!(
+            observation.form_fields,
+            vec![FormField {
+                page: "https://rossi-editore.it/c".to_string(),
+                name: "email".to_string(),
+                r#type: "email".to_string(),
+                autocomplete: "email".to_string(),
+                label: "Email".to_string(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_navigation_contributes_no_fields_for_that_page() {
+        let mut transport = FakeTransport::new();
+        transport
+            .results
+            .insert("Target.createTarget".to_string(), json!({"targetId": "T-1"}));
+        transport.inject_on(
+            "Target.createTarget",
+            None,
+            attached_event("SESSION-A", "T-1", "page", true),
+        );
+        transport.refuse_on("Page.navigate", Some("SESSION-A"));
+        let mut driver = Driver::new(transport);
+        let observation = driver
+            .run("https://rossi-editore.it/", 1, &CancellationToken::new())
+            .await
+            .expect("run");
+        assert_eq!(observation.pages_visited, 0);
+        assert!(observation.form_fields.is_empty());
+        assert!(
+            !driver
+                .transport
+                .methods_for(Some("SESSION-A"))
+                .contains(&"Runtime.evaluate"),
+            "a page whose navigation was refused must never be probed at all"
+        );
+    }
+
+    // --- Task 10: storage keys ---
+
+    #[test]
+    fn the_in_page_slice_of_the_storage_key_matches_the_rust_side_cap() {
+        // [B1]. The megabyte-long-key defence: the key is sliced inside the
+        // page, at MAX_KEY_LEN, before `store.key(i)` ever becomes a
+        // WebSocket frame — the Rust-side cap alone does not bound it.
+        let needle = format!("slice(0, {MAX_KEY_LEN})");
+        let count = STORAGE_PROBE.matches(&needle).count();
+        assert_eq!(
+            count, 1,
+            "expected exactly 1 in-page slice to MAX_KEY_LEN, found {count}: {STORAGE_PROBE}"
+        );
+    }
+
+    #[test]
+    fn a_thousand_minted_keys_cap_at_max_and_record_a_gap() {
+        let raw: Vec<serde_json::Value> = (0..1000)
+            .map(|i| json!({"scope": "local", "key": format!("k{i}"), "bytes": 4}))
+            .collect();
+        let (keys, gap) = sanitise_storage_keys(&json!(raw), &[]);
+        assert_eq!(keys.len(), MAX_STORAGE_KEYS);
+        assert!(gap, "hitting the cap must surface as a gap, never a clean sheet");
+    }
+
+    #[test]
+    fn a_megabyte_long_key_is_tamed_and_bounded_to_max_key_len() {
+        // Defensive, Rust-side truncation even though STORAGE_PROBE already
+        // slices in the page — see [B1].
+        let long_key = "a".repeat(1_000_000);
+        let raw = json!([{"scope": "local", "key": long_key, "bytes": 4}]);
+        let (keys, _) = sanitise_storage_keys(&raw, &[]);
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key.chars().count(), MAX_KEY_LEN);
+    }
+
+    #[test]
+    fn control_and_bidi_characters_in_a_key_are_tamed() {
+        let raw = json!([{
+            "scope": "session",
+            "key": format!("{}\u{202E}", "x".repeat(MAX_KEY_LEN - 1)),
+            "bytes": 4,
+        }]);
+        let (keys, _) = sanitise_storage_keys(&raw, &[]);
+        assert_eq!(keys.len(), 1);
+        assert!(!keys[0].key.contains('\u{202E}'));
+        assert_eq!(keys[0].key.chars().count(), MAX_KEY_LEN);
+    }
+
+    #[test]
+    fn a_scope_outside_local_or_session_is_dropped_and_counted() {
+        let raw = json!([
+            {"scope": "cookie", "key": "k", "bytes": 4},
+            {"scope": "local", "key": "ok", "bytes": 4},
+        ]);
+        let (keys, gap) = sanitise_storage_keys(&raw, &[]);
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "ok");
+        assert!(gap);
+    }
+
+    #[test]
+    fn a_storage_entry_of_invalid_shape_is_dropped_and_counted_not_propagated() {
+        let raw = json!([
+            {"scope": "local", "key": 5, "bytes": 4},
+            {"scope": "local", "key": "ok", "bytes": 4},
+        ]);
+        let (keys, gap) = sanitise_storage_keys(&raw, &[]);
+        assert_eq!(keys.len(), 1);
+        assert!(gap);
+    }
+
+    #[test]
+    fn a_non_array_probe_result_yields_no_storage_keys_and_a_gap() {
+        let (keys, gap) = sanitise_storage_keys(&json!("not-an-array"), &[]);
+        assert!(keys.is_empty());
+        assert!(gap);
+    }
+
+    #[test]
+    fn dedupes_on_scope_and_key_first_seen_wins_across_pages() {
+        let existing = vec![StorageKey {
+            scope: "local".to_string(),
+            key: "seen".to_string(),
+            bytes: 1,
+        }];
+        let raw = json!([
+            // Same (scope, key) as an already-retained entry — first-seen
+            // wins, so this later value must not replace it.
+            {"scope": "local", "key": "seen", "bytes": 999},
+            {"scope": "local", "key": "new", "bytes": 2},
+        ]);
+        let (keys, gap) = sanitise_storage_keys(&raw, &existing);
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "new");
+        assert!(!gap, "a duplicate key is normal behaviour, not a gap");
+    }
+
+    #[test]
+    fn a_duplicate_key_at_exactly_the_cap_costs_nothing_and_records_no_gap() {
+        // Review finding: the cap check must run after the dedupe check. At
+        // exactly MAX_STORAGE_KEYS already retained, a later-page repeat of
+        // one of them is not a new entry and must not be charged against the
+        // cap — no growth, no gap.
+        let existing: Vec<StorageKey> = (0..MAX_STORAGE_KEYS)
+            .map(|i| StorageKey {
+                scope: "local".to_string(),
+                key: format!("k{i}"),
+                bytes: 1,
+            })
+            .collect();
+        let raw = json!([{"scope": "local", "key": "k0", "bytes": 999}]);
+        let (keys, gap) = sanitise_storage_keys(&raw, &existing);
+        assert!(keys.is_empty(), "a duplicate must not grow the retained set");
+        assert!(!gap, "a duplicate at the cap costs nothing and is not a gap");
+    }
+
+    #[test]
+    fn a_genuinely_new_key_at_exactly_the_cap_records_a_gap() {
+        let existing: Vec<StorageKey> = (0..MAX_STORAGE_KEYS)
+            .map(|i| StorageKey {
+                scope: "local".to_string(),
+                key: format!("k{i}"),
+                bytes: 1,
+            })
+            .collect();
+        let raw = json!([{"scope": "local", "key": "brand-new", "bytes": 2}]);
+        let (keys, gap) = sanitise_storage_keys(&raw, &existing);
+        assert!(keys.is_empty(), "a genuinely new key past the cap must not be retained");
+        assert!(gap, "a genuinely new key that trips the cap is a real gap");
+    }
+
+    #[test]
+    fn serialises_storage_keys_in_the_shape_the_renderer_expects() {
+        let json = serde_json::to_string(&StorageKey {
+            scope: "local".into(),
+            key: "auth_token".into(),
+            bytes: 42,
+        })
+        .unwrap();
+        for key in ["\"scope\"", "\"key\"", "\"bytes\""] {
+            assert!(json.contains(key), "missing {key}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_transport_that_refuses_the_storage_probe_yields_a_gap_not_an_error() {
+        // [B2], same call contract as links()/probe_consent()/probe_form_fields().
+        let mut transport = FakeTransport::new();
+        transport.refuse_on("Runtime.evaluate", Some("SESSION-A"));
+        let mut driver = Driver::new(transport);
+        let session = SessionId::from("SESSION-A".to_string());
+        let keys = driver
+            .probe_storage_keys(&session)
+            .await
+            .expect("a refused probe is a gap, not a scan failure");
+        assert!(keys.is_empty());
+        assert_eq!(driver.observation(1, false).possible_gaps, 1);
     }
 }

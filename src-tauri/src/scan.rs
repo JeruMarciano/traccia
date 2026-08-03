@@ -61,7 +61,7 @@ pub struct Target {
 /// What one scan returns to the renderer. Matches `ScanResult` in
 /// `src/core/types.ts` field for field; a mismatch fails silently there, which
 /// is why the test asserts on the key names rather than on the struct.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanOutput {
     pub scanned_host: String,
@@ -69,6 +69,26 @@ pub struct ScanOutput {
     pub pages_visited: u32,
     pub possible_gaps: u32,
     pub stopped_early: bool,
+    pub cookies: Vec<cdp::ScanCookie>,
+    /// Consent-manager names found on the entry page, from the fixed set in
+    /// `cdp::CONSENT_MARKERS`. Empty means none of those four were found, not
+    /// that no consent banner exists.
+    pub consent_markers: Vec<String>,
+    /// Form fields found across every visited page — see
+    /// `cdp::Observation::form_fields`. Never a value, only the field's own
+    /// shape.
+    pub form_fields: Vec<cdp::FormField>,
+    /// Storage key names and value sizes found across every visited page —
+    /// see `cdp::Observation::storage_keys`. Never a value, only the key's
+    /// own name and size.
+    pub storage_keys: Vec<cdp::StorageKey>,
+    /// When the cookie jar was captured — `SystemTime::now()` taken as close
+    /// as this module can get to the moment `cdp::observe` actually sent
+    /// `Network.getAllCookies`, deliberately not `profile_dir_path()` time,
+    /// which is tens of seconds earlier for a multi-page scan. A backwards
+    /// system clock must not panic a scan, hence `unwrap_or(0)` rather than
+    /// `.unwrap()`.
+    pub captured_at_epoch_seconds: u64,
 }
 
 /// Turn what the user typed into a target, or refuse it.
@@ -411,6 +431,15 @@ async fn run_pipeline(
     }
 
     let observed = cdp::observe(&launched, &target.url, MAX_PAGES, cancel_token).await;
+    // As close as this module can get to the moment `observe` actually sent
+    // `Network.getAllCookies` — the call already happened, at the end of
+    // `observe`'s own await, tens of seconds after `profile_dir_path()` on a
+    // multi-page scan. `unwrap_or(0)` rather than `.unwrap()`: a backwards
+    // system clock must not panic a scan.
+    let captured_at_epoch_seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
 
     // Unconditional, and before the observation is unwrapped: the browser must
     // be dead and its profile gone whether the scan succeeded, failed or was
@@ -468,6 +497,11 @@ async fn run_pipeline(
             pages_visited: observation.pages_visited,
             possible_gaps: observation.possible_gaps,
             stopped_early: observation.stopped_early,
+            cookies: observation.cookies,
+            consent_markers: observation.consent_markers,
+            form_fields: observation.form_fields,
+            storage_keys: observation.storage_keys,
+            captured_at_epoch_seconds,
         })
     })();
 
@@ -717,6 +751,26 @@ mod tests {
             pages_visited: 4,
             possible_gaps: 2,
             stopped_early: true,
+            cookies: vec![cdp::ScanCookie {
+                name: "_ga".into(),
+                domain: "rossi-editore.it".into(),
+                session: false,
+                expires_epoch_seconds: 2.0e9,
+            }],
+            consent_markers: vec!["OneTrust".into()],
+            form_fields: vec![cdp::FormField {
+                page: "https://rossi-editore.it/contatti".into(),
+                name: "email".into(),
+                r#type: "email".into(),
+                autocomplete: "email".into(),
+                label: "Email".into(),
+            }],
+            storage_keys: vec![cdp::StorageKey {
+                scope: "local".into(),
+                key: "auth_token".into(),
+                bytes: 42,
+            }],
+            captured_at_epoch_seconds: 1_700_000_000,
         })
         .expect("serialise");
         assert!(json.contains("\"scannedHost\""));
@@ -724,6 +778,14 @@ mod tests {
         assert!(json.contains("\"pagesVisited\""));
         assert!(json.contains("\"possibleGaps\""));
         assert!(json.contains("\"stoppedEarly\""));
+        assert!(json.contains("\"cookies\""));
+        assert!(json.contains("\"expiresEpochSeconds\""));
+        assert!(json.contains("\"consentMarkers\""));
+        assert!(json.contains("\"formFields\""));
+        assert!(json.contains("\"autocomplete\""));
+        assert!(json.contains("\"storageKeys\""));
+        assert!(json.contains("\"bytes\""));
+        assert!(json.contains("\"capturedAtEpochSeconds\""));
     }
 
     #[test]

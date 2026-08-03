@@ -11,6 +11,8 @@ const DICT: VendorDictionary = {
 
 const IDS = { prefix: 'scan1' }
 
+const CAPTURED_AT = 1_700_000_000
+
 function result(over: Partial<ScanResult> = {}): ScanResult {
   return {
     scannedHost: 'rossi-editore.it',
@@ -18,8 +20,24 @@ function result(over: Partial<ScanResult> = {}): ScanResult {
     pagesVisited: 1,
     possibleGaps: 0,
     stoppedEarly: false,
+    cookies: [],
+    formFields: [],
+    storageKeys: [],
+    consentMarkers: [],
+    capturedAtEpochSeconds: 0,
     ...over,
   }
+}
+
+function scanResultWith(over: Partial<ScanResult> = {}): ScanResult {
+  return result({ capturedAtEpochSeconds: CAPTURED_AT, ...over })
+}
+
+const GA_COOKIE = {
+  name: '_ga',
+  domain: 'google-analytics.com',
+  session: false,
+  expiresEpochSeconds: CAPTURED_AT + 86_400 * 400,
 }
 
 describe('ingestScan', () => {
@@ -298,6 +316,41 @@ describe('ingestScan', () => {
     expect(JSON.stringify(before)).toBe(snapshot)
   })
 
+  it('a recognised cookie attaches to the place its domain identifies', () => {
+    const result = scanResultWith({
+      cookies: [{ name: '_ga', domain: 'google-analytics.com', session: false, expiresEpochSeconds: CAPTURED_AT + 86_400 * 400 }],
+    })
+    const after = ingestScan(emptyProject(), result, DICT, { prefix: 's1' })
+    const ga = after.places.find((p) => p.name === 'Google Analytics')
+    expect(after.cookies).toEqual([
+      { name: '_ga', domain: 'google-analytics.com', thirdParty: true, lifetime: 'a-year-or-more', placeId: ga?.id },
+    ])
+  })
+
+  it('an unrecognised cookie is kept and attached to nothing, not dropped', () => {
+    const result = scanResultWith({
+      cookies: [{ name: 'sid', domain: 'cdn.example-widget.com', session: true, expiresEpochSeconds: -1 }],
+    })
+    const after = ingestScan(emptyProject(), result, DICT, { prefix: 's1' })
+    expect(after.cookies).toHaveLength(1)
+    expect(after.cookies?.[0]?.placeId).toBeUndefined()
+  })
+
+  it('rescanning replaces cookie facts rather than duplicating them', () => {
+    const once = ingestScan(emptyProject(), scanResultWith({ cookies: [GA_COOKIE] }), DICT, { prefix: 's1' })
+    const twice = ingestScan(once, scanResultWith({ cookies: [GA_COOKIE] }), DICT, { prefix: 's2' })
+    expect(twice.cookies).toHaveLength(1)
+  })
+
+  it('a first-party session cookie is recorded as exactly that', () => {
+    const result = scanResultWith({
+      scannedHost: 'rossi-editore.it',
+      cookies: [{ name: 'lang', domain: 'rossi-editore.it', session: true, expiresEpochSeconds: -1 }],
+    })
+    const after = ingestScan(emptyProject(), result, DICT, { prefix: 's1' })
+    expect(after.cookies?.[0]).toMatchObject({ thirdParty: false, lifetime: 'session' })
+  })
+
   describe('own-subdomain skipping', () => {
     // Rust admission (src-tauri/src/scan.rs, src-tauri/src/admission.rs)
     // deliberately admits label-boundary subdomains of the scan origin as
@@ -369,6 +422,31 @@ describe('ingestScan', () => {
       expect(supplier?.holder).toBe('supplier')
     })
 
+  })
+
+  describe('collection points', () => {
+    it('a page with collecting fields becomes one collection point', () => {
+      const result = scanResultWith({ formFields: [
+        { page: 'https://rossi-editore.it/contatti', name: 'email', type: 'email', autocomplete: '', label: '' },
+        { page: 'https://rossi-editore.it/contatti', name: 'csrf', type: 'hidden', autocomplete: '', label: '' },
+      ]})
+      const after = ingestScan(emptyProject(), result, DICT, { prefix: 's1' })
+      expect(after.collectionPoints).toEqual([
+        { id: 's1-cp-1', page: 'https://rossi-editore.it/contatti', fields: [{ name: 'email', kind: 'email' }], sources: [], confidence: 'observed' },
+      ])
+    })
+    it('a page with only non-collecting fields creates no door', () => {
+      const result = scanResultWith({ formFields: [{ page: 'https://x.it/', name: 'go', type: 'submit', autocomplete: '', label: '' }] })
+      expect(ingestScan(emptyProject(), result, DICT, { prefix: 's1' }).collectionPoints).toEqual([])
+    })
+    it('rescanning a page replaces its door rather than duplicating it', () => {
+      const r = scanResultWith({ formFields: [{ page: 'https://x.it/c', name: 'email', type: 'email', autocomplete: '', label: '' }] })
+      const twice = ingestScan(ingestScan(emptyProject(), r, DICT, { prefix: 's1' }), r, DICT, { prefix: 's2' })
+      expect(twice.collectionPoints).toHaveLength(1)
+    })
+  })
+
+  describe('own-subdomain skipping (suffix)', () => {
     it('does NOT skip a suffix-trick host where the scanned host appears as a prefix label chain', () => {
       const p = ingestScan(
         emptyProject(),

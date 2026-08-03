@@ -4133,6 +4133,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "traccia",
+ "unicode-properties",
  "zip",
 ]
 

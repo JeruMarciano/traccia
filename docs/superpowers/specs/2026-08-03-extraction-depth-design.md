@@ -1,7 +1,7 @@
 # Extraction depth — design
 
 **Date:** 2026-08-03
-**Status:** agreed, awaiting implementation plan
+**Status:** §5 implemented (branch extraction-depth-scan, 2026-08-03); §11's after-measurement pending one user-run rescan
 **Builds on:** `2026-07-30-data-flow-mapper-design.md` (the core model), `2026-08-01-external-map-release-design.md` (v0.1), the v0.2 internal map.
 
 Working title: *stop discarding what we already have*.

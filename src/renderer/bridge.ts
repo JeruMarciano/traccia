@@ -47,6 +47,39 @@ function isObservedHost(v: unknown): v is ObservedHost {
   )
 }
 
+function isRawScanCookie(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const c = v as Record<string, unknown>
+  return (
+    typeof c.name === 'string' &&
+    typeof c.domain === 'string' &&
+    typeof c.session === 'boolean' &&
+    typeof c.expiresEpochSeconds === 'number'
+  )
+}
+
+function isRawFormField(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const f = v as Record<string, unknown>
+  return (
+    typeof f.page === 'string' &&
+    typeof f.name === 'string' &&
+    typeof f.type === 'string' &&
+    typeof f.autocomplete === 'string' &&
+    typeof f.label === 'string'
+  )
+}
+
+function isRawStorageKey(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const s = v as Record<string, unknown>
+  return (
+    (s.scope === 'local' || s.scope === 'session') &&
+    typeof s.key === 'string' &&
+    typeof s.bytes === 'number'
+  )
+}
+
 /**
  * A narrow structural check on what `start_scan` returns. Rust's `ScanOutput` checks what
  * protects the machine (the bytes parse, the shape serialises); this checks what protects the
@@ -62,7 +95,16 @@ function isScanResult(v: unknown): v is ScanResult {
     r.hosts.every(isObservedHost) &&
     typeof r.pagesVisited === 'number' &&
     typeof r.possibleGaps === 'number' &&
-    typeof r.stoppedEarly === 'boolean'
+    typeof r.stoppedEarly === 'boolean' &&
+    Array.isArray(r.cookies) &&
+    r.cookies.every(isRawScanCookie) &&
+    Array.isArray(r.formFields) &&
+    r.formFields.every(isRawFormField) &&
+    Array.isArray(r.storageKeys) &&
+    r.storageKeys.every(isRawStorageKey) &&
+    Array.isArray(r.consentMarkers) &&
+    r.consentMarkers.every((m: unknown) => typeof m === 'string') &&
+    typeof r.capturedAtEpochSeconds === 'number'
   )
 }
 

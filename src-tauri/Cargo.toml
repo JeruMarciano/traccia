@@ -88,6 +88,22 @@ tauri-build = { version = "2", features = [] }
 #                         before this line existed. Declaring it changes what
 #                         this crate may name, not what the linker sees.
 #
+#   unicode-properties     Task 5's `tame()` — the control/format-character
+#                         stripper shared by the cookie, form-field and
+#                         storage-key sanitisers (Tasks 5, 8, 10) — needs the
+#                         Unicode General_Category property to tell Cc
+#                         (control) and Cf (format, which is where the bidi
+#                         override characters U+202A-U+202E live) apart from
+#                         everything else printable, which `char::is_control`
+#                         alone does not cover (it is Cc only). Same shape of
+#                         argument as futures-core above: already compiled in
+#                         regardless, this time via lopdf's own dependency
+#                         chain — `cargo tree -e normal -i unicode-properties`
+#                         prints `unicode-properties v0.1.4 <- stringprep v0.1.5
+#                         <- lopdf v0.44.0 <- traccia v1.0.0` before this line
+#                         existed. SHIPPED BYTES: zero additional package in
+#                         Cargo.lock.
+#
 # Deliberately NOT taken:
 #   hyper / reqwest / h2  The proxy handles CONNECT only: parse a request line,
 #                         answer 200 or 403, then splice bytes. An HTTP stack
@@ -228,6 +244,7 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 calamine = { version = "0.36.1", default-features = false }
 lopdf = { version = "0.44.0", default-features = false }
 quick-xml = "0.41.0"
+unicode-properties = "0.1.4"
 
 [dev-dependencies]
 # Dev only. Never shipped.

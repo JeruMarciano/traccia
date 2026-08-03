@@ -1,4 +1,28 @@
-import type { Place, Project, SubjectGroup } from './types'
+import type {
+  CapturedCookie,
+  CollectionPoint,
+  CookieLifetime,
+  FormFieldKind,
+  Place,
+  Project,
+  SubjectGroup,
+} from './types'
+
+const COOKIE_LIFETIMES: readonly CookieLifetime[] = [
+  'session',
+  'under-a-day',
+  'under-a-year',
+  'a-year-or-more',
+]
+
+const FORM_FIELD_KINDS: readonly FormFieldKind[] = [
+  'email',
+  'phone',
+  'name',
+  'address',
+  'payment',
+  'free-text',
+]
 
 export const DEFAULT_PURPOSE_GROUPS = [
   'Selling',
@@ -45,6 +69,15 @@ export function validateProject(value: unknown): ValidationResult {
   for (const key of ['purposeGroups', 'subjectGroups', 'places', 'flows', 'observations']) {
     if (!Array.isArray(v[key])) errors.push(`${key} must be an array.`)
   }
+  if (v.cookies !== undefined && !Array.isArray(v.cookies)) {
+    errors.push('cookies must be an array.')
+  }
+  if (v.collectionPoints !== undefined && !Array.isArray(v.collectionPoints)) {
+    errors.push('collectionPoints must be an array.')
+  }
+
+  let validCookies: CapturedCookie[] = []
+  let validCollectionPoints: CollectionPoint[] = []
 
   if (errors.length === 0) {
     // The arrays themselves are confirmed to be arrays above, but a
@@ -95,9 +128,54 @@ export function validateProject(value: unknown): ValidationResult {
       if (!ids.has(f.from)) errors.push(`Flow ${f.id} refers to unknown id: ${f.from}`)
       if (!ids.has(f.to)) errors.push(`Flow ${f.id} refers to unknown id: ${f.to}`)
     })
+
+    const rawCookies = (v.cookies ?? []) as unknown[]
+    rawCookies.forEach((x, i) => {
+      if (
+        !isRecord(x) ||
+        typeof x.name !== 'string' ||
+        typeof x.domain !== 'string' ||
+        typeof x.thirdParty !== 'boolean' ||
+        typeof x.lifetime !== 'string' ||
+        !COOKIE_LIFETIMES.includes(x.lifetime as CookieLifetime)
+      ) {
+        errors.push(`cookies[${i}] must be an object with string name and domain, boolean thirdParty, and a valid lifetime.`)
+        return
+      }
+      validCookies.push(x as unknown as CapturedCookie)
+    })
+
+    const rawCollectionPoints = (v.collectionPoints ?? []) as unknown[]
+    rawCollectionPoints.forEach((x, i) => {
+      if (!isRecord(x) || typeof x.id !== 'string' || typeof x.page !== 'string' || !Array.isArray(x.fields)) {
+        errors.push(`collectionPoints[${i}] must be an object with string id and page, and an array of fields.`)
+        return
+      }
+      const fields = x.fields as unknown[]
+      let fieldsOk = true
+      fields.forEach((f, fi) => {
+        if (
+          !isRecord(f) ||
+          typeof f.name !== 'string' ||
+          typeof f.kind !== 'string' ||
+          !FORM_FIELD_KINDS.includes(f.kind as FormFieldKind)
+        ) {
+          errors.push(`collectionPoints[${i}].fields[${fi}] must be an object with a string name and a valid kind.`)
+          fieldsOk = false
+        }
+      })
+      if (!fieldsOk) return
+      validCollectionPoints.push(x as unknown as CollectionPoint)
+    })
   }
 
-  return errors.length === 0
-    ? { ok: true, project: value as Project }
-    : { ok: false, errors }
+  if (errors.length > 0) return { ok: false, errors }
+
+  const project: Project = {
+    ...(value as Project),
+    cookies: validCookies,
+    collectionPoints: validCollectionPoints,
+  }
+
+  return { ok: true, project }
 }
