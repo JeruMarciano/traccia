@@ -454,6 +454,39 @@ describe('retention read off the sentence', () => {
   it('does not read a number that is not a duration', () => {
     expect(retentionFor('Salesforce gestisce 24 utenti.', 'Salesforce')).toBeUndefined()
   })
+
+  it('takes the figure nearest the term, not the first in the sentence', () => {
+    // Two retentions in one sentence, each with its own subject. Reporting the first gave the CRM
+    // the ten years the accounting records are kept for.
+    expect(
+      retentionFor(
+        'I dati contabili sono conservati per 10 anni come previsto dalla normativa fiscale, ' +
+          'mentre i dati raccolti tramite Salesforce sono conservati per 24 mesi.',
+        'Salesforce',
+      ),
+    ).toBe('24 months')
+  })
+
+  it('takes a figure stated before the term over a decoy after it', () => {
+    expect(
+      retentionFor(
+        'I dati di Salesforce sono conservati per 24 mesi, mentre i log di sistema restano ' +
+          'archiviati per 10 anni.',
+        'Salesforce',
+      ),
+    ).toBe('24 months')
+  })
+
+  it('measures the distance inside the sentence, not from the start of the document', () => {
+    expect(
+      retentionFor(
+        'Questa informativa descrive i trattamenti svolti dal titolare. ' +
+          'I dati di Salesforce sono conservati per 24 mesi, mentre i log di sistema restano ' +
+          'archiviati per 10 anni.',
+        'Salesforce',
+      ),
+    ).toBe('24 months')
+  })
 })
 
 describe('jurisdiction read off the sentence', () => {
@@ -595,6 +628,67 @@ describe('categories of personal data', () => {
     // one confident false positive costs more than ten honest blanks.
     expect(
       categoriesFor('Salesforce non riceve il codice fiscale, solo il nome.', 'Salesforce'),
+    ).toBeUndefined()
+  })
+})
+
+// A sentence in an informativa lists several purposes at once, each with its own system, and the
+// whole sentence as the scope gave every one of them every category in it. The clause the term
+// sits in is the scope; a list of categories is not a list of clauses. See §4.7.
+describe('categories are read from the term’s own clause', () => {
+  const categoriesFor = (text: string, name: string): string[] | undefined =>
+    placesOnly(
+      extractCandidates([{ name: 'a.pdf', text }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES),
+    ).find((c) => c.name === name)?.dataCategories
+
+  const PURPOSES =
+    'I dati sono trattati per la gestione del payroll, per l’invio della newsletter tramite ' +
+    'Stripe e per le statistiche raccolte da google-analytics.com, che tratta i dati di navigazione.'
+
+  it('gives the category to the system whose clause names it', () => {
+    expect(categoriesFor(PURPOSES, 'Google Analytics')).toEqual(['Browsing data'])
+  })
+
+  it('does not give it to the other systems the sentence lists', () => {
+    expect(categoriesFor(PURPOSES, 'Payroll system')).toBeUndefined()
+    expect(categoriesFor(PURPOSES, 'Stripe')).toBeUndefined()
+  })
+
+  it('still reads a whole list of categories attached to one term', () => {
+    // Commas separate clauses and they also separate the items of a list. A run that names a
+    // category and says almost nothing else is the second kind and stays with the clause before it.
+    expect(categoriesFor('Salesforce tratta nome, codice fiscale ed email.', 'Salesforce')).toEqual([
+      'Name',
+      'Tax identifier',
+      'Email address',
+    ])
+  })
+
+  it('does not read across a contrast between two systems', () => {
+    const text = 'Il payroll gestisce le presenze, mentre Salesforce riceve il codice fiscale.'
+    expect(categoriesFor(text, 'Payroll system')).toBeUndefined()
+    expect(categoriesFor(text, 'Salesforce')).toEqual(['Tax identifier'])
+  })
+
+  it('does not read a short second clause back into the first across "mentre"', () => {
+    // "mentre" sets two subjects against each other, so what follows it is a claim of its own
+    // however briefly it is written -- otherwise a clause light enough to look like more of a list
+    // hands the second system's data to the first.
+    const text = 'Salesforce tratta il nome, mentre il payroll anche il codice fiscale.'
+    expect(categoriesFor(text, 'Salesforce')).toEqual(['Name'])
+    expect(categoriesFor(text, 'Payroll system')).toEqual(['Tax identifier'])
+  })
+
+  it('measures the term’s offset inside its sentence, not from the start of the document', () => {
+    const text =
+      'Questa informativa descrive i trattamenti svolti dal titolare. ' +
+      'Il payroll gestisce le presenze, mentre Salesforce riceve il codice fiscale.'
+    expect(categoriesFor(text, 'Payroll system')).toBeUndefined()
+  })
+
+  it('is undefined rather than widening back out when the term’s clause names none', () => {
+    expect(
+      categoriesFor('Il payroll è interno, mentre il CRM riceve nome ed email.', 'Payroll system'),
     ).toBeUndefined()
   })
 })

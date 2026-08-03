@@ -250,24 +250,37 @@ const RETENTION_UNITS: Readonly<Record<string, string>> = {
  */
 const RETENTION = new RegExp(
   `(^|[^\\p{L}\\p{N}])(\\d{1,4})\\s+(${Object.keys(RETENTION_UNITS).join('|')})(?![\\p{L}\\p{N}])`,
-  'iu',
+  'giu',
 )
 
 /**
- * How long the sentence says something is kept, or undefined. The first figure wins when a
- * sentence carries two: that is ambiguous by construction, and the user is shown the sentence.
+ * How long the sentence says something is kept, or undefined.
+ *
+ * `termAt` is the term's offset inside `sentence`, and the figure nearest it wins, as it does for
+ * a placement phrase. One sentence carries two retentions as easily as it carries two countries --
+ * "I dati contabili sono conservati per 10 anni …, mentre i dati raccolti tramite Salesforce sono
+ * conservati per 24 mesi" -- and taking the first gave the CRM the ten years the accounting
+ * records are kept for: inside the sentence, as §4.1 requires, and confidently wrong. On a tie the
+ * figure before the term wins, for the reason set out above `jurisdictionIn`.
  *
  * Not negation-guarded: "Non conserviamo i dati per 24 mesi" yields "24 months". The guard runs
  * on the term that anchors the sentence, not on the attributes read off it, and the confirm list
  * is the containment.
  */
-export function retentionIn(sentence: string): string | undefined {
-  const m = RETENTION.exec(sentence)
-  if (m === null) return undefined
-  const count = m[2]
-  const unit = RETENTION_UNITS[(m[3] ?? '').toLowerCase()]
-  if (count === undefined || unit === undefined) return undefined
-  return `${count} ${count === '1' ? unit.slice(0, -1) : unit}`
+export function retentionIn(sentence: string, termAt: number): string | undefined {
+  let best: string | undefined
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const m of sentence.matchAll(RETENTION)) {
+    const at = m.index + (m[1]?.length ?? 0)
+    const distance = Math.abs(at - termAt)
+    if (distance >= bestDistance) continue
+    const count = m[2]
+    const unit = RETENTION_UNITS[(m[3] ?? '').toLowerCase()]
+    if (count === undefined || unit === undefined) continue
+    bestDistance = distance
+    best = `${count} ${count === '1' ? unit.slice(0, -1) : unit}`
+  }
+  return best
 }
 
 /**
@@ -335,9 +348,147 @@ export function jurisdictionIn(sentence: string, termAt: number): string | undef
 }
 
 /**
- * Which categories of personal data the sentence names, in the order it names them, each once.
- * Undefined rather than an empty array when it names none: an empty list on a printed sheet reads
- * as "no personal data here", which is a claim this function is in no position to make.
+ * Where one clause of a sentence gives way to the next: a comma, or a conjunction that can join
+ * two statements. The hyphen in the boundaries keeps "e-mail" whole, which would otherwise break
+ * at its first letter.
+ */
+const CLAUSE_BREAK = /,|(^|[^\p{L}\p{N}-])(ed?|nonché|mentre|and|while)(?![\p{L}\p{N}-])/giu
+
+/** The conjunctions that set two subjects against each other. Nothing is read across one. */
+const ADVERSATIVE = /^(?:mentre|while)$/iu
+
+/**
+ * A placement phrase and a retention phrase, tested rather than searched. The source is shared
+ * with the extractors so there is one definition of each; the copies drop the global flag, because
+ * `test` on a global pattern advances its `lastIndex` and the next call would start mid-string.
+ */
+const PLACEMENT_PHRASE = new RegExp(JURISDICTION.source, 'u')
+const RETENTION_PHRASE = new RegExp(RETENTION.source, 'iu')
+
+/**
+ * Words too light to make a fragment a statement of its own: articles, prepositions, conjunctions,
+ * relatives, determiners. Both languages, and deliberately not verbs -- a verb is exactly what
+ * tells "e l'indirizzo di fatturazione" (more of the same list) from "e il gestionale riceve il
+ * codice fiscale" (a new subject with its own data).
+ */
+const LIGHT = new Set(
+  (
+    'il lo la i gli le l un uno una di del dello della dei degli delle dell d da dal dallo dalla ' +
+    'dai dagli dalle a al allo alla ai agli alle in nel nello nella nei negli nelle con col coi ' +
+    'su sul sullo sulla sui sugli sulle per tra fra e ed o od che chi cui quale quali anche solo ' +
+    'soltanto oltre inoltre nonché suo sua suoi sue loro nostro nostra nostri nostre vostro ' +
+    'vostra vostri vostre proprio propria questo questa questi queste ' +
+    'the an of and or to for on at with by from that which who whose its their our your his her ' +
+    'also only such as'
+  ).split(' '),
+)
+
+/** A clause of a sentence, and whether the break in front of it was an adversative one. */
+type Clause = { start: number; end: number; adversative: boolean }
+
+/** Where a category was named, and which one. */
+type CategoryHit = { name: string; at: number; end: number }
+
+/** The clauses of a sentence, in order, with the whitespace-only fragments dropped. */
+function clauseSpans(sentence: string): Clause[] {
+  const spans: Clause[] = []
+  let start = 0
+  let adversative = false
+  for (const m of sentence.matchAll(CLAUSE_BREAK)) {
+    const before = m.index + (m[1]?.length ?? 0)
+    const after = m.index + m[0].length
+    const isAdversative = ADVERSATIVE.test(m[2] ?? '')
+    if (sentence.slice(start, before).trim() === '') {
+      // Two breaks in a row -- ", mentre" -- is one boundary, and it is adversative if either
+      // half of it was.
+      adversative = adversative || isAdversative
+    } else {
+      spans.push({ start, end: before, adversative })
+      adversative = isAdversative
+    }
+    start = after
+  }
+  if (spans.length === 0 || sentence.slice(start).trim() !== '')
+    spans.push({ start, end: sentence.length, adversative })
+  return spans
+}
+
+/**
+ * True when the clause is more of the list the clause before it started, rather than a statement
+ * of its own: it names a category and says almost nothing else. "nome, cognome, email" is one list
+ * written with commas, and commas are also what separate clauses -- this is what tells the two
+ * apart without a grammar. One content word is allowed, which is what a phrase like "l'indirizzo
+ * di fatturazione" or a relative "che tratta i dati di navigazione" carries; two means a subject
+ * and a verb, and that is a new claim.
+ */
+function continuesList(sentence: string, span: Clause, hits: readonly CategoryHit[]): boolean {
+  const inside = hits
+    .filter((h) => h.at >= span.start && h.at < span.end)
+    .sort((a, b) => a.at - b.at)
+  if (inside.length === 0) return false
+  let rest = ''
+  let cursor = span.start
+  for (const h of inside) {
+    if (h.at > cursor) rest += sentence.slice(cursor, h.at)
+    cursor = Math.max(cursor, h.end)
+  }
+  rest += sentence.slice(Math.min(cursor, span.end), span.end)
+  const words = rest.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}’'-]*/gu) ?? []
+  return words.map((w) => w.replace(/[’']/g, '')).filter((w) => !LIGHT.has(w)).length <= 1
+}
+
+/**
+ * The stretch of the sentence a term's categories may be read from: the clause the term sits in,
+ * plus any clause after it that only continues its list.
+ *
+ * A clause that says nothing but where or how long -- "ubicati in Irlanda" -- is transparent when
+ * a list is joined back to its subject, because such a clause describes the same subject rather
+ * than introducing one: "google-analytics.com conserva i dati per 24 mesi, ubicati in Irlanda, e
+ * riceve nome ed email" is one claim about one vendor with a placement parenthesis in the middle.
+ */
+function clauseScope(
+  sentence: string,
+  termAt: number,
+  hits: readonly CategoryHit[],
+): { start: number; end: number } {
+  const spans = clauseSpans(sentence)
+  const attributeOnly = spans.map(
+    (s) =>
+      !hits.some((h) => h.at >= s.start && h.at < s.end) &&
+      (PLACEMENT_PHRASE.test(sentence.slice(s.start, s.end)) ||
+        RETENTION_PHRASE.test(sentence.slice(s.start, s.end))),
+  )
+  const group = spans.map((_, i) => i)
+  for (let i = 1; i < spans.length; i += 1) {
+    const span = spans[i]
+    if (span === undefined || span.adversative) continue
+    if (!continuesList(sentence, span, hits)) continue
+    let j = i - 1
+    while (j > 0 && attributeOnly[j] === true && spans[j]?.adversative !== true) j -= 1
+    group[i] = group[j] ?? j
+  }
+  let index = 0
+  for (let i = 0; i < spans.length; i += 1) if ((spans[i]?.start ?? 0) <= termAt) index = i
+  const root = group[index] ?? index
+  const members = spans.filter((_, i) => (group[i] ?? i) === root || i === index)
+  return {
+    start: Math.min(...members.map((s) => s.start)),
+    end: Math.max(...members.map((s) => s.end)),
+  }
+}
+
+/**
+ * Which categories of personal data the term's own clause names, in the order it names them, each
+ * once. Undefined rather than an empty array when it names none: an empty list on a printed sheet
+ * reads as "no personal data here", which is a claim this function is in no position to make.
+ *
+ * The scope is the clause and not the whole sentence, because an informativa lists several
+ * purposes in one breath -- "per la gestione della contabilità e delle buste paga, per l'invio
+ * della newsletter tramite Mailchimp e per le statistiche raccolte da google-analytics.com, che
+ * tratta i dati di navigazione" -- and the sentence as the scope gave the payroll, the accounting
+ * system and the mailing list the browsing data that belongs to the analytics vendor. A term whose
+ * own clause names no category reads as undefined rather than widening back out to the sentence: a
+ * blank is the honest answer, and §4.4 rates it above a confident wrong one.
  *
  * Denial is judged per occurrence, as it is for a term: "non riceve il codice fiscale, solo il
  * nome" names two categories and asserts one.
@@ -352,12 +503,13 @@ export function jurisdictionIn(sentence: string, termAt: number): string | undef
  */
 export function dataCategoriesIn(
   sentence: string,
+  termAt: number,
   categories: ReadonlyArray<{ entry: DataCategoryEntry; pattern: RegExp }>,
 ): string[] | undefined {
   const lower = sentence.toLowerCase()
   // Every occurrence, not the first per term: which occurrence survives depends on what the other
   // terms matched, and that is not known until all of them have been read.
-  const hits: Array<{ name: string; at: number; end: number }> = []
+  const hits: CategoryHit[] = []
   for (const { entry, pattern } of categories) {
     for (const m of lower.matchAll(pattern)) {
       const start = m.index + (m[1]?.length ?? 0)
@@ -365,8 +517,11 @@ export function dataCategoriesIn(
       hits.push({ name: entry.name, at: start, end: start + m[0].length - (m[1]?.length ?? 0) })
     }
   }
-  const found = hits.filter(
-    (h) => !hits.some((o) => o.at <= h.at && o.end >= h.end && o.end - o.at > h.end - h.at),
+  if (hits.length === 0) return undefined
+  const scope = clauseScope(sentence, termAt, hits)
+  const within = hits.filter((h) => h.at >= scope.start && h.at < scope.end)
+  const found = within.filter(
+    (h) => !within.some((o) => o.at <= h.at && o.end >= h.end && o.end - o.at > h.end - h.at),
   )
   if (found.length === 0) return undefined
   found.sort((a, b) => a.at - b.at)
@@ -608,9 +763,9 @@ export function extractCandidates(
           holder: entry.holder,
           kind: entry.layer === 'internal' ? 'internal' : 'processor',
           evidence: evidenceAround(text, at, matched),
-          retention: retentionIn(sentence),
+          retention: retentionIn(sentence, at - sStart),
           jurisdiction: jurisdictionIn(sentence, at - sStart),
-          dataCategories: dataCategoriesIn(sentence, categoryTerms),
+          dataCategories: dataCategoriesIn(sentence, at - sStart, categoryTerms),
         },
         doc.name,
       )
@@ -635,9 +790,9 @@ export function extractCandidates(
           holder: 'supplier',
           kind: 'processor',
           evidence: evidenceAround(text, at, m[0].length),
-          retention: retentionIn(sentence),
+          retention: retentionIn(sentence, at - sStart),
           jurisdiction: jurisdictionIn(sentence, at - sStart),
-          dataCategories: dataCategoriesIn(sentence, categoryTerms),
+          dataCategories: dataCategoriesIn(sentence, at - sStart, categoryTerms),
         },
         doc.name,
       )
