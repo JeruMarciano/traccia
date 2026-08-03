@@ -86,6 +86,25 @@ describe('extractCandidates', () => {
     expect(out[0]?.sourceNames).toEqual(['one.docx', 'two.csv'])
   })
 
+  it('finds a term in a later document even when an earlier one matched it first', () => {
+    // Every term pattern is compiled once for the whole call and carries the global flag, so it
+    // owns a lastIndex. `matchAll` iterates a clone and leaves the shared pattern at zero -- but
+    // a loop that advanced it and then stopped at the first usable match would carry that offset
+    // into the next document, and the term would silently vanish from every later file. Document
+    // one is long and names the term near its end, so the offset reached there lands well past
+    // the end of document two: under such a bug two.pdf reads as never having said the word.
+    const docs = [
+      {
+        name: 'one.pdf',
+        text: `${'Filler prose about nothing in particular. '.repeat(20)}Salesforce is the CRM.`,
+      },
+      { name: 'two.pdf', text: 'Salesforce holds the customer records.' },
+    ]
+    const out = extractCandidates(docs, VENDORS, INTERNAL, SUBJECTS, CATEGORIES)
+    expect(out.map((c) => c.name)).toEqual(['Salesforce'])
+    expect(out[0]?.sourceNames).toEqual(['one.pdf', 'two.pdf'])
+  })
+
   it('is empty for empty documents', () => {
     expect(extractCandidates([{ name: 'x.txt', text: '' }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES)).toHaveLength(0)
   })

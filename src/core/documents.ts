@@ -435,8 +435,11 @@ export function extractCandidates(
   const byKey = new Map<string, Candidate>()
 
   // The dictionary is fixed for the whole call, so its patterns are compiled once here rather
-  // than once per document. None carries the global flag, so none holds a lastIndex to reset
-  // between documents.
+  // than once per document. Every one of them carries the global flag, and therefore a lastIndex,
+  // but they are only ever read through `matchAll`, which iterates a clone and leaves the shared
+  // pattern sitting at zero. That is the only reason no reset is needed between documents: an
+  // `exec` loop that stopped at the first usable match -- which is exactly what the loops below
+  // do -- would carry its offset into the next document and lose the term there silently.
   const terms = Object.entries(internal).map(([term, entry]) => ({
     entry,
     pattern: wholeWord(term.toLowerCase()),
