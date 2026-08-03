@@ -297,9 +297,14 @@ export function ingestScan(
   }
 
   const existingCollectionPoints = working.collectionPoints ?? []
-  const updatedExistingCollectionPoints = existingCollectionPoints.map(
-    (cp) => newCollectionPointByPage.get(cp.page) ?? cp,
-  )
+  // A page seen again is the same door, so it keeps its id: the fresh capture supplies the
+  // fields, the original supplies the identity. Taking the fresh object whole would renumber a
+  // door on every rescan, which silently repaints the map (door colour is assigned by position)
+  // and drops whatever the user had selected.
+  const updatedExistingCollectionPoints = existingCollectionPoints.map((cp) => {
+    const fresh = newCollectionPointByPage.get(cp.page)
+    return fresh === undefined ? cp : { ...fresh, id: cp.id }
+  })
 
   const alreadyKnownPages = new Set(existingCollectionPoints.map((cp) => cp.page))
   const seenPagesThisScan = new Set<string>()
