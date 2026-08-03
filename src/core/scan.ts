@@ -215,7 +215,14 @@ export function ingestScan(
   //    (name, domain), same shape as the observations dedupe above: a domain
   //    already recorded keeps its position but takes this scan's judgement,
   //    the newer scan wins.
-  const cookieKey = (name: string, domain: string): string => `${name} ${domain}`
+  //
+  //    Keyed via JSON.stringify of the pair rather than a delimited template
+  //    string: a hand-picked separator — even a control character typed as
+  //    an escape sequence — is a guess about what a cookie name or domain
+  //    cannot contain, and this key must never let two distinct (name, domain)
+  //    pairs collide. JSON array encoding already escapes anything that would
+  //    make that ambiguous, so no such guess is needed.
+  const cookieKey = (name: string, domain: string): string => JSON.stringify([name, domain])
 
   const latestCookieByKey = new Map<string, CapturedCookie>()
   for (const raw of result.cookies) {

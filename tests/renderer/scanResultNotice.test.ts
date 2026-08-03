@@ -70,4 +70,40 @@ describe('scanResultNotice', () => {
     )
     expect(notice).toBe(STRINGS.scanStopped(2))
   })
+
+  describe('cookie count', () => {
+    // scannedHost is 'rossi-editore.it': a cookie on that domain is first-party, a cookie on
+    // any other domain is third-party. One of each below, so the count and the third-party
+    // subset are never the same number -- a test that used all-first-party or all-third-party
+    // cookies could not tell a correct subset count from one that just echoed the total.
+    const twoCookies = [
+      { name: 'lang', domain: 'rossi-editore.it', session: true, expiresEpochSeconds: -1 },
+      { name: 'IDE', domain: 'doubleclick.net', session: false, expiresEpochSeconds: 1_000 },
+    ]
+
+    it('stands alone when no other notice applies', () => {
+      const notice = scanResultNotice(result({ cookies: twoCookies }))
+      expect(notice).toBe(STRINGS.cookiesRecorded(2, 1))
+    })
+
+    it('says nothing about cookies when none were captured', () => {
+      expect(scanResultNotice(result({ cookies: [] }))).toBeNull()
+    })
+
+    it('counts only the third-party subset, not the total, as third-party', () => {
+      const notice = scanResultNotice(result({ cookies: twoCookies }))
+      expect(notice).not.toBe(STRINGS.cookiesRecorded(2, 2))
+      expect(notice).not.toBe(STRINGS.cookiesRecorded(2, 0))
+    })
+
+    it('is appended to a base notice rather than replacing it', () => {
+      const notice = scanResultNotice(result({ possibleGaps: 3, cookies: twoCookies }))
+      expect(notice).toBe(`${STRINGS.scanIncomplete(3)} ${STRINGS.cookiesRecorded(2, 1)}`)
+    })
+
+    it('is appended even to a stopped-scan notice', () => {
+      const notice = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 1, cookies: twoCookies }))
+      expect(notice).toBe(`${STRINGS.scanStopped(1)} ${STRINGS.cookiesRecorded(2, 1)}`)
+    })
+  })
 })
