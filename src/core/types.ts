@@ -235,6 +235,15 @@ export interface Door {
   fields: string[]
 }
 
+/** Where one door's data goes and who comes through it. Computed by tracePaths; never stored. */
+export interface DoorPath {
+  doorId: string
+  /** Place ids this door's data reaches, in project flow order, deduplicated. */
+  destinationIds: string[]
+  /** SubjectGroup ids that come through this door, in project flow order, deduplicated. */
+  subjectIds: string[]
+}
+
 export interface RawStorageKey {
   scope: 'local' | 'session'
   key: string

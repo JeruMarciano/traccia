@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveDoors } from '../../src/core/doors'
+import { deriveDoors, tracePaths } from '../../src/core/doors'
 import { ingestScan } from '../../src/core/scan'
 import type { ScanResult } from '../../src/core/types'
 import { rossiEditore } from '../fixtures/rossiEditore'
@@ -49,6 +49,75 @@ describe('deriveDoors', () => {
 
   it('is deterministic', () => {
     expect(deriveDoors(rossiEditore())).toEqual(deriveDoors(rossiEditore()))
+  })
+})
+
+describe('tracePaths', () => {
+  const paths = () => {
+    const p = rossiEditore()
+    return tracePaths(p, deriveDoors(p))
+  }
+
+  it('gives every door a path entry, even one nothing flows through', () => {
+    expect(paths().map((p) => p.doorId)).toEqual(['place:pl-2', 'place:pl-3', 'cp:cp-1'])
+  })
+
+  it('follows a flow out of the door place to its destination', () => {
+    expect(paths().find((p) => p.doorId === 'place:pl-2')?.destinationIds).toEqual(['pl-4'])
+  })
+
+  it('keeps two doors that feed the same destination separate', () => {
+    expect(paths().find((p) => p.doorId === 'place:pl-3')?.destinationIds).toEqual(['pl-5', 'pl-4'])
+    expect(paths().find((p) => p.doorId === 'place:pl-2')?.destinationIds).toEqual(['pl-4'])
+  })
+
+  it('records who comes through the door', () => {
+    expect(paths().find((p) => p.doorId === 'place:pl-2')?.subjectIds).toEqual(['sg-2'])
+    expect(paths().find((p) => p.doorId === 'place:pl-3')?.subjectIds).toEqual(['sg-1'])
+  })
+
+  it('leaves a discovered door with no flows empty rather than absent', () => {
+    const cp = paths().find((p) => p.doorId === 'cp:cp-1')
+    expect(cp).toBeDefined()
+    expect(cp?.destinationIds).toEqual([])
+    expect(cp?.subjectIds).toEqual([])
+  })
+
+  it('does not walk a second hop', () => {
+    const p = rossiEditore()
+    p.flows.push({
+      id: 'fl-7',
+      from: 'pl-4',
+      to: 'pl-5',
+      dataDescription: 'x',
+      purpose: 'y',
+      sources: [],
+      confidence: 'inferred',
+    })
+    expect(tracePaths(p, deriveDoors(p)).find((t) => t.doorId === 'place:pl-2')?.destinationIds).toEqual([
+      'pl-4',
+    ])
+  })
+
+  it('terminates on a cycle between two places', () => {
+    const p = rossiEditore()
+    p.flows.push({
+      id: 'fl-7',
+      from: 'pl-4',
+      to: 'pl-2',
+      dataDescription: 'x',
+      purpose: 'y',
+      sources: [],
+      confidence: 'inferred',
+    })
+    expect(() => tracePaths(p, deriveDoors(p))).not.toThrow()
+  })
+
+  it('counts only subject groups as people coming through, not places', () => {
+    // fl-3 runs pl-2 -> pl-4, so pl-4's door would list pl-2 as a person if the filter went.
+    const p = rossiEditore()
+    const traced = tracePaths(p, deriveDoors(p))
+    expect(traced.every((t) => t.subjectIds.every((id) => id.startsWith('sg-')))).toBe(true)
   })
 })
 
