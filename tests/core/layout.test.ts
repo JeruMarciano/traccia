@@ -188,6 +188,70 @@ describe('what the redesign removes', () => {
   })
 })
 
+// Spec §9 names the shapes this has to survive. A layout that only works on the sample project
+// is a layout measured against one project.
+describe('layout edge cases', () => {
+  const withDoors = (n: number) => {
+    const p = rossiEditore()
+    p.places = p.places.filter((pl) => pl.kind !== 'collection')
+    p.collectionPoints = Array.from({ length: n }, (_, i) => ({
+      id: `cp-${i + 1}`,
+      page: `https://rossi-editore.it/${i + 1}`,
+      fields: [],
+      sources: [],
+      confidence: 'observed' as const,
+    }))
+    return p
+  }
+
+  it('draws a sheet with no doors at all', () => {
+    const out = computeLayout(withDoors(0), SIZE)
+    expect(out.nodes.filter((n) => n.kind === 'door')).toHaveLength(0)
+    expect(out.nodes.find((n) => n.kind === 'controller')).toBeDefined()
+    expect(out.edges.every((e) => e.colourIndex === undefined)).toBe(true)
+  })
+
+  it('draws a sheet with one door', () => {
+    expect(computeLayout(withDoors(1), SIZE).nodes.filter((n) => n.kind === 'door')).toHaveLength(1)
+  })
+
+  it('cycles the palette at seven doors and keeps them all on the sheet', () => {
+    const doors = computeLayout(withDoors(7), SIZE).nodes.filter((n) => n.kind === 'door')
+    expect(doors).toHaveLength(7)
+    expect(doors.map((d) => d.colourIndex)).toEqual([0, 1, 2, 3, 4, 5, 0])
+  })
+
+  it('spaces doors apart rather than stacking them', () => {
+    const ys = computeLayout(withDoors(7), SIZE).nodes.filter((n) => n.kind === 'door').map((n) => n.y)
+    expect(new Set(ys).size).toBe(7)
+  })
+
+  it('draws no arrowhead-less line on any of these shapes', () => {
+    for (const n of [0, 1, 7]) {
+      expect(computeLayout(withDoors(n), SIZE).edges.every((e) => e.directed)).toBe(true)
+    }
+  })
+
+  it('draws a project with no controller named yet', () => {
+    const p = rossiEditore()
+    p.places = p.places.filter((pl) => pl.id !== 'pl-1')
+    const centre = computeLayout(p, SIZE).nodes.find((n) => n.kind === 'controller')
+    expect(centre).toBeDefined()
+    expect(centre?.label).toBe('')
+  })
+
+  it('opens a ring holding one member without stacking it on the centre', () => {
+    const ring = computeLayout(rossiEditore(), SIZE, 'Support').nodes.find(
+      (n) => n.id === 'group:Support',
+    )
+    const member = computeLayout(rossiEditore(), SIZE, 'Support').nodes.find(
+      (n) => n.kind === 'member',
+    )
+    expect(member).toBeDefined()
+    expect(Math.hypot((member?.x ?? 0) - (ring?.x ?? 0), (member?.y ?? 0) - (ring?.y ?? 0))).toBeGreaterThan(20)
+  })
+})
+
 describe('determinism', () => {
   it('produces identical results on repeat calls', () => {
     expect(computeLayout(rossiEditore(), SIZE, 'Marketing')).toEqual(
