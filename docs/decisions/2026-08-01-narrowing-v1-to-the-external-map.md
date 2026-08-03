@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-01
 **Status:** decided, with the author, in the brainstorming session of 2026-08-01.
-**Amends:** `docs/superpowers/specs/2026-07-30-data-flow-mapper-design.md` §5.1, §8.1, §10.
+**Amends:** `docs/design/2026-07-30-data-flow-mapper-design.md` §5.1, §8.1, §10.
 **Superseded by nothing yet.** The deferrals below are deferrals, not cancellations.
 
 Spec §10 lists nine items as "in, for v1". The first release ships four of them, one of

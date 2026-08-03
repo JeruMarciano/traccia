@@ -11,7 +11,7 @@ CDP call can prevent it. Measured on one page load, CDP saw 22 hosts where 37 we
 the 15 it missed were ad-tech vendors. The enforcing mechanism is a deny-by-default loopback proxy
 the Rust process owns (`src-tauri/src/proxy.rs`); CDP is retained for attribution only. See
 `docs/decisions/2026-07-31-cdp-spike-findings.md` and
-`docs/superpowers/plans/2026-07-31-tauri-shell-port.md`.
+the Tauri shell port plan, which is a working document kept outside the repository.
 
 ---
 

@@ -1,7 +1,7 @@
 # The controller-centred map — design
 
 **Date:** 2026-08-03
-**Status:** implemented 2026-08-03 on branch `map-redesign`, plan `docs/superpowers/plans/2026-08-03-map-redesign.md`, measured in `docs/superpowers/plans/2026-08-03-map-redesign-baseline.md`. Two deviations decided during implementation, both recorded in the commits: a door place and the controller place are excluded from the purpose group on the right, because they are already drawn elsewhere and the ring's count said otherwise; and §5's open ring keeps its place in the column with its members set out around it, after the first run of the real app showed no way back to a ring that had been replaced.
+**Status:** implemented 2026-08-03 on branch `map-redesign`, measured in `docs/decisions/2026-08-03-map-redesign-measurement.md`. Two deviations decided during implementation, both recorded in the commits: a door place and the controller place are excluded from the purpose group on the right, because they are already drawn elsewhere and the ring's count said otherwise; and §5's open ring keeps its place in the column with its members set out around it, after the first run of the real app showed no way back to a ring that had been replaced.
 **Builds on:** `2026-07-30-data-flow-mapper-design.md` (the core model), the v0.2 internal map, §2 of `2026-08-03-extraction-depth-design.md` (where this redesign was agreed in one paragraph).
 **Sequenced after:** §5 of the extraction-depth spec (cookies, consent banner, form fields, storage keys). Those steps produce the doors this map draws; drawing them first would mean an inbound side with one door on it. Decided 2026-08-03.
 

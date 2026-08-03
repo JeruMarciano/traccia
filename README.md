@@ -4,60 +4,58 @@
 
 A local-only desktop app that maps where an organisation's personal data goes.
 
-Enter a website URL, run a scan, and Traccia draws a single picture: the third-party
-services the site sends data to, grouped around the organisation at the centre. Click
-any point on the map to see what is known about it — what kind of service it is, what
-data reaches it, and what has not yet been identified. Print the map to PDF when you
-need to share it.
+Enter a website address, run a scan, and Traccia draws one picture: the third-party services
+the site sends data to, arranged around the organisation that answers for them. Click any point
+to see what is known about it, where each fact came from, and what nobody has answered yet.
+Print the sheet to PDF when you need to hand it over.
 
-A scan is a starting point, never a finished map. Anything Traccia could not work out
-is marked as "not yet identified" so a human can complete the picture.
+A scan is a starting point, never a finished map. Whatever Traccia could not work out is marked
+"not yet identified" so that a person can finish the job.
 
 ## Who it's for
 
-- **Privacy consultants** who need a fast draft map from whatever a client can hand
-  over, and a defensible list of gaps.
-- **In-house DPOs or owners** who want a map of their own organisation that improves
-  over time.
-
-Neither is assumed to be technical.
+Privacy consultants who need a first draft from whatever a client can hand over, plus a
+defensible list of what is still missing. Also in-house DPOs and owners mapping their own
+organisation, where the map is meant to improve over months rather than be finished in an
+afternoon. Neither is assumed to be technical.
 
 ## Privacy by construction
 
-- **Local only.** No account, no server, no telemetry, no crash reporting, no update
-  checks. The only network traffic the app ever produces is the scan of a URL you
-  explicitly entered.
-- **Your data stays yours.** Projects are plain files on your machine.
-- **Neutral language.** Unknowns are reported as "not yet identified" — Traccia is a
-  mapping tool, not a compliance tool, and never labels anything a violation.
+The app has no account, no server, no telemetry, no crash reporting and no update check. The
+only network traffic it ever produces is the scan of an address you typed in yourself. Projects
+are plain files on your machine.
+
+Unknowns are reported as "not yet identified", and nothing is ever labelled a violation. Traccia
+maps what is there; judging it against a regulation is the reader's job.
 
 ## What a scan cannot see
 
-Stated here because the sheet is only trustworthy if its limits are: a scan observes the
-connections a site makes from a visitor's browser. It does not see anything behind a
-login, data moving inside the organisation, anything not on the web, or connections made
-over secure WebSockets (wss://) — a vendor reached only that way will not appear. Every
-printed sheet carries this statement on it. The no-traffic promise itself is enforced by
-an automated test (`src-tauri/tests/egress.rs`) that fails the build if the app attempts
-any connection beyond the scanned site.
+The limits are stated here because a sheet is only trustworthy if they are. A scan observes the
+connections a site makes from a visitor's browser. It cannot see anything behind a login, data
+moving inside the organisation, anything that is not on the web, or connections made over secure
+WebSockets (wss://), so a vendor reached only that way will not appear at all. Every printed
+sheet carries this statement on it.
+
+The no-traffic promise is not a matter of trust: `src-tauri/tests/egress.rs` fails the build if
+the app attempts any connection beyond the site being scanned.
 
 ## Install
 
-Traccia is currently unsigned: macOS and Windows will warn about an app from an
-unidentified developer. That is the absence of a paid certificate, not a judgment on the
-app — on macOS, right-click the app and choose **Open**; on Windows, choose
-**More info → Run anyway**.
+Full instructions, including what the operating-system warnings mean, are in
+[docs/INSTALL.md](docs/INSTALL.md).
 
-- **macOS:** download the `.dmg` from Releases (about 1.6 MB), open it, drag Traccia to
-  Applications.
-- **Windows:** download and run the installer from Releases.
+On macOS, download the `.dmg` from Releases (about 1.6 MB), open it and drag Traccia to
+Applications. On Windows, download and run the installer. Both will warn you about an
+unidentified developer, which reflects the absence of a paid signing certificate rather than
+anything about the app: right-click and choose **Open** on macOS, or **More info** then **Run
+anyway** on Windows.
 
-A scan needs Google Chrome or Microsoft Edge installed; Traccia finds whichever is there.
+A scan needs Google Chrome or Microsoft Edge installed. Traccia uses whichever it finds.
 
 ## Running from source
 
-Prerequisites: Node.js, Rust (stable), and the [Tauri prerequisites](https://tauri.app/start/prerequisites/)
-for your platform.
+You need Node.js, a stable Rust toolchain, and the
+[Tauri prerequisites](https://tauri.app/start/prerequisites/) for your platform.
 
 ```bash
 npm install
@@ -78,39 +76,41 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-The core domain logic lives in `src/core/` and is deliberately pure: no filesystem,
-no network, no Electron/Tauri APIs, no clocks or randomness. Timestamps and IDs are
-always passed in as parameters, which keeps it fully testable.
+The domain logic lives in `src/core/` and is deliberately pure: no filesystem, no network, no
+Tauri APIs, no clocks, no randomness. Timestamps and identifiers are passed in as parameters,
+which is what keeps the whole of it testable without a browser.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — it covers the checks a change has to pass and the
-constraints that are load-bearing rather than stylistic (chiefly: the app makes no network
-request other than the scan the user asked for, and `src/core/` stays free of I/O and clocks).
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the checks a change has to pass and the constraints
+that are load-bearing rather than stylistic. The two that rule out the most designs: the app
+makes no network request other than the scan the user asked for, and `src/core/` stays free of
+I/O and clocks.
 
-The design documents behind each release are in [`docs/design/`](docs/design), and what was
-decided and measured along the way — including where an earlier measurement turned out to be
-wrong — is in [`docs/decisions/`](docs/decisions).
+The specifications behind each release are in [`docs/design/`](docs/design). What was decided
+along the way, and what was measured, including a measurement that later turned out to be wrong,
+is in [`docs/decisions/`](docs/decisions).
 
 ## Status
 
 Working, and used on real sites. Not yet released as a versioned build.
 
-- **The external map** — scan a website, map the third-party services it contacts, print to PDF.
-- **Documents** — read a privacy notice or a DPA and offer what it appears to describe, for
-  confirmation. Nothing lands on the map without being accepted, and the documents themselves
-  are never kept.
-- **Depth** — cookies with their lifetimes, the pages that collect data, storage keys by name
-  and size (never value), and whether a consent mechanism was present.
-- **The controller-centred map** — the sheet reads as a sentence: whose data, through which door,
-  to the organisation answering for it, onward to whom. A side panel states what is known about
-  any point, with the source of each fact, and rolls what is not yet known into one line.
+Scanning a website and printing the map came first. Then document reading: hand Traccia a
+privacy notice or a DPA and it offers what the text appears to describe, for you to confirm.
+Nothing reaches the map unaccepted, and the documents themselves are never kept. After that came
+depth, meaning cookies and their lifetimes, the pages that collect data, storage keys by name and
+size but never value, and whether a consent mechanism was present.
 
-Installers are built for macOS and Windows from the build workflow; releases are made by hand,
-because the app never contacts a server and so cannot update itself.
+Most recently the map itself was redrawn. It now reads as a sentence: whose data, through which
+door, to the organisation answering for it, and onward to whom. A side panel states what is known
+about any point along with the source of each fact, and rolls everything unanswered into a single
+line.
+
+Installers for macOS and Windows come out of the build workflow. Releases are made by hand,
+because an app that never contacts a server cannot update itself.
 
 ## License
 
-[MIT](LICENSE). Traccia's dependencies include five MPL-2.0 licensed Rust crates pulled
-in unmodified by Tauri; their licenses apply to those files only. They are named, with
-their upstream sources, in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+[MIT](LICENSE). Traccia's dependencies include five MPL-2.0 licensed Rust crates, pulled in
+unmodified by Tauri; their licences apply to those files only. They are named, with their
+upstream sources, in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).

@@ -1,7 +1,7 @@
 # The controller-centred map — acceptance measured
 
 **Recorded:** 2026-08-03, branch `map-redesign`, against the same saved project file as the
-extraction-depth measurement (`docs/superpowers/plans/2026-08-03-extraction-depth-scan-baseline.md`):
+extraction-depth measurement (`docs/decisions/2026-08-03-extraction-depth-measurement.md`):
 one real small-business site scanned, one real informativa ingested, suggestions accepted. The
 project file is not committed — it names a real organisation.
 

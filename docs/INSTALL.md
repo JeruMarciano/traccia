@@ -19,7 +19,7 @@ time you open it. Here is exactly what you will see and why.
 ## Why the warnings
 
 Signing an application requires paid certificates from Apple and a certificate authority. Traccia is
-free and not signed yet. The warnings mean the operating system cannot confirm who published the app —
+free and not signed yet. The warnings mean the operating system cannot confirm who published the app,
 not that anything is wrong with it. Download only from the project's GitHub releases page.
 
 ## What Traccia sends over the network
