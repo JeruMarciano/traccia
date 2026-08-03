@@ -814,6 +814,43 @@ describe('categories are read from the term’s own clause', () => {
   })
 })
 
+// The same containment idea one level up. "email" is a system in the shipped dictionary and it is
+// also a word inside the category "indirizzo email"; "curriculum" and "posta elettronica" collide
+// the same way. Read as a system, the words of a category split a list and every system that
+// collects an email address lost it -- which is the commonest category an informativa names.
+describe('a system term written inside a category', () => {
+  const SYSTEMS: InternalSystemDictionary = {
+    gestionale: {
+      name: 'Management system',
+      purposeGroup: 'IT & Infrastructure',
+      layer: 'internal',
+      holder: 'you',
+    },
+    email: { name: 'Email', purposeGroup: 'Office & Email', layer: 'internal', holder: 'you' },
+  }
+  const CATS: DataCategoryDictionary = {
+    nome: { name: 'Name' },
+    'indirizzo email': { name: 'Email address' },
+    'codice fiscale': { name: 'Tax identifier' },
+  }
+  const cats = (text: string, name: string): string[] | undefined =>
+    placesOnly(extractCandidates([{ name: 'a.pdf', text }], VENDORS, SYSTEMS, SUBJECTS, CATS)).find(
+      (c) => c.name === name,
+    )?.dataCategories
+
+  it('does not let the category’s own words open a new subject', () => {
+    expect(
+      cats('Il gestionale raccoglie nome, cognome e indirizzo email.', 'Management system'),
+    ).toEqual(['Name', 'Email address'])
+  })
+
+  it('still opens one where the system term stands on its own', () => {
+    const text = 'Il gestionale raccoglie il nome, l’email conserva il codice fiscale.'
+    expect(cats(text, 'Management system')).toEqual(['Name'])
+    expect(cats(text, 'Email')).toEqual(['Tax identifier'])
+  })
+})
+
 describe('one category term written inside another', () => {
   // "indirizzo" sits inside "indirizzo email" and inside "indirizzo IP", and the dictionary keeps
   // all three. Without a precedence rule a sentence naming an email address also asserts a postal
