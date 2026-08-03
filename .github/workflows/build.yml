@@ -18,6 +18,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      macos:
+        description: 'Also run the macOS jobs (bills at ×10 — the .dmg can be built locally on a Mac for free)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,11 +34,15 @@ permissions:
 # of it on macOS alone. That exhausted a 2,000-minute month in nine runs, security-update PRs
 # included.
 #
-# So macOS is now release-only, and so is bundling. Everyday pushes and PRs get the Ubuntu checks
-# and the Windows Rust suite; a tag or a manual run gets the full matrix and the installers. What
-# this gives up is macOS CI coverage between releases, which is the coverage a developer working
-# on a Mac already performs by hand before every commit (CLAUDE.md's gates: cargo test, clippy).
-# Before cutting a release, run this workflow manually and let the full matrix pass.
+# So macOS is opt-in and bundling is release-only. Everyday pushes and PRs get the Ubuntu checks
+# and the Windows Rust suite, about 40 billed minutes. A manual run adds the installers — Windows
+# only by default, roughly 36 minutes, because a development Mac builds its own .dmg for free with
+# `npm run tauri build` and paying ×10 for a machine to repeat that is the expensive habit this
+# note exists to break. Tick the `macos` input, or push a tag, when the full matrix is wanted.
+#
+# What this gives up is macOS CI coverage between releases, which is the coverage a developer
+# working on a Mac already performs by hand before every commit (CLAUDE.md's gates: cargo test,
+# clippy).
 #
 # If the repository is ever made public, Actions is free and unlimited and both of these
 # conditions can be deleted outright.
@@ -62,10 +71,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows every time; macOS on a release or a manual run only (see the note above the
-        # jobs). macOS bills at ×10, and this job is the cheaper of the two that used it.
+        # Windows every time; macOS on a tag, or on a manual run that asks for it (see the note
+        # above the jobs). macOS bills at ×10, and a Mac can build its own .dmg for free.
         os: >-
-          ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
+          ${{ (startsWith(github.ref, 'refs/tags/') || inputs.macos)
           && fromJSON('["macos-latest", "windows-latest"]')
           || fromJSON('["windows-latest"]') }}
     runs-on: ${{ matrix.os }}
@@ -143,7 +152,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        # Windows is the reason this job exists at all: it cannot be built from the development
+        # Mac (no MSVC linker, and the MSI bundler is Windows-only — see this file's header). The
+        # .dmg can be built locally with `npm run tauri build` at no cost, so macOS is opt-in.
+        os: >-
+          ${{ (startsWith(github.ref, 'refs/tags/') || inputs.macos)
+          && fromJSON('["macos-latest", "windows-latest"]')
+          || fromJSON('["windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
