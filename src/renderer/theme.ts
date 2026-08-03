@@ -106,18 +106,19 @@ export const STYLESHEET = `
 
 /* The scan control: one field, one button, the field carrying the accent so the eye starts
    where the work starts. */
-.scanbar{display:flex;gap:7px;padding:14px 0 0;}
+.scanbar{display:flex;gap:6px;padding:11px 0 0;max-width:330px;}
 .scan-input{
   flex:1;
   min-width:0;
   font-family:var(--mono);
-  font-size:12px;
+  font-size:10.5px;
   color:var(--ink);
   background:var(--paper-lift);
   border:1px solid var(--rule);
   border-radius:999px;
-  padding:8px 15px;
+  padding:5px 11px;
 }
+.scanbar .action{padding:4px 11px;font-size:10px;}
 .scan-input::placeholder{color:var(--ink-soft);}
 .scan-input:disabled{color:var(--ink-soft);}
 .scan-input:focus-visible{outline:2px solid var(--person);outline-offset:1px;border-color:transparent;}
@@ -170,16 +171,16 @@ export const STYLESHEET = `
 .door--4 .door-mark{stroke:var(--door-5);}
 .door--5 .door-mark{stroke:var(--door-6);}
 .door:hover .door-mark{fill:var(--paper);}
-.door-label{font-size:10px;font-weight:500;fill:var(--ink);}
-.door-origin{font-family:var(--mono);font-size:8px;fill:var(--ink-soft);letter-spacing:.02em;}
+.door-label{font-size:9px;font-weight:500;fill:var(--ink);}
+.door-origin{font-family:var(--mono);font-size:7.5px;fill:var(--ink-soft);letter-spacing:.02em;}
 
 .subject{cursor:pointer;}
-.subject-label{font-size:10px;font-weight:500;fill:var(--ink);}
+.subject-label{font-size:9px;font-weight:500;fill:var(--ink);}
 .disc{fill:var(--person);}
 .disc-halo{fill:none;stroke:var(--person);stroke-width:1;opacity:.28;}
 .disc-label{
   fill:var(--paper);
-  font-size:12px;
+  font-size:10px;
   font-weight:600;
   letter-spacing:.2em;
 }
@@ -191,13 +192,24 @@ export const STYLESHEET = `
 .node--internal .node-arc{stroke:var(--internal);}
 .node--external .node-arc{stroke:var(--external);}
 .node-arc--open{stroke-dasharray:3 4;opacity:.75;}
-.node-count{font-size:17px;font-weight:500;fill:var(--ink);}
+.node-count{font-size:13px;font-weight:500;fill:var(--ink);}
 .node-label{
-  font-size:10.5px;
+  font-size:9.5px;
   font-weight:500;
   letter-spacing:.05em;
   fill:var(--ink);
 }
+/* An open ring: a faint boundary round its members, and the mark a reader clicks to close it. */
+.node-boundary{
+  fill:none;
+  stroke:var(--rule);
+  stroke-width:1;
+  stroke-dasharray:2 5;
+  stroke-linecap:round;
+}
+.node--opened:hover .node-boundary{stroke:var(--ink-soft);}
+.node-fill--opened{fill:var(--paper);stroke:var(--rule);stroke-width:1;}
+.node-count--opened{font-size:12px;fill:var(--ink-soft);}
 .node-member{fill:var(--paper-lift);stroke:var(--external);stroke-width:2;}
 .node--internal .node-member{stroke:var(--internal);}
 /* A member nobody has identified is drawn, and drawn dashed. Hiding it because it has no name

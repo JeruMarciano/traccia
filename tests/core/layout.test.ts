@@ -120,15 +120,43 @@ describe('direction and colour', () => {
 })
 
 describe('a ring that opens in place', () => {
-  it('replaces the open group with one node per member', () => {
+  it('adds one node per member', () => {
     const ids = l('Marketing').nodes.filter((n) => n.kind === 'member').map((n) => n.id)
     expect(ids).toEqual(['member:pl-4', 'member:pl-8'])
-    expect(node('group:Marketing', 'Marketing')).toBeUndefined()
   })
 
-  it('keeps every other group closed', () => {
-    const groups = l('Marketing').nodes.filter((n) => n.kind === 'group').map((n) => n.label)
-    expect(groups).toEqual(['Delivering orders', 'Payroll & HR', 'Running the systems', 'Support'])
+  it('keeps the open ring on the sheet, so there is a way back to it', () => {
+    // The wrong answer: the ring vanishes and is replaced by its members, leaving a reader no
+    // mark to click to close it again.
+    const ring = node('group:Marketing', 'Marketing')
+    expect(ring).toBeDefined()
+    expect(ring?.open).toBe(true)
+    expect(ring?.count).toBe(2)
+  })
+
+  it('does not move the ring when it opens', () => {
+    expect(node('group:Marketing', 'Marketing')?.y).toBe(node('group:Marketing')?.y)
+    expect(node('group:Payroll & HR', 'Marketing')?.y).toBe(node('group:Payroll & HR')?.y)
+  })
+
+  it('sets the members out around the ring’s centre, all at one distance', () => {
+    const ring = node('group:Marketing', 'Marketing')
+    const members = l('Marketing').nodes.filter((n) => n.kind === 'member')
+    const away = members.map((m) => Math.round(Math.hypot(m.x - (ring?.x ?? 0), m.y - (ring?.y ?? 0))))
+    expect(new Set(away).size).toBe(1)
+    expect(away[0]).toBeGreaterThan(0)
+  })
+
+  it('marks every other group closed', () => {
+    const groups = l('Marketing').nodes.filter((n) => n.kind === 'group')
+    expect(groups.map((g) => g.label)).toEqual([
+      'Delivering orders',
+      'Marketing',
+      'Payroll & HR',
+      'Running the systems',
+      'Support',
+    ])
+    expect(groups.filter((g) => g.open).map((g) => g.label)).toEqual(['Marketing'])
   })
 
   it('draws an unnamed member with its host string', () => {

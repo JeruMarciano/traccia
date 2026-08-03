@@ -80,10 +80,22 @@ describe('MapView', () => {
     expect(draw()).not.toMatch(/outside the EEA/i)
   })
 
-  it('draws the members of an open ring in place of it', () => {
+  it('draws the members of an open ring around it', () => {
     const markup = draw(rossiEditore(), 'Marketing')
     expect(markup).toContain('stat.rossi-editore.it')
     expect(count(markup, /class="node-member/g)).toBe(2)
+  })
+
+  it('leaves an open ring on the sheet as a boundary, so it can be closed again', () => {
+    // Without this the only way out of an open ring is to click a different one, which is not a
+    // way back to the closed reading at all.
+    const markup = draw(rossiEditore(), 'Marketing')
+    expect(count(markup, /class="node-boundary"/g)).toBe(1)
+    expect(markup).toContain('node--opened')
+  })
+
+  it('draws no boundary when nothing is open', () => {
+    expect(draw()).not.toContain('node-boundary')
   })
 
   it('says the map is empty rather than drawing an empty sheet', () => {

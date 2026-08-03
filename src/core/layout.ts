@@ -21,6 +21,12 @@ export interface LayoutNode {
   y: number
   count?: number
   unexplained?: number
+  /** Group nodes: true when this ring stands open. An open ring is still on the sheet -- it is
+   *  what a reader clicks to close it again, and it still says how many are inside. */
+  open?: boolean
+  /** Open group nodes: how far its members sit from the centre, so the renderer can draw the
+   *  boundary round them without knowing this layout's spacing. */
+  openRadius?: number
   /** Group and member nodes: true for something the organisation runs itself (stroke colour). */
   internal?: boolean
   /** Door nodes only. */
@@ -43,6 +49,10 @@ export interface LayoutResult {
   /** Which group is open, echoed back so the renderer does not re-derive it. */
   openGroup: string | null
 }
+
+/** How far an open ring's members sit from its centre. Grows a little past three members so
+ *  they do not crowd, and stays a layout fact rather than a drawing one. */
+const MEMBER_ORBIT = 40
 
 /** Two decimals keeps the SVG readable and the equality tests exact. */
 function round(n: number): number {
@@ -121,37 +131,43 @@ export function computeLayout(
     })
   }
 
-  // Column 4: purpose groups, or the members of the one that is open, in its place.
-  const members = open === null ? [] : onTheRight.filter((p) => p.purposeGroup === open)
-  const rightY = column(groups.length - (open === null ? 0 : 1) + members.length, size.height)
-  let row = 0
-  for (const g of groups) {
-    if (g === open) {
-      for (const m of members) {
-        nodes.push({
-          id: `member:${m.id}`,
-          kind: 'member',
-          label: m.name,
-          x: round(size.width * 0.78),
-          y: rightY[row++] ?? 0,
-          unexplained: m.kind === 'unknown' ? 1 : 0,
-          internal: m.kind === 'internal',
-        })
-      }
-      continue
-    }
+  // Column 4: the purpose groups. A ring that opens stays exactly where it is and keeps its
+  // place in the column -- it becomes a boundary with its members set out around its centre,
+  // rather than vanishing and leaving a reader no way back to it.
+  const rightY = column(groups.length, size.height)
+  groups.forEach((g, i) => {
     const inGroup = onTheRight.filter((p) => p.purposeGroup === g)
+    const x = round(size.width * 0.78)
+    const y = rightY[i] ?? 0
+    const orbit = MEMBER_ORBIT + Math.max(inGroup.length - 3, 0) * 5
     nodes.push({
       id: `group:${g}`,
       kind: 'group',
       label: g,
-      x: round(size.width * 0.78),
-      y: rightY[row++] ?? 0,
+      x,
+      y,
       count: inGroup.length,
       unexplained: inGroup.filter((p) => p.kind === 'unknown').length,
       internal: inGroup.length > 0 && inGroup.every((p) => p.kind === 'internal'),
+      open: g === open,
+      ...(g === open ? { openRadius: orbit } : {}),
     })
-  }
+    if (g !== open) return
+    // Members set out around the centre, starting at twelve o'clock. One member sits above the
+    // centre rather than on it, so the group's own count stays readable underneath.
+    inGroup.forEach((m, k) => {
+      const angle = (k / Math.max(inGroup.length, 1)) * Math.PI * 2 - Math.PI / 2
+      nodes.push({
+        id: `member:${m.id}`,
+        kind: 'member',
+        label: m.name,
+        x: round(x + Math.cos(angle) * orbit),
+        y: round(y + Math.sin(angle) * orbit),
+        unexplained: m.kind === 'unknown' ? 1 : 0,
+        internal: m.kind === 'internal',
+      })
+    })
+  })
 
   // Every edge directed; the coloured ones repeat a door's colour along the whole path, so two
   // doors into one destination are two lines a reader can follow separately.

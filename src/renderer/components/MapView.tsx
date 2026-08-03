@@ -17,13 +17,13 @@ import { STRINGS } from '../strings'
  * carry and no longer does.
  */
 
-const CONTROLLER_R = 46
-const DOOR_W = 16
-const DOOR_H = 30
-const NODE_MIN_R = 20
-const NODE_MAX_R = 36
-const SUBJECT_R = 13
-const MEMBER_R = 12
+const CONTROLLER_R = 33
+const DOOR_W = 13
+const DOOR_H = 24
+const NODE_MIN_R = 15
+const NODE_MAX_R = 26
+const SUBJECT_R = 10
+const MEMBER_R = 9
 
 interface Props {
   layout: LayoutResult
@@ -70,6 +70,8 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup }
   const doors = layout.nodes.filter((n) => n.kind === 'door')
   const controller = layout.nodes.find((n) => n.kind === 'controller')
   const groups = layout.nodes.filter((n) => n.kind === 'group')
+  const opened = groups.filter((n) => n.open === true)
+  const closed = groups.filter((n) => n.open !== true)
   const members = layout.nodes.filter((n) => n.kind === 'member')
 
   function select(id: string, alsoToggle?: string) {
@@ -187,7 +189,31 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup }
           </g>
         )}
 
-        {groups.map((n) => {
+        {/* An open ring: a faint boundary drawn round its members, still clickable, because it
+            is the way back to the closed reading. Its count sits at the centre, so what the ring
+            holds stays legible with the members set out around it. */}
+        {opened.map((n) => {
+          const boundary = (n.openRadius ?? nodeRadius(n.count ?? 0)) + MEMBER_R + 7
+          return (
+            <g
+              key={n.id}
+              className={`node node--${n.internal ? 'internal' : 'external'} node--opened${dim(n.id)}`}
+              {...select(n.id, n.label)}
+            >
+              <title>{STRINGS.groupTitle(n.label, n.count ?? 0)}</title>
+              <circle className="node-boundary" cx={n.x} cy={n.y} r={boundary} />
+              <circle className="node-fill node-fill--opened" cx={n.x} cy={n.y} r={13} />
+              <text className="node-count node-count--opened" x={n.x} y={n.y + 4} textAnchor="middle">
+                {n.count ?? 0}
+              </text>
+              <text className="node-label" x={n.x} y={n.y + boundary + 14} textAnchor="middle">
+                {n.label}
+              </text>
+            </g>
+          )
+        })}
+
+        {closed.map((n) => {
           const count = n.count ?? 0
           const open = n.unexplained ?? 0
           const r = nodeRadius(count)
