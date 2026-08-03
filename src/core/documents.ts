@@ -106,6 +106,56 @@ const SENTENCE_END = /[.!?;:\n\r•]/
 /** One letter or digit, in any alphabet. */
 const ALNUM = /[\p{L}\p{N}]/u
 
+/** Any whitespace, including the line break itself. */
+const SPACE = /\s/
+
+/**
+ * What a new claim opens with when it is an item in a list: a bullet of whatever shape the file
+ * used, a numbered item, or a lettered one. Anything else at the start of a line is prose.
+ */
+function startsListItem(text: string, i: number): boolean {
+  const ch = text.charAt(i)
+  if (ch === '') return false
+  if ('•‣▪·-–—*'.includes(ch)) return true
+  if (/\d/.test(ch)) {
+    let k = i
+    while (/\d/.test(text.charAt(k))) k += 1
+    return text.charAt(k) === '.' || text.charAt(k) === ')'
+  }
+  return /\p{L}/u.test(ch) && text.charAt(i + 1) === ')'
+}
+
+/**
+ * True when the line break at `i` ends a statement rather than continuing one.
+ *
+ * A PDF wraps wherever the column ends, so an ordinary paragraph arrives with newlines inside it.
+ * Treating every one of them as a full stop chopped prose into fragments: the clause that named a
+ * vendor and the clause that said what it holds landed in different "sentences", so the attributes
+ * were read off half a claim -- missing where the phrase sat past the wrap, and worse, attached to
+ * whichever term happened to share the fragment.
+ *
+ * Two shapes really do open a new claim and are kept: a blank line, which is how plain text marks a
+ * paragraph, and a list marker on the next line, which is how it marks an item. A lone newline
+ * mid-paragraph is a soft wrap and reads as ordinary whitespace.
+ *
+ * The whole whitespace run around `i` is examined rather than the single character, so a wrap
+ * written "\r\n" counts once and an indented blank line still counts as blank.
+ */
+function lineBreakEndsSentence(text: string, i: number): boolean {
+  let from = i
+  while (from > 0 && SPACE.test(text.charAt(from - 1))) from -= 1
+  let to = i
+  while (to < text.length && SPACE.test(text.charAt(to))) to += 1
+  let breaks = 0
+  for (let k = from; k < to; k += 1) {
+    const c = text.charAt(k)
+    if (c === '\n') breaks += 1
+    else if (c === '\r' && text.charAt(k + 1) !== '\n') breaks += 1
+  }
+  if (breaks >= 2) return true
+  return startsListItem(text, to)
+}
+
 /**
  * True when the character at `i` ends a statement.
  *
@@ -118,10 +168,14 @@ const ALNUM = /[\p{L}\p{N}]/u
  *
  * A dot followed by a space stays a boundary, so "Non utilizziamo cookie. Utilizziamo Hotjar."
  * still reads as two statements and the denial still stops where it did.
+ *
+ * A line break does not either, unless it is a paragraph break or opens a list item: see
+ * `lineBreakEndsSentence`.
  */
 function endsSentence(text: string, i: number): boolean {
   const ch = text.charAt(i)
   if (!SENTENCE_END.test(ch)) return false
+  if (ch === '\n' || ch === '\r') return lineBreakEndsSentence(text, i)
   if (ch !== '.') return true
   return !(ALNUM.test(text.charAt(i - 1)) && ALNUM.test(text.charAt(i + 1)))
 }
@@ -245,7 +299,7 @@ const PLACED_FILLER = `(?:\\s+[\\p{Ll}\\p{N}’'-]+){0,3}`
 const JURISDICTION = new RegExp(
   `(?:${PLACED})${PLACED_FILLER}\\s+(?:in|nel|nella|nelle|nei|negli|presso|su)\\s+` +
     `(\\p{Lu}[\\p{L}’'-]+(?:\\s+\\p{Lu}[\\p{L}’'-]+)?)`,
-  'u',
+  'gu',
 )
 
 /**
@@ -253,13 +307,31 @@ const JURISDICTION = new RegExp(
  * capitalisation is the whole signal, and the lowercased copy used for term matching has thrown
  * it away.
  *
+ * `termAt` is the term's offset inside `sentence`, and the phrase nearest it wins. One sentence
+ * often places two things -- "I server sono ubicati in Irlanda e i backup sono conservati presso
+ * datacenter situati in Italia" -- and taking the first phrase gave the backup Ireland: within the
+ * sentence, as §4.1 requires, and confidently wrong, which §4.1 rates worse than a blank.
+ *
+ * Distance is measured from the term to the placement verb that heads the phrase, not to the
+ * country it ends in: the verb is what binds a placement to the thing it places, and a long phrase
+ * would otherwise look far away from the very term it is about. On a tie the phrase before the
+ * term wins, because both languages usually put the clause after the subject it describes, so a
+ * phrase in front is the more likely owner of a term that follows it.
+ *
  * Not negation-guarded, as `retentionIn` is not: "I dati non sono ubicati in Irlanda" yields
  * "Irlanda". The guard runs on the term that anchors the sentence, and the confirm list is the
  * containment.
  */
-export function jurisdictionIn(sentence: string): string | undefined {
-  const m = JURISDICTION.exec(sentence)
-  return m?.[1]
+export function jurisdictionIn(sentence: string, termAt: number): string | undefined {
+  let best: string | undefined
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const m of sentence.matchAll(JURISDICTION)) {
+    const distance = Math.abs(m.index - termAt)
+    if (distance >= bestDistance) continue
+    bestDistance = distance
+    best = m[1]
+  }
+  return best
 }
 
 /**
@@ -537,7 +609,7 @@ export function extractCandidates(
           kind: entry.layer === 'internal' ? 'internal' : 'processor',
           evidence: evidenceAround(text, at, matched),
           retention: retentionIn(sentence),
-          jurisdiction: jurisdictionIn(sentence),
+          jurisdiction: jurisdictionIn(sentence, at - sStart),
           dataCategories: dataCategoriesIn(sentence, categoryTerms),
         },
         doc.name,
@@ -564,7 +636,7 @@ export function extractCandidates(
           kind: 'processor',
           evidence: evidenceAround(text, at, m[0].length),
           retention: retentionIn(sentence),
-          jurisdiction: jurisdictionIn(sentence),
+          jurisdiction: jurisdictionIn(sentence, at - sStart),
           dataCategories: dataCategoriesIn(sentence, categoryTerms),
         },
         doc.name,

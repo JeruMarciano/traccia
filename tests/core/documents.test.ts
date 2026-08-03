@@ -314,6 +314,94 @@ describe('a term broken across a line', () => {
   })
 })
 
+// A PDF wraps at the column, so a paragraph arrives with newlines inside it. Ending a statement
+// at every newline chopped ordinary prose into fragments and handed each attribute extractor half
+// a clause. A single newline mid-paragraph is a soft wrap and reads as whitespace; a blank line
+// and a list marker still end the statement, because both really do start a new claim.
+describe('a line wrapped by the page is not a new statement', () => {
+  const saysOf = (text: string, name: string) =>
+    placesOnly(
+      extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES),
+    ).find((c) => c.name === name)
+
+  it('reads a retention phrase across a soft wrap', () => {
+    expect(saysOf('I dati in Salesforce sono conservati\nper 24 mesi.', 'Salesforce')?.retention).toBe(
+      '24 months',
+    )
+  })
+
+  it('reads a jurisdiction phrase across a soft wrap', () => {
+    expect(
+      saysOf('I server di Salesforce sono ubicati\nin Irlanda.', 'Salesforce')?.jurisdiction,
+    ).toBe('Irlanda')
+  })
+
+  it('reads a data category across a soft wrap', () => {
+    expect(
+      saysOf('Salesforce raccoglie i dati di navigazione\ndegli utenti e il nome.', 'Salesforce')
+        ?.dataCategories,
+    ).toEqual(['Browsing data', 'Name'])
+  })
+
+  it('does not read any of the three across a blank line', () => {
+    const says = (tail: string) => saysOf(`Il CRM è Salesforce\n\n${tail}`, 'Salesforce')
+    expect(says('I dati sono conservati per 24 mesi.')?.retention).toBeUndefined()
+    expect(says('I server sono ubicati in Irlanda.')?.jurisdiction).toBeUndefined()
+    expect(says('Trattiamo il nome del cliente.')?.dataCategories).toBeUndefined()
+  })
+
+  it('does not read any of the three across a bullet', () => {
+    const says = (tail: string) => saysOf(`Il CRM è Salesforce\n• ${tail}`, 'Salesforce')
+    expect(says('dati conservati per 24 mesi')?.retention).toBeUndefined()
+    expect(says('server ubicati in Irlanda')?.jurisdiction).toBeUndefined()
+    expect(says('trattiamo il nome del cliente')?.dataCategories).toBeUndefined()
+  })
+
+  it('does not read across a numbered or lettered list marker', () => {
+    expect(
+      saysOf('Il CRM è Salesforce\n2. I dati sono conservati per 24 mesi.', 'Salesforce')?.retention,
+    ).toBeUndefined()
+    expect(
+      saysOf('Il CRM è Salesforce\nb) I dati sono conservati per 24 mesi.', 'Salesforce')?.retention,
+    ).toBeUndefined()
+  })
+
+  it('does not read across a dash used as a list marker', () => {
+    expect(
+      saysOf('Il CRM è Salesforce\n- I dati sono conservati per 24 mesi.', 'Salesforce')?.retention,
+    ).toBeUndefined()
+  })
+})
+
+// Joining a soft wrap makes statements longer, and the denial guard is scoped by the statement.
+// The reach cap is what keeps that from turning into a denial that swallows the rest of a
+// paragraph. See §4.4.
+describe('a denial across a wrapped line', () => {
+  const DENIABLE: InternalSystemDictionary = {
+    hotjar: { name: 'Hotjar', purposeGroup: 'Marketing', layer: 'external', holder: 'supplier' },
+    matomo: { name: 'Matomo', purposeGroup: 'Marketing', layer: 'external', holder: 'supplier' },
+  }
+  const names = (text: string): string[] =>
+    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, DENIABLE, SUBJECTS, CATEGORIES)
+      .map((c) => c.name)
+      .sort()
+
+  it('denies a term the wrap separated from its negation', () => {
+    expect(names('Il sito non utilizza\nHotjar per le mappe di calore.')).toEqual([])
+  })
+
+  it('still stops at the reach cap when the wrap joined the two clauses', () => {
+    // The negation governs the retention clause. Joining the wrap puts it in the same statement as
+    // the vendor named at the end, and only the 60-character cap keeps it off.
+    expect(
+      names(
+        'Non conserviamo i dati oltre i ventiquattro mesi previsti dal contratto\n' +
+          'quadro sottoscritto con il fornitore, e per le statistiche il sito usa Matomo.',
+      ),
+    ).toEqual(['Matomo'])
+  })
+})
+
 // What a document says about a system, not only that it names one. See §4.1 of
 // docs/superpowers/specs/2026-08-03-extraction-depth-design.md. Attribution is the risk, and the
 // containment is that a phrase must share a sentence with the term, and that whatever is read is
@@ -407,6 +495,60 @@ describe('jurisdiction read off the sentence', () => {
     expect(
       whereFor('Salesforce, con server ubicati in Irlanda, tratta i dati.', 'Salesforce'),
     ).toBe('Irlanda')
+  })
+
+  it('takes the placement nearest the term, not the first in the sentence', () => {
+    // A sentence that places two things names two countries. Reporting the first one is a
+    // confident wrong answer, which §4.1 rates worse than a blank.
+    expect(
+      whereFor('I log sono conservati in Irlanda, mentre Stripe archivia i dati negli Stati Uniti.', 'Stripe'),
+    ).toBe('Stati Uniti')
+  })
+
+  it('takes a placement stated before the term over a decoy after it', () => {
+    expect(
+      whereFor('I dati di Stripe sono conservati in Irlanda, mentre le buste paga restano archiviate in Italia.', 'Stripe'),
+    ).toBe('Irlanda')
+  })
+
+  it('measures the distance inside the sentence, not from the start of the document', () => {
+    // The term's offset is a document offset and the phrases are matched inside a slice of it.
+    // Comparing the two unconverted puts the term past the end of its own sentence, and the last
+    // phrase in the sentence always looks nearest.
+    expect(
+      whereFor(
+        'Questa informativa descrive i trattamenti svolti dal titolare. ' +
+          'I dati di Stripe sono conservati in Irlanda, mentre le buste paga restano archiviate in Italia.',
+        'Stripe',
+      ),
+    ).toBe('Irlanda')
+  })
+})
+
+// The reviewer's sentence: two placements, and the nearer one belongs to the term. See §4.1.
+describe('two things placed in one sentence', () => {
+  const STORAGE: InternalSystemDictionary = {
+    backup: { name: 'Backup', purposeGroup: 'IT & Infrastructure', layer: 'internal', holder: 'you' },
+  }
+
+  it('gives the backup the datacenter it is actually kept in', () => {
+    const out = placesOnly(
+      extractCandidates(
+        [
+          {
+            name: 'informativa.pdf',
+            text:
+              'I server sono ubicati in Irlanda e i backup sono conservati presso datacenter ' +
+              'situati in Italia.',
+          },
+        ],
+        VENDORS,
+        STORAGE,
+        SUBJECTS,
+        CATEGORIES,
+      ),
+    )
+    expect(out.find((c) => c.name === 'Backup')?.jurisdiction).toBe('Italia')
   })
 })
 
