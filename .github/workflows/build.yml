@@ -14,11 +14,33 @@ on:
   # intentionally narrow; PR coverage is what every branch actually gets.
   push:
     branches: [main, tauri-port]
+    # A tag is a release, and a release runs everything, macOS included.
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# This repository is private, and private-repo Actions minutes are billed with a multiplier per
+# runner: Linux ×1, Windows ×2, macOS ×10. A ten-minute macOS bundle therefore costs a hundred
+# minutes of the monthly allowance, and running two macOS jobs on every push and every PR — the
+# shape this workflow had until 2026-08-03 — spent roughly 220 billed minutes per run, about 82%
+# of it on macOS alone. That exhausted a 2,000-minute month in nine runs, security-update PRs
+# included.
+#
+# So macOS is now release-only, and so is bundling. Everyday pushes and PRs get the Ubuntu checks
+# and the Windows Rust suite; a tag or a manual run gets the full matrix and the installers. What
+# this gives up is macOS CI coverage between releases, which is the coverage a developer working
+# on a Mac already performs by hand before every commit (CLAUDE.md's gates: cargo test, clippy).
+# Before cutting a release, run this workflow manually and let the full matrix pass.
+#
+# If the repository is ever made public, Actions is free and unlimited and both of these
+# conditions can be deleted outright.
+#
+# The release condition is spelled out at each use rather than hoisted into a workflow-level
+# `env`: the `env` context is not available inside `strategy`, so a hoisted value would silently
+# evaluate to an empty string there and quietly put macOS back on every run.
 
 jobs:
   check:
@@ -40,7 +62,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        # Windows every time; macOS on a release or a manual run only (see the note above the
+        # jobs). macOS bills at ×10, and this job is the cheaper of the two that used it.
+        os: >-
+          ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
+          && fromJSON('["macos-latest", "windows-latest"]')
+          || fromJSON('["windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -109,6 +136,10 @@ jobs:
   bundle:
     name: bundle (${{ matrix.os }})
     needs: [check, rust]
+    # Bundling is a release activity: it produces the installers a release is made by hand from,
+    # and it is the single most expensive thing here (a macOS bundle alone bills ~100 minutes).
+    # Nothing between releases consumes its output, so it waits for a tag or a manual run.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     strategy:
       fail-fast: false
       matrix:
