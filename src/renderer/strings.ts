@@ -27,23 +27,27 @@ export const STRINGS = {
   people: 'People',
   subjectGroupCount: (n: number): string => `${n} groups`,
   placesInGroup: (n: number): string => `${n} places`,
-  outsideEEA: 'outside the EEA',
   notYetIdentified: 'not yet identified',
   groupTitle: (name: string, places: number): string => `${name}: ${places} places`,
   mapEmpty: 'Open a project to draw the map.',
 
-  leavingCount: (n: number): string => `${n} outside the EEA`,
+  /** The centre before any document has named the organisation. Never a guessed company name. */
+  yourOrganisation: 'Your organisation',
+  doorDiscovered: 'discovered by the scan',
+  doorDeclared: 'declared in a document',
 
   keyPeople: 'People',
   keyPeopleGloss: 'Every line starts here.',
+  keyDoor: 'Way in',
+  keyDoorGloss: 'Where data is collected.',
+  keyDirection: 'Direction',
+  keyDirectionGloss: 'The arrow points where the data goes.',
   keyInternal: 'Your systems',
   keyInternalGloss: 'Run by the organisation itself.',
   keyExternal: 'Suppliers',
   keyExternalGloss: 'Run by somebody else.',
   keyOpen: 'Not yet identified',
   keyOpenGloss: 'The dashed share of a ring.',
-  keyCrossing: 'Leaves the EEA',
-  keyCrossingGloss: 'Data comes to rest outside the area.',
 
   saveBlocked:
     'The project could not be saved because another program is holding the file open. Close it and try again.',

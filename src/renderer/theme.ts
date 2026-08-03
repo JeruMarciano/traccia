@@ -36,6 +36,15 @@ export const STYLESHEET = `
   --internal:#1F6F4A;
   --external:#B4791A;
   --crossing:#CE3B22;
+  /* Six door colours, and the palette cycles rather than growing: a seventh door repeats the
+     first, and its label is what tells them apart. Generating hues until they stop being
+     tellable apart would be the wrong answer. */
+  --door-1:#2648C8;
+  --door-2:#1F6F4A;
+  --door-3:#B4791A;
+  --door-4:#7A3E9D;
+  --door-5:#0F7C8C;
+  --door-6:#A33C5B;
   --sans:"Avenir Next",Avenir,Futura,"Century Gothic","URW Gothic","Segoe UI",system-ui,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
 }
@@ -138,13 +147,34 @@ export const STYLESHEET = `
   text-align:center;
 }
 
-.orbit{fill:none;stroke:var(--rule);stroke-width:1;stroke-dasharray:1 5;stroke-linecap:round;}
-.link{stroke:var(--rule);stroke-width:1.25;fill:none;}
-.link--internal{stroke:var(--internal);opacity:.5;}
-.link--external{stroke:var(--external);opacity:.5;}
-.crossing{stroke:var(--crossing);stroke-width:2;stroke-linecap:round;fill:none;}
+/* A door's colour travels the whole path, so two doors feeding one destination are two lines a
+   reader can follow apart. Colour repeats the story; it never solely carries it -- the label and
+   the position say the same thing, and print.css gives each colour its own dash pattern. */
+.path{stroke:var(--rule);stroke-width:1.25;fill:none;}
+.path--neutral{stroke:var(--rule);opacity:.65;}
+.path--0{stroke:var(--door-1);opacity:.75;}
+.path--1{stroke:var(--door-2);opacity:.75;}
+.path--2{stroke:var(--door-3);opacity:.75;}
+.path--3{stroke:var(--door-4);opacity:.75;}
+.path--4{stroke:var(--door-5);opacity:.75;}
+.path--5{stroke:var(--door-6);opacity:.75;}
+.arrow path{fill:var(--ink-soft);}
+
+/* A door is drawn as a door: a small upright rectangle standing in the inbound side. */
+.door{cursor:pointer;}
+.door-mark{fill:var(--paper-lift);stroke-width:2.5;}
+.door--0 .door-mark{stroke:var(--door-1);}
+.door--1 .door-mark{stroke:var(--door-2);}
+.door--2 .door-mark{stroke:var(--door-3);}
+.door--3 .door-mark{stroke:var(--door-4);}
+.door--4 .door-mark{stroke:var(--door-5);}
+.door--5 .door-mark{stroke:var(--door-6);}
+.door:hover .door-mark{fill:var(--paper);}
+.door-label{font-size:10px;font-weight:500;fill:var(--ink);}
+.door-origin{font-family:var(--mono);font-size:8px;fill:var(--ink-soft);letter-spacing:.02em;}
 
 .subject{cursor:pointer;}
+.subject-label{font-size:10px;font-weight:500;fill:var(--ink);}
 .disc{fill:var(--person);}
 .disc-halo{fill:none;stroke:var(--person);stroke-width:1;opacity:.28;}
 .disc-label{
@@ -168,7 +198,11 @@ export const STYLESHEET = `
   letter-spacing:.05em;
   fill:var(--ink);
 }
-.node-eea{font-family:var(--mono);font-size:8.5px;fill:var(--crossing);letter-spacing:.02em;}
+.node-member{fill:var(--paper-lift);stroke:var(--external);stroke-width:2;}
+.node--internal .node-member{stroke:var(--internal);}
+/* A member nobody has identified is drawn, and drawn dashed. Hiding it because it has no name
+   to show would be the one thing the open ring must not do. */
+.node-member--open{stroke-dasharray:3 4;opacity:.8;}
 .node:hover .node-fill{fill:var(--paper);}
 .node:hover .node-arc{stroke-width:3.5;}
 .dim{opacity:.16;}
@@ -288,13 +322,17 @@ export const STYLESHEET = `
 /* The map settles rather than appears: rings first, then what sits on them. A scan is the one
    moment this tool has to show something happening, and a drawing that arrives all at once
    reads as a picture instead of a reading. */
-@keyframes trace-in{from{stroke-dashoffset:var(--dash);}to{stroke-dashoffset:0;}}
+@keyframes fade-in{from{opacity:0;}to{opacity:inherit;}}
 @keyframes settle{from{opacity:0;transform:scale(.9);}to{opacity:1;transform:scale(1);}}
-.link{stroke-dasharray:var(--dash);animation:trace-in .5s ease-out both;}
-.node,.subject{animation:settle .32s ease-out both;transform-box:fill-box;transform-origin:center;}
+.path{animation:fade-in .4s ease-out both;}
+.node,.subject,.door,.controller{
+  animation:settle .32s ease-out both;
+  transform-box:fill-box;
+  transform-origin:center;
+}
 
 @media (prefers-reduced-motion:reduce){
-  .link,.node,.subject{animation:none;stroke-dashoffset:0;}
+  .path,.node,.subject,.door,.controller{animation:none;}
 }
 
 @media (max-width:900px){
