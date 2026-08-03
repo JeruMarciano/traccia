@@ -83,6 +83,22 @@ describe('placeDetails', () => {
     ])
   })
 
+  it('reads what is held as one line when the document listed categories', () => {
+    let p = emptyProject()
+    p = addPlace(p, { ...place(), dataCategories: ['Name', 'Email address'] }, 'pl-1')
+    expect(placeDetails(p, 'pl-1', DICTIONARY)?.dataCategoriesLabel).toBe('Name, Email address')
+  })
+
+  it('says not yet identified when nobody has said what is held', () => {
+    // Neutral copy on an unanswered line: a blank or a "none" would both be claims the tool
+    // cannot make. An empty array reads the same as an absent one for exactly that reason.
+    let p = emptyProject()
+    p = addPlace(p, { ...place(), name: 'A' }, 'pl-none')
+    p = addPlace(p, { ...place(), name: 'B', dataCategories: [] }, 'pl-empty')
+    expect(placeDetails(p, 'pl-none', DICTIONARY)?.dataCategoriesLabel).toBe('not yet identified')
+    expect(placeDetails(p, 'pl-empty', DICTIONARY)?.dataCategoriesLabel).toBe('not yet identified')
+  })
+
   it('answers where from leavesEEA when no jurisdiction is recorded', () => {
     let p = emptyProject()
     p = addPlace(p, { ...place(), name: 'A', leavesEEA: true }, 'pl-out')

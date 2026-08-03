@@ -99,6 +99,29 @@ const NEGATIONS =
 /** Where a statement stops. Bullets count: a list item is its own claim. */
 const SENTENCE_END = /[.!?;:\n\r•]/
 
+/** One letter or digit, in any alphabet. */
+const ALNUM = /[\p{L}\p{N}]/u
+
+/**
+ * True when the character at `i` ends a statement.
+ *
+ * Every terminator but the dot ends one wherever it sits. A dot does not when it has a letter or
+ * a digit on both sides: that is a domain label ("google-analytics.com"), a company suffix
+ * ("S.r.l.") or a decimal ("24.5"), and reading it as a full stop cut the sentence short at the
+ * first label of a domain. That made everything a document said *after* naming a vendor invisible
+ * to the attribute extractors -- which is most real phrasing, since the sentence names the
+ * supplier and then says what it keeps and where.
+ *
+ * A dot followed by a space stays a boundary, so "Non utilizziamo cookie. Utilizziamo Hotjar."
+ * still reads as two statements and the denial still stops where it did.
+ */
+function endsSentence(text: string, i: number): boolean {
+  const ch = text.charAt(i)
+  if (!SENTENCE_END.test(ch)) return false
+  if (ch !== '.') return true
+  return !(ALNUM.test(text.charAt(i - 1)) && ALNUM.test(text.charAt(i + 1)))
+}
+
 /**
  * How far back a denial reaches, in characters.
  *
@@ -117,14 +140,14 @@ const NEGATION_REACH = 60
 function sentenceBounds(text: string, at: number): { start: number; end: number } {
   let start = 0
   for (let i = at - 1; i >= 0; i -= 1) {
-    if (SENTENCE_END.test(text.charAt(i))) {
+    if (endsSentence(text, i)) {
       start = i + 1
       break
     }
   }
   let end = text.length
   for (let i = at; i < text.length; i += 1) {
-    if (SENTENCE_END.test(text.charAt(i))) {
+    if (endsSentence(text, i)) {
       end = i
       break
     }
@@ -133,24 +156,19 @@ function sentenceBounds(text: string, at: number): { start: number; end: number 
 }
 
 /**
- * Words that close a denial and open an assertion. "Non riceve il codice fiscale, solo il nome"
- * names two things and denies one of them; without this the denial runs to the end of its reach
- * and the sentence reads as denying both. A comma cannot do this job -- "non trattiamo dati
- * sanitari, dati giudiziari" is a list under one denial, and every item in it is denied -- so the
- * contrast has to be a word that says so.
+ * True when the text just before `at` denies whatever is at `at`.
+ *
+ * A contrastive word ("solo", "only") is deliberately not treated as closing the denial, though
+ * that would let "non riceve il codice fiscale, solo il nome" report the second category. It also
+ * lets five ordinary denials through -- "non ha mai adottato, nemmeno soltanto in via
+ * sperimentale, Hotjar" among them -- because the contrast can sit inside the denied clause
+ * rather than after it. §4.4 settles that trade in its own words: one confident false positive
+ * costs more than ten honest blanks. If the contrastive read is wanted later it belongs inside
+ * `dataCategoriesIn`, scoped to categories, with its own tests.
  */
-const CONTRAST =
-  /(^|[^\p{L}\p{N}])(solo|soltanto|unicamente|esclusivamente|only|but)(?![\p{L}\p{N}])/gu
-
-/** True when the text just before `at` denies whatever is at `at`. */
 function isDenied(lower: string, at: number): boolean {
   const { start } = sentenceBounds(lower, at)
-  let window = lower.slice(Math.max(start, at - NEGATION_REACH), at)
-  CONTRAST.lastIndex = 0
-  let last = -1
-  for (const m of window.matchAll(CONTRAST)) last = m.index + m[0].length
-  if (last !== -1) window = window.slice(last)
-  return NEGATIONS.test(window)
+  return NEGATIONS.test(lower.slice(Math.max(start, at - NEGATION_REACH), at))
 }
 
 /**
@@ -180,6 +198,10 @@ const RETENTION = new RegExp(
 /**
  * How long the sentence says something is kept, or undefined. The first figure wins when a
  * sentence carries two: that is ambiguous by construction, and the user is shown the sentence.
+ *
+ * Not negation-guarded: "Non conserviamo i dati per 24 mesi" yields "24 months". The guard runs
+ * on the term that anchors the sentence, not on the attributes read off it, and the confirm list
+ * is the containment.
  */
 export function retentionIn(sentence: string): string | undefined {
   const m = RETENTION.exec(sentence)
@@ -226,6 +248,10 @@ const JURISDICTION = new RegExp(
  * Where the sentence says this sits, or undefined. Run against the sentence in its original case:
  * capitalisation is the whole signal, and the lowercased copy used for term matching has thrown
  * it away.
+ *
+ * Not negation-guarded, as `retentionIn` is not: "I dati non sono ubicati in Irlanda" yields
+ * "Irlanda". The guard runs on the term that anchors the sentence, and the confirm list is the
+ * containment.
  */
 export function jurisdictionIn(sentence: string): string | undefined {
   const m = JURISDICTION.exec(sentence)

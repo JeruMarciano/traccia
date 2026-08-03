@@ -132,6 +132,17 @@ describe('a term the document denies', () => {
   it('is unaffected when the denial comes after the term', () => {
     expect(names('Hotjar è installato, non è disattivato.')).toEqual(['Hotjar'])
   })
+
+  it('still denies when a contrastive word sits inside the denied clause', () => {
+    // These are why the denial does not stop at "solo"/"only". Letting a contrastive close a
+    // denial would recover one data category from "non riceve X, solo Y" and would let all five
+    // of these onto the map, each of them a sentence saying the tracker is not used.
+    expect(names('L’azienda non ha mai adottato, nemmeno soltanto in via sperimentale, Hotjar.')).toEqual([])
+    expect(names('Non abbiamo attivato, solo per scrupolo lo ribadiamo, Hotjar.')).toEqual([])
+    expect(names('We have never used, not even only for testing, Hotjar.')).toEqual([])
+    expect(names('Non trattiamo dati esclusivamente automatizzati tramite Hotjar.')).toEqual([])
+    expect(names('Senza consenso, e solo in tal caso, attiviamo Hotjar.')).toEqual([])
+  })
 })
 
 // A term is matched on letter boundaries, not on ASCII word boundaries. `\b` treats every
@@ -397,9 +408,48 @@ describe('categories of personal data', () => {
   })
 
   it('does not read a category the sentence denies', () => {
+    // The denial governs the rest of its sentence, contrastive clause included, so this reads as
+    // naming nothing rather than as naming the second category. Recovering "il nome" from after
+    // the "solo" would cost the denial guard its reach and let ordinary denials -- "non ha mai
+    // adottato, nemmeno soltanto in via sperimentale, X" -- through. §4.4 settles that trade:
+    // one confident false positive costs more than ten honest blanks.
     expect(
       categoriesFor('Salesforce non riceve il codice fiscale, solo il nome.', 'Salesforce'),
-    ).toEqual(['Name'])
+    ).toBeUndefined()
+  })
+})
+
+// A vendor is matched by its domain, and a domain is full of dots. The sentence a dot ends is the
+// same sentence the attribute extractors read, so a dot inside "google-analytics.com" truncated
+// every reading at the first label and made everything stated after the vendor's name invisible.
+describe('attributes read around a vendor domain', () => {
+  const vendorSays = (text: string) =>
+    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, CATEGORIES).find(
+      (c) => c.name === 'Google Analytics',
+    )
+
+  const AFTER =
+    'Il fornitore google-analytics.com conserva i dati per 24 mesi, ubicati in Irlanda, ' +
+    'e riceve nome ed email.'
+
+  it('reads a retention stated after the domain', () => {
+    expect(vendorSays(AFTER)?.retention).toBe('24 months')
+  })
+
+  it('reads a jurisdiction stated after the domain', () => {
+    expect(vendorSays(AFTER)?.jurisdiction).toBe('Irlanda')
+  })
+
+  it('reads data categories stated after the domain', () => {
+    expect(vendorSays(AFTER)?.dataCategories).toEqual(['Name', 'Email address'])
+  })
+
+  it('still stops at a full stop, which a domain dot is not', () => {
+    // The dot after "com" has a space behind it and ends the sentence as it always did; the dot
+    // inside the domain has letters both sides and does not.
+    expect(
+      vendorSays('Usiamo google-analytics.com. I log sono conservati per 24 mesi.')?.retention,
+    ).toBeUndefined()
   })
 })
 
@@ -491,6 +541,28 @@ describe('ingestDocument', () => {
   it('carries a jurisdiction onto the new place, where the detail panel already reads it', () => {
     const p = ingestDocument(emptyProject(), [confirmed({ jurisdiction: 'Irlanda' })])
     expect(p.places[0]?.jurisdiction).toBe('Irlanda')
+  })
+
+  it('fills a blank jurisdiction on an existing place', () => {
+    // The shared fixture records no jurisdiction, which is what a scan leaves behind.
+    let p = emptyProject()
+    p = addPlace(p, { ...place(), name: 'Payroll System' }, 'pl-1')
+    const out = ingestDocument(p, [confirmed({ jurisdiction: 'Irlanda' })])
+    expect(out.places[0]?.jurisdiction).toBe('Irlanda')
+  })
+
+  it('fills blank data categories on an existing place', () => {
+    let p = emptyProject()
+    p = addPlace(p, { ...place(), name: 'Payroll System' }, 'pl-1')
+    const out = ingestDocument(p, [confirmed({ dataCategories: ['Name'] })])
+    expect(out.places[0]?.dataCategories).toEqual(['Name'])
+  })
+
+  it('does not overwrite data categories the place already has', () => {
+    let p = emptyProject()
+    p = addPlace(p, { ...place(), name: 'Payroll System', dataCategories: ['Name'] }, 'pl-1')
+    const out = ingestDocument(p, [confirmed({ dataCategories: ['Email address'] })])
+    expect(out.places[0]?.dataCategories).toEqual(['Name'])
   })
 
   it('carries data categories onto the new place', () => {
