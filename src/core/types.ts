@@ -218,6 +218,32 @@ export interface CollectionPoint {
   confidence: Confidence
 }
 
+export type DoorOrigin = 'discovered' | 'declared'
+
+/**
+ * A way in. Computed by deriveDoors from places and collection points, never stored: a door is a
+ * reading of the project, like a gap, not a fact somebody recorded.
+ */
+export interface Door {
+  /** `place:<id>` for a declared door, `cp:<id>` for a discovered one. */
+  id: string
+  label: string
+  origin: DoorOrigin
+  /** 0-5. An index, never a hue -- the six colours live in theme.ts. Cycles beyond six doors. */
+  colourIndex: number
+  /** Field names asked at this door, in project order. Empty for a declared door with none. */
+  fields: string[]
+}
+
+/** Where one door's data goes and who comes through it. Computed by tracePaths; never stored. */
+export interface DoorPath {
+  doorId: string
+  /** Place ids this door's data reaches, in project flow order, deduplicated. */
+  destinationIds: string[]
+  /** SubjectGroup ids that come through this door, in project flow order, deduplicated. */
+  subjectIds: string[]
+}
+
 export interface RawStorageKey {
   scope: 'local' | 'session'
   key: string

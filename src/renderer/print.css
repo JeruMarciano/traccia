@@ -8,9 +8,11 @@
  * are ordinary text in the DOM at all times -- theme.ts keeps them off the screen -- so what
  * prints can never say something the app is not also showing, or fail to say something it is.
  *
- * Nothing here needs a rule for colour: every distinction the map makes is already carried by
- * shape, weight or label (see theme.ts), so switching to a monochrome printer loses nothing but
- * the one accent hue.
+ * One distinction does need a rule here. A door's colour travels its whole path, and two doors
+ * feeding one destination are two parallel lines told apart by hue -- which a monochrome printer
+ * flattens to two identical greys. So on paper each door colour also takes its own dash pattern:
+ * the count of lines and the pattern of each survive the photocopier, and the label says the rest.
+ * Every other distinction the map makes is already carried by shape, weight or label (theme.ts).
  */
 @media print {
   :root { --sheet: #FFFFFF; }
@@ -24,6 +26,16 @@
 
   .map-svg { height: auto; }
   .dim { opacity: 1; }
+
+  /* Six patterns for six door colours, all distinct. A door that shares a pattern with another
+     is a door a reader cannot follow on paper. */
+  .path { opacity: 1; }
+  .path--0 { stroke-dasharray: none; }
+  .path--1 { stroke-dasharray: 6 3; }
+  .path--2 { stroke-dasharray: 2 3; }
+  .path--3 { stroke-dasharray: 9 3 2 3; }
+  .path--4 { stroke-dasharray: 1 4; }
+  .path--5 { stroke-dasharray: 12 4; }
 
   /* The map is one drawing, purpose groups and all, not a page each. */
   .map { break-inside: avoid; }

@@ -444,6 +444,24 @@ describe('ingestScan', () => {
       const twice = ingestScan(ingestScan(emptyProject(), r, DICT, { prefix: 's1' }), r, DICT, { prefix: 's2' })
       expect(twice.collectionPoints).toHaveLength(1)
     })
+    it('a page seen again keeps the id it already had', () => {
+      // The same door, not a new one. Its id is what the map selects on and what door colour is
+      // assigned by, so renumbering on rescan repaints the sheet and drops the selection. A
+      // length check alone does not catch that -- this one asserts identity.
+      const r = scanResultWith({ formFields: [{ page: 'https://x.it/c', name: 'email', type: 'email', autocomplete: '', label: '' }] })
+      const once = ingestScan(emptyProject(), r, DICT, { prefix: 's1' })
+      const twice = ingestScan(once, r, DICT, { prefix: 's2' })
+      expect(twice.collectionPoints?.[0]?.id).toBe(once.collectionPoints?.[0]?.id)
+    })
+    it('a page seen again takes the fresh capture’s fields', () => {
+      const first = scanResultWith({ formFields: [{ page: 'https://x.it/c', name: 'email', type: 'email', autocomplete: '', label: '' }] })
+      const second = scanResultWith({ formFields: [
+        { page: 'https://x.it/c', name: 'email', type: 'email', autocomplete: '', label: '' },
+        { page: 'https://x.it/c', name: 'tel', type: 'tel', autocomplete: '', label: '' },
+      ]})
+      const twice = ingestScan(ingestScan(emptyProject(), first, DICT, { prefix: 's1' }), second, DICT, { prefix: 's2' })
+      expect(twice.collectionPoints?.[0]?.fields.map((f) => f.name)).toEqual(['email', 'tel'])
+    })
   })
 
   describe('own-subdomain skipping (suffix)', () => {

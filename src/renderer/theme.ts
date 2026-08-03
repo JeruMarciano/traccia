@@ -36,6 +36,15 @@ export const STYLESHEET = `
   --internal:#1F6F4A;
   --external:#B4791A;
   --crossing:#CE3B22;
+  /* Six door colours, and the palette cycles rather than growing: a seventh door repeats the
+     first, and its label is what tells them apart. Generating hues until they stop being
+     tellable apart would be the wrong answer. */
+  --door-1:#2648C8;
+  --door-2:#1F6F4A;
+  --door-3:#B4791A;
+  --door-4:#7A3E9D;
+  --door-5:#0F7C8C;
+  --door-6:#A33C5B;
   --sans:"Avenir Next",Avenir,Futura,"Century Gothic","URW Gothic","Segoe UI",system-ui,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
 }
@@ -97,18 +106,19 @@ export const STYLESHEET = `
 
 /* The scan control: one field, one button, the field carrying the accent so the eye starts
    where the work starts. */
-.scanbar{display:flex;gap:7px;padding:14px 0 0;}
+.scanbar{display:flex;gap:6px;padding:11px 0 0;max-width:330px;}
 .scan-input{
   flex:1;
   min-width:0;
   font-family:var(--mono);
-  font-size:12px;
+  font-size:10.5px;
   color:var(--ink);
   background:var(--paper-lift);
   border:1px solid var(--rule);
   border-radius:999px;
-  padding:8px 15px;
+  padding:5px 11px;
 }
+.scanbar .action{padding:4px 11px;font-size:10px;}
 .scan-input::placeholder{color:var(--ink-soft);}
 .scan-input:disabled{color:var(--ink-soft);}
 .scan-input:focus-visible{outline:2px solid var(--person);outline-offset:1px;border-color:transparent;}
@@ -138,18 +148,39 @@ export const STYLESHEET = `
   text-align:center;
 }
 
-.orbit{fill:none;stroke:var(--rule);stroke-width:1;stroke-dasharray:1 5;stroke-linecap:round;}
-.link{stroke:var(--rule);stroke-width:1.25;fill:none;}
-.link--internal{stroke:var(--internal);opacity:.5;}
-.link--external{stroke:var(--external);opacity:.5;}
-.crossing{stroke:var(--crossing);stroke-width:2;stroke-linecap:round;fill:none;}
+/* A door's colour travels the whole path, so two doors feeding one destination are two lines a
+   reader can follow apart. Colour repeats the story; it never solely carries it -- the label and
+   the position say the same thing, and print.css gives each colour its own dash pattern. */
+.path{stroke:var(--rule);stroke-width:1.25;fill:none;}
+.path--neutral{stroke:var(--rule);opacity:.65;}
+.path--0{stroke:var(--door-1);opacity:.75;}
+.path--1{stroke:var(--door-2);opacity:.75;}
+.path--2{stroke:var(--door-3);opacity:.75;}
+.path--3{stroke:var(--door-4);opacity:.75;}
+.path--4{stroke:var(--door-5);opacity:.75;}
+.path--5{stroke:var(--door-6);opacity:.75;}
+.arrow path{fill:var(--ink-soft);}
+
+/* A door is drawn as a door: a small upright rectangle standing in the inbound side. */
+.door{cursor:pointer;}
+.door-mark{fill:var(--paper-lift);stroke-width:2.5;}
+.door--0 .door-mark{stroke:var(--door-1);}
+.door--1 .door-mark{stroke:var(--door-2);}
+.door--2 .door-mark{stroke:var(--door-3);}
+.door--3 .door-mark{stroke:var(--door-4);}
+.door--4 .door-mark{stroke:var(--door-5);}
+.door--5 .door-mark{stroke:var(--door-6);}
+.door:hover .door-mark{fill:var(--paper);}
+.door-label{font-size:9px;font-weight:500;fill:var(--ink);}
+.door-origin{font-family:var(--mono);font-size:7.5px;fill:var(--ink-soft);letter-spacing:.02em;}
 
 .subject{cursor:pointer;}
+.subject-label{font-size:9px;font-weight:500;fill:var(--ink);}
 .disc{fill:var(--person);}
 .disc-halo{fill:none;stroke:var(--person);stroke-width:1;opacity:.28;}
 .disc-label{
   fill:var(--paper);
-  font-size:12px;
+  font-size:10px;
   font-weight:600;
   letter-spacing:.2em;
 }
@@ -161,14 +192,29 @@ export const STYLESHEET = `
 .node--internal .node-arc{stroke:var(--internal);}
 .node--external .node-arc{stroke:var(--external);}
 .node-arc--open{stroke-dasharray:3 4;opacity:.75;}
-.node-count{font-size:17px;font-weight:500;fill:var(--ink);}
+.node-count{font-size:13px;font-weight:500;fill:var(--ink);}
 .node-label{
-  font-size:10.5px;
+  font-size:9.5px;
   font-weight:500;
   letter-spacing:.05em;
   fill:var(--ink);
 }
-.node-eea{font-family:var(--mono);font-size:8.5px;fill:var(--crossing);letter-spacing:.02em;}
+/* An open ring: a faint boundary round its members, and the mark a reader clicks to close it. */
+.node-boundary{
+  fill:none;
+  stroke:var(--rule);
+  stroke-width:1;
+  stroke-dasharray:2 5;
+  stroke-linecap:round;
+}
+.node--opened:hover .node-boundary{stroke:var(--ink-soft);}
+.node-fill--opened{fill:var(--paper);stroke:var(--rule);stroke-width:1;}
+.node-count--opened{font-size:12px;fill:var(--ink-soft);}
+.node-member{fill:var(--paper-lift);stroke:var(--external);stroke-width:2;}
+.node--internal .node-member{stroke:var(--internal);}
+/* A member nobody has identified is drawn, and drawn dashed. Hiding it because it has no name
+   to show would be the one thing the open ring must not do. */
+.node-member--open{stroke-dasharray:3 4;opacity:.8;}
 .node:hover .node-fill{fill:var(--paper);}
 .node:hover .node-arc{stroke-width:3.5;}
 .dim{opacity:.16;}
@@ -281,6 +327,47 @@ export const STYLESHEET = `
   padding-top:11px;
 }
 .detail-none{margin:8px 0 0;font-size:12px;color:var(--ink-soft);}
+
+/* Under every fact: how it is known, and from what. Quiet, because it is the footnote to the
+   fact and not the fact. */
+.detail-said-by{
+  margin:2px 0 0;
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:.02em;
+  color:var(--ink-soft);
+}
+.detail-facts dd.detail-said-by{margin:1px 0 0;}
+.detail-totals{margin:10px 0 0;font-family:var(--mono);font-size:10px;color:var(--ink-soft);}
+
+/* Everything nobody has answered, in one line that opens. Closed, it is a count; open, it is the
+   same questions the printed gaps sheet asks. */
+.detail-unknowns{margin:14px 0 0;}
+.detail-unknowns summary{
+  cursor:pointer;
+  font-size:11.5px;
+  color:var(--ink-soft);
+  letter-spacing:.02em;
+}
+.detail-unknowns ul{list-style:none;margin:8px 0 0;padding:0 0 0 12px;border-left:2px solid var(--rule);}
+.detail-unknowns li{margin:0 0 6px;font-size:11.5px;line-height:1.4;color:var(--ink);}
+
+/* The panel speaks the map's colour language: a door referenced here carries its door chip. */
+.detail-reached{display:flex;align-items:center;gap:5px;margin:12px 0 0;}
+.detail-reached-label{
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:.02em;
+  color:var(--ink-soft);
+}
+.chip{display:inline-block;width:9px;height:9px;border-radius:2px;}
+.chip--0{background:var(--door-1);}
+.chip--1{background:var(--door-2);}
+.chip--2{background:var(--door-3);}
+.chip--3{background:var(--door-4);}
+.chip--4{background:var(--door-5);}
+.chip--5{background:var(--door-6);}
+.detail-member--open{color:var(--ink-soft);}
 .detail-declared{margin:10px 0 0;font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);}
 .detail-observations{list-style:none;margin:9px 0 0;padding:0;}
 .detail-observations li{margin:0 0 5px;font-family:var(--mono);font-size:11px;}
@@ -288,13 +375,17 @@ export const STYLESHEET = `
 /* The map settles rather than appears: rings first, then what sits on them. A scan is the one
    moment this tool has to show something happening, and a drawing that arrives all at once
    reads as a picture instead of a reading. */
-@keyframes trace-in{from{stroke-dashoffset:var(--dash);}to{stroke-dashoffset:0;}}
+@keyframes fade-in{from{opacity:0;}to{opacity:inherit;}}
 @keyframes settle{from{opacity:0;transform:scale(.9);}to{opacity:1;transform:scale(1);}}
-.link{stroke-dasharray:var(--dash);animation:trace-in .5s ease-out both;}
-.node,.subject{animation:settle .32s ease-out both;transform-box:fill-box;transform-origin:center;}
+.path{animation:fade-in .4s ease-out both;}
+.node,.subject,.door,.controller{
+  animation:settle .32s ease-out both;
+  transform-box:fill-box;
+  transform-origin:center;
+}
 
 @media (prefers-reduced-motion:reduce){
-  .link,.node,.subject{animation:none;stroke-dashoffset:0;}
+  .path,.node,.subject,.door,.controller{animation:none;}
 }
 
 @media (max-width:900px){

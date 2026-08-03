@@ -45,6 +45,10 @@ export function App() {
   )
   const project = history.present
   const [selected, setSelected] = useState<string | null>(null)
+  // Which purpose-group ring stands open. Not stored in the project and not derived inside the
+  // layout: it is a parameter of the drawing, so the same project and the same selection always
+  // produce the same sheet. One ring at a time.
+  const [openGroup, setOpenGroup] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   // What the printed sheet says about possible gaps, if anything. Not part of the project: a
@@ -58,7 +62,10 @@ export function App() {
     read: string[]
   } | null>(null)
 
-  const layout = useMemo(() => computeLayout(project, { width: 800, height: 500 }), [project])
+  const layout = useMemo(
+    () => computeLayout(project, { width: 800, height: 500 }, openGroup),
+    [project, openGroup],
+  )
 
   async function openProject(): Promise<void> {
     try {
@@ -67,6 +74,10 @@ export function App() {
       if (p) {
         setHistory(initHistory(p))
         setLastScan(null)
+        // A selection and an open ring both name things in the project that was open. Carried
+        // onto somebody else's map they would either point at nothing or, worse, at something.
+        setSelected(null)
+        setOpenGroup(null)
       }
     } catch {
       // Rust deliberately throws a short, neutral sentence carrying no filesystem path and
@@ -186,7 +197,13 @@ export function App() {
               onCancel={() => setSuggestions(null)}
             />
           )}
-          <MapView layout={layout} selected={selected} onSelect={setSelected} />
+          <MapView
+            layout={layout}
+            selected={selected}
+            onSelect={setSelected}
+            openGroup={openGroup}
+            onToggleGroup={setOpenGroup}
+          />
           <div className="print-only">
             <p className="print-limits">{STRINGS.printLimits}</p>
             {printGaps === null ? null : <p className="print-gaps">{printGaps}</p>}

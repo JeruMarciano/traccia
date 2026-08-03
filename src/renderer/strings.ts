@@ -27,23 +27,27 @@ export const STRINGS = {
   people: 'People',
   subjectGroupCount: (n: number): string => `${n} groups`,
   placesInGroup: (n: number): string => `${n} places`,
-  outsideEEA: 'outside the EEA',
   notYetIdentified: 'not yet identified',
   groupTitle: (name: string, places: number): string => `${name}: ${places} places`,
   mapEmpty: 'Open a project to draw the map.',
 
-  leavingCount: (n: number): string => `${n} outside the EEA`,
+  /** The centre before any document has named the organisation. Never a guessed company name. */
+  yourOrganisation: 'Your organisation',
+  doorDiscovered: 'discovered by the scan',
+  doorDeclared: 'declared in a document',
 
   keyPeople: 'People',
   keyPeopleGloss: 'Every line starts here.',
+  keyDoor: 'Way in',
+  keyDoorGloss: 'Where data is collected.',
+  keyDirection: 'Direction',
+  keyDirectionGloss: 'The arrow points where the data goes.',
   keyInternal: 'Your systems',
   keyInternalGloss: 'Run by the organisation itself.',
   keyExternal: 'Suppliers',
   keyExternalGloss: 'Run by somebody else.',
   keyOpen: 'Not yet identified',
   keyOpenGloss: 'The dashed share of a ring.',
-  keyCrossing: 'Leaves the EEA',
-  keyCrossingGloss: 'Data comes to rest outside the area.',
 
   saveBlocked:
     'The project could not be saved because another program is holding the file open. Close it and try again.',
@@ -79,6 +83,33 @@ export const STRINGS = {
 
   detailHeading: 'What is here',
   detailPeopleHeading: 'People',
+  /** Under every fact: how it is known, and from what. A fact nobody sourced still shows. */
+  detailAttribution: (confidence: string, sources: string): string =>
+    sources === '' ? confidence : `${confidence} · ${sources}`,
+  detailRecordedByHand: 'recorded by hand',
+  detailConfidenceObserved: 'observed',
+  detailConfidenceDeclared: 'declared',
+  detailConfidenceInferred: 'inferred',
+  /** One line per selection. Absent when nothing is unknown — never "0 things". */
+  detailUnknownsSummary: (n: number): string =>
+    `${n} ${n === 1 ? 'thing' : 'things'} not yet identified`,
+  detailReachedFrom: 'Reached from',
+  detailEEA: 'Where it comes to rest',
+  detailEEAOutside: 'Outside the EEA',
+  detailEEAInside: 'Inside the EEA',
+  detailDoorHeading: 'Way in',
+  detailDoorWhoComesThrough: 'Who comes through',
+  detailDoorFields: 'What is asked',
+  detailControllerHeading: 'Who answers for this',
+  detailTotals: (places: number, doors: number, groups: number, flows: number): string =>
+    `${places} places · ${doors} ways in · ${groups} groups of people · ${flows} flows`,
+  detailCookiesHeading: 'Cookies recorded',
+  detailCookie: (name: string, lifetime: string, thirdParty: boolean): string =>
+    thirdParty ? `${name} — ${lifetime}, third-party` : `${name} — ${lifetime}`,
+  detailLifetimeSession: 'until the browser closes',
+  detailLifetimeUnderADay: 'under a day',
+  detailLifetimeUnderAYear: 'under a year',
+  detailLifetimeAYearOrMore: 'a year or more',
   detailWhere: 'Where',
   detailWhereOutsideEEA: 'Outside the EEA',
   detailWhereInsideEEA: 'Inside the EEA',
