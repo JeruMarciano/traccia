@@ -1,12 +1,15 @@
-import type { Project, VendorDictionary } from '../../core/types'
-import { placeDetails, placeIdsForSelection } from '../placeDetails'
+import type { Confidence, CookieLifetime, Project, VendorDictionary } from '../../core/types'
+import type { ControllerPanel, DoorPanel, GroupPanel, PanelFact, PanelUnknowns, PlacePanel } from '../../core/panel'
+import { panelFor } from '../../core/panel'
 import { STRINGS } from '../strings'
 
 /**
- * The right-hand bar: what the clicked point holds. It exists only while something is selected
- * (App renders nothing otherwise), and it says four things per service -- name, where it is,
- * what was observed running, how long it keeps things -- with "not yet identified" doing the
- * honest work for everything nobody has answered.
+ * The side panel: the answer to a click, on screen beside the map rather than below the fold.
+ *
+ * Facts first. Only a field somebody answered appears, and under each one a small line saying how
+ * it is known and from what -- a fact nobody sourced is still shown, marked as recorded by hand.
+ * Everything nobody has answered is one line: "N things not yet identified", opening to the same
+ * questions the printed gaps sheet asks. When nothing is unknown that line is absent, not zero.
  */
 
 interface Props {
@@ -15,8 +18,208 @@ interface Props {
   dictionary: VendorDictionary
 }
 
+const FIELD_LABEL: Readonly<Record<PanelFact['field'], string>> = {
+  purpose: STRINGS.detailPurpose,
+  where: STRINGS.detailWhere,
+  retention: STRINGS.detailRetention,
+  dataCategories: STRINGS.detailDataCategories,
+  eea: STRINGS.detailEEA,
+}
+
+const CONFIDENCE_WORD: Readonly<Record<Confidence, string>> = {
+  observed: STRINGS.detailConfidenceObserved,
+  declared: STRINGS.detailConfidenceDeclared,
+  inferred: STRINGS.detailConfidenceInferred,
+}
+
+const LIFETIME_WORD: Readonly<Record<CookieLifetime, string>> = {
+  session: STRINGS.detailLifetimeSession,
+  'under-a-day': STRINGS.detailLifetimeUnderADay,
+  'under-a-year': STRINGS.detailLifetimeUnderAYear,
+  'a-year-or-more': STRINGS.detailLifetimeAYearOrMore,
+}
+
+/** The EEA fact is stated here and only here -- the map retired the mark, not the fact. */
+function factValue(fact: PanelFact): string {
+  if (fact.field !== 'eea') return fact.value
+  return fact.value === 'outside' ? STRINGS.detailEEAOutside : STRINGS.detailEEAInside
+}
+
+function Facts({ facts }: { facts: PanelFact[] }) {
+  if (facts.length === 0) return null
+  return (
+    <dl className="detail-facts">
+      {facts.map((f) => (
+        <div key={f.field}>
+          <dt>{FIELD_LABEL[f.field]}</dt>
+          <dd>{factValue(f)}</dd>
+          <dd className="detail-said-by">
+            {STRINGS.detailAttribution(
+              CONFIDENCE_WORD[f.confidence],
+              f.sourceNames.length === 0 ? '' : f.sourceNames.join(', '),
+            )}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function Attribution({ sourceNames, confidence }: { sourceNames: string[]; confidence: Confidence }) {
+  return (
+    <p className="detail-said-by">
+      {sourceNames.length === 0
+        ? STRINGS.detailRecordedByHand
+        : STRINGS.detailAttribution(CONFIDENCE_WORD[confidence], sourceNames.join(', '))}
+    </p>
+  )
+}
+
+function Unknowns({ unknowns }: { unknowns: PanelUnknowns }) {
+  if (unknowns.count === 0) return null
+  return (
+    <details className="detail-unknowns">
+      <summary>{STRINGS.detailUnknownsSummary(unknowns.count)}</summary>
+      <ul>
+        {unknowns.questions.map((q) => (
+          <li key={q}>{q}</li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+function PlaceView({ panel }: { panel: PlacePanel }) {
+  const unsourced = panel.facts.length > 0 && panel.facts.every((f) => f.sourceNames.length === 0)
+  return (
+    <>
+      <h2 className="detail-head">{STRINGS.detailHeading}</h2>
+      <article className="detail-place">
+        <h3 className="detail-place-name">{panel.name}</h3>
+        <Facts facts={panel.facts} />
+        {unsourced ? (
+          <Attribution sourceNames={[]} confidence={panel.facts[0]?.confidence ?? 'inferred'} />
+        ) : null}
+        {panel.observations.length === 0 ? null : (
+          <>
+            <h4 className="detail-sub">{STRINGS.detailObservationsHeading}</h4>
+            <ul className="detail-observations">
+              {panel.observations.map((o) => (
+                <li key={o.domain}>
+                  {STRINGS.detailObservation(o.domain, o.requestCount, o.beforeConsent)}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {panel.cookies.length === 0 ? null : (
+          <>
+            <h4 className="detail-sub">{STRINGS.detailCookiesHeading}</h4>
+            <ul className="detail-observations">
+              {panel.cookies.map((c) => (
+                <li key={c.name}>
+                  {STRINGS.detailCookie(c.name, LIFETIME_WORD[c.lifetime], c.thirdParty)}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {panel.reachedFrom.length === 0 ? null : (
+          <p className="detail-reached">
+            <span className="detail-reached-label">{STRINGS.detailReachedFrom}</span>
+            {panel.reachedFrom.map((d) => (
+              <span key={d.id} className={`chip chip--${d.colourIndex}`} aria-hidden="true" />
+            ))}
+          </p>
+        )}
+        <Unknowns unknowns={panel.unknowns} />
+      </article>
+    </>
+  )
+}
+
+function DoorView({ panel }: { panel: DoorPanel }) {
+  return (
+    <>
+      <h2 className="detail-head">{STRINGS.detailDoorHeading}</h2>
+      <article className="detail-place">
+        <h3 className="detail-place-name">{panel.label}</h3>
+        <p className="detail-said-by">
+          {panel.origin === 'discovered' ? STRINGS.doorDiscovered : STRINGS.doorDeclared}
+        </p>
+        {panel.whoComesThrough.length === 0 ? null : (
+          <>
+            <h4 className="detail-sub">{STRINGS.detailDoorWhoComesThrough}</h4>
+            <ul className="detail-observations">
+              {panel.whoComesThrough.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {panel.fields.length === 0 ? null : (
+          <>
+            <h4 className="detail-sub">{STRINGS.detailDoorFields}</h4>
+            <ul className="detail-observations">
+              {panel.fields.map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        <Unknowns unknowns={panel.unknowns} />
+      </article>
+    </>
+  )
+}
+
+function ControllerView({ panel }: { panel: ControllerPanel }) {
+  return (
+    <>
+      <h2 className="detail-head">{STRINGS.detailControllerHeading}</h2>
+      <article className="detail-place">
+        <h3 className="detail-place-name">
+          {panel.name === null ? STRINGS.yourOrganisation : panel.name}
+        </h3>
+        {panel.name === null ? null : (
+          <Attribution sourceNames={panel.sourceNames} confidence="declared" />
+        )}
+        <p className="detail-totals">
+          {STRINGS.detailTotals(
+            panel.totals.places,
+            panel.totals.doors,
+            panel.totals.subjectGroups,
+            panel.totals.flows,
+          )}
+        </p>
+        <Unknowns unknowns={panel.unknowns} />
+      </article>
+    </>
+  )
+}
+
+function GroupView({ panel }: { panel: GroupPanel }) {
+  return (
+    <>
+      <h2 className="detail-head">{STRINGS.detailHeading}</h2>
+      <article className="detail-place">
+        <h3 className="detail-place-name">{panel.name}</h3>
+        <ul className="detail-observations">
+          {panel.members.map((m) => (
+            <li key={m.id} className={m.unexplained ? 'detail-member--open' : undefined}>
+              {m.name}
+            </li>
+          ))}
+        </ul>
+      </article>
+    </>
+  )
+}
+
 export function DetailPanel({ project, selected, dictionary }: Props) {
   if (selected === 'centre') {
+    // The v0.2 people hub. The redesign draws each subject group as its own node, so this only
+    // answers a selection carried over from an older sheet.
     if (project.subjectGroups.length === 0) return null
     return (
       <aside className="detail">
@@ -33,51 +236,30 @@ export function DetailPanel({ project, selected, dictionary }: Props) {
     )
   }
 
-  const places = placeIdsForSelection(project, selected)
-    .map((id) => placeDetails(project, id, dictionary))
-    .filter((d): d is NonNullable<typeof d> => d !== null)
+  const subject = project.subjectGroups.find((s) => s.id === selected)
+  if (subject !== undefined) {
+    return (
+      <aside className="detail">
+        <h2 className="detail-head">{STRINGS.detailPeopleHeading}</h2>
+        <article className="detail-place">
+          <h3 className="detail-place-name">{subject.name}</h3>
+          {subject.notes === undefined ? null : (
+            <p className="detail-subject-notes">{subject.notes}</p>
+          )}
+        </article>
+      </aside>
+    )
+  }
 
-  if (places.length === 0) return null
+  const panel = panelFor(project, selected, dictionary)
+  if (panel === null) return null
 
   return (
     <aside className="detail">
-      <h2 className="detail-head">{STRINGS.detailHeading}</h2>
-      {places.map((d) => (
-        <article key={d.id} className="detail-place">
-          <h3 className="detail-place-name">{d.name}</h3>
-          <dl className="detail-facts">
-            <div>
-              <dt>{STRINGS.detailPurpose}</dt>
-              <dd>{d.purposeGroup}</dd>
-            </div>
-            <div>
-              <dt>{STRINGS.detailWhere}</dt>
-              <dd>{d.whereLabel}</dd>
-            </div>
-            <div>
-              <dt>{STRINGS.detailRetention}</dt>
-              <dd>{d.retentionLabel}</dd>
-            </div>
-            <div>
-              <dt>{STRINGS.detailDataCategories}</dt>
-              <dd>{d.dataCategoriesLabel}</dd>
-            </div>
-          </dl>
-          {d.declaredIn.length === 0 ? null : (
-            <p className="detail-declared">{STRINGS.declaredIn(d.declaredIn.join(', '))}</p>
-          )}
-          <h4 className="detail-sub">{STRINGS.detailObservationsHeading}</h4>
-          {d.observations.length === 0 ? (
-            <p className="detail-none">{STRINGS.notYetIdentified}</p>
-          ) : (
-            <ul className="detail-observations">
-              {d.observations.map((o) => (
-                <li key={o.domain}>{STRINGS.detailObservation(o.domain, o.requestCount, o.beforeConsent)}</li>
-              ))}
-            </ul>
-          )}
-        </article>
-      ))}
+      {panel.sort === 'place' ? <PlaceView panel={panel} /> : null}
+      {panel.sort === 'door' ? <DoorView panel={panel} /> : null}
+      {panel.sort === 'controller' ? <ControllerView panel={panel} /> : null}
+      {panel.sort === 'group' ? <GroupView panel={panel} /> : null}
     </aside>
   )
 }

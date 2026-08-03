@@ -52,8 +52,10 @@ export interface PlacePanel {
   facts: PanelFact[]
   observations: { domain: string; requestCount: number; beforeConsent: boolean }[]
   cookies: { name: string; lifetime: CookieLifetime; thirdParty: boolean }[]
-  /** Door ids this place is reached from, for the panel's colour chips. */
-  reachedFrom: string[]
+  /** The doors this place is reached from, each with the colour the map gave it. Carrying the
+   *  colour rather than deriving it from list position is the whole point: a chip that disagrees
+   *  with the sheet is worse than no chip. */
+  reachedFrom: { id: string; colourIndex: number }[]
   unknowns: PanelUnknowns
 }
 
@@ -152,9 +154,10 @@ function factsFor(place: Place): PanelFact[] {
 
 function placePanel(project: Project, place: Place, dictionary: VendorDictionary): PlacePanel {
   const doors = deriveDoors(project)
+  const colourOf = new Map(doors.map((d) => [d.id, d.colourIndex]))
   const reachedFrom = tracePaths(project, doors)
     .filter((p) => p.destinationIds.includes(place.id))
-    .map((p) => p.doorId)
+    .map((p) => ({ id: p.doorId, colourIndex: colourOf.get(p.doorId) ?? 0 }))
 
   return {
     sort: 'place',

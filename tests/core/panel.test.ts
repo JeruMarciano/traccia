@@ -91,7 +91,11 @@ describe('panelFor a place', () => {
   it('names the doors it is reached from', () => {
     const d = panel('pl-4')
     if (d?.sort !== 'place') throw new Error('expected a place panel')
-    expect(d.reachedFrom).toEqual(['place:pl-2', 'place:pl-3'])
+    // The colour has to be the door's own, the one the map drew, not the chip's position here.
+    expect(d.reachedFrom).toEqual([
+      { id: 'place:pl-2', colourIndex: 0 },
+      { id: 'place:pl-3', colourIndex: 1 },
+    ])
   })
 
   it('answers the same for a member id as for the bare place id', () => {

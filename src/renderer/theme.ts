@@ -327,6 +327,47 @@ export const STYLESHEET = `
   padding-top:11px;
 }
 .detail-none{margin:8px 0 0;font-size:12px;color:var(--ink-soft);}
+
+/* Under every fact: how it is known, and from what. Quiet, because it is the footnote to the
+   fact and not the fact. */
+.detail-said-by{
+  margin:2px 0 0;
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:.02em;
+  color:var(--ink-soft);
+}
+.detail-facts dd.detail-said-by{margin:1px 0 0;}
+.detail-totals{margin:10px 0 0;font-family:var(--mono);font-size:10px;color:var(--ink-soft);}
+
+/* Everything nobody has answered, in one line that opens. Closed, it is a count; open, it is the
+   same questions the printed gaps sheet asks. */
+.detail-unknowns{margin:14px 0 0;}
+.detail-unknowns summary{
+  cursor:pointer;
+  font-size:11.5px;
+  color:var(--ink-soft);
+  letter-spacing:.02em;
+}
+.detail-unknowns ul{list-style:none;margin:8px 0 0;padding:0 0 0 12px;border-left:2px solid var(--rule);}
+.detail-unknowns li{margin:0 0 6px;font-size:11.5px;line-height:1.4;color:var(--ink);}
+
+/* The panel speaks the map's colour language: a door referenced here carries its door chip. */
+.detail-reached{display:flex;align-items:center;gap:5px;margin:12px 0 0;}
+.detail-reached-label{
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:.02em;
+  color:var(--ink-soft);
+}
+.chip{display:inline-block;width:9px;height:9px;border-radius:2px;}
+.chip--0{background:var(--door-1);}
+.chip--1{background:var(--door-2);}
+.chip--2{background:var(--door-3);}
+.chip--3{background:var(--door-4);}
+.chip--4{background:var(--door-5);}
+.chip--5{background:var(--door-6);}
+.detail-member--open{color:var(--ink-soft);}
 .detail-declared{margin:10px 0 0;font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);}
 .detail-observations{list-style:none;margin:9px 0 0;padding:0;}
 .detail-observations li{margin:0 0 5px;font-family:var(--mono);font-size:11px;}

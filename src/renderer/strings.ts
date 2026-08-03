@@ -83,6 +83,33 @@ export const STRINGS = {
 
   detailHeading: 'What is here',
   detailPeopleHeading: 'People',
+  /** Under every fact: how it is known, and from what. A fact nobody sourced still shows. */
+  detailAttribution: (confidence: string, sources: string): string =>
+    sources === '' ? confidence : `${confidence} · ${sources}`,
+  detailRecordedByHand: 'recorded by hand',
+  detailConfidenceObserved: 'observed',
+  detailConfidenceDeclared: 'declared',
+  detailConfidenceInferred: 'inferred',
+  /** One line per selection. Absent when nothing is unknown — never "0 things". */
+  detailUnknownsSummary: (n: number): string =>
+    `${n} ${n === 1 ? 'thing' : 'things'} not yet identified`,
+  detailReachedFrom: 'Reached from',
+  detailEEA: 'Where it comes to rest',
+  detailEEAOutside: 'Outside the EEA',
+  detailEEAInside: 'Inside the EEA',
+  detailDoorHeading: 'Way in',
+  detailDoorWhoComesThrough: 'Who comes through',
+  detailDoorFields: 'What is asked',
+  detailControllerHeading: 'Who answers for this',
+  detailTotals: (places: number, doors: number, groups: number, flows: number): string =>
+    `${places} places · ${doors} ways in · ${groups} groups of people · ${flows} flows`,
+  detailCookiesHeading: 'Cookies recorded',
+  detailCookie: (name: string, lifetime: string, thirdParty: boolean): string =>
+    thirdParty ? `${name} — ${lifetime}, third-party` : `${name} — ${lifetime}`,
+  detailLifetimeSession: 'until the browser closes',
+  detailLifetimeUnderADay: 'under a day',
+  detailLifetimeUnderAYear: 'under a year',
+  detailLifetimeAYearOrMore: 'a year or more',
   detailWhere: 'Where',
   detailWhereOutsideEEA: 'Outside the EEA',
   detailWhereInsideEEA: 'Inside the EEA',
