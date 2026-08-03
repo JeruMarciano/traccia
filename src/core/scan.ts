@@ -82,7 +82,7 @@ function hasFlow(project: Project, from: string, to: string): boolean {
  * the character before the shared suffix is not a dot); neither is
  * `rossi-editore.it.evil.com` (the scanned host is a prefix, not a suffix).
  */
-export function isScannedHostOrSubdomain(host: string, scannedHost: string): boolean {
+export function isSameSite(host: string, scannedHost: string): boolean {
   const h = host.toLowerCase()
   const o = scannedHost.toLowerCase()
   if (h === o) return true
@@ -141,7 +141,7 @@ export function ingestScan(
   //    site. The scanned host itself is skipped — it is the site, not a
   //    recipient of its own data.
   for (const observed of result.hosts) {
-    if (isScannedHostOrSubdomain(observed.host, result.scannedHost)) continue
+    if (isSameSite(observed.host, result.scannedHost)) continue
 
     const name = displayName(observed.host, dictionary)
     const hit = identify(observed.host, dictionary)
