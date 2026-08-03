@@ -127,6 +127,34 @@ describe('scanResultNotice', () => {
     })
   })
 
+  describe('storage keys', () => {
+    it('names the count when storage keys were recorded', () => {
+      const notice = scanResultNotice(
+        result({ storageKeys: [{ scope: 'local', key: 'auth_token', bytes: 42 }] }),
+      )
+      expect(notice).toBe(`${STRINGS.storageKeysRecorded(1)} ${STRINGS.consentBannerNotDetected}`)
+    })
+
+    it('says nothing about storage keys when none were captured', () => {
+      const notice = scanResultNotice(result({ storageKeys: [] }))
+      expect(notice).toBe(STRINGS.consentBannerNotDetected)
+    })
+
+    it('is appended after the gap and cookie sentences and before the consent sentence', () => {
+      const notice = scanResultNotice(
+        result({
+          possibleGaps: 3,
+          cookies: twoCookiesForConsentTest,
+          storageKeys: [{ scope: 'session', key: 'cart', bytes: 10 }],
+          consentMarkers: ['Cookiebot'],
+        }),
+      )
+      expect(notice).toBe(
+        `${STRINGS.scanIncomplete(3)} ${STRINGS.cookiesRecorded(2, 1)} ${STRINGS.storageKeysRecorded(1)} ${STRINGS.consentBannerDetected('Cookiebot')}`,
+      )
+    })
+  })
+
   describe('consent banner', () => {
     it('names the marker when one was detected', () => {
       const notice = scanResultNotice(result({ consentMarkers: ['OneTrust'] }))

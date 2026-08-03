@@ -78,6 +78,10 @@ pub struct ScanOutput {
     /// `cdp::Observation::form_fields`. Never a value, only the field's own
     /// shape.
     pub form_fields: Vec<cdp::FormField>,
+    /// Storage key names and value sizes found across every visited page —
+    /// see `cdp::Observation::storage_keys`. Never a value, only the key's
+    /// own name and size.
+    pub storage_keys: Vec<cdp::StorageKey>,
     /// When the cookie jar was captured — `SystemTime::now()` taken as close
     /// as this module can get to the moment `cdp::observe` actually sent
     /// `Network.getAllCookies`, deliberately not `profile_dir_path()` time,
@@ -496,6 +500,7 @@ async fn run_pipeline(
             cookies: observation.cookies,
             consent_markers: observation.consent_markers,
             form_fields: observation.form_fields,
+            storage_keys: observation.storage_keys,
             captured_at_epoch_seconds,
         })
     })();
@@ -760,6 +765,11 @@ mod tests {
                 autocomplete: "email".into(),
                 label: "Email".into(),
             }],
+            storage_keys: vec![cdp::StorageKey {
+                scope: "local".into(),
+                key: "auth_token".into(),
+                bytes: 42,
+            }],
             captured_at_epoch_seconds: 1_700_000_000,
         })
         .expect("serialise");
@@ -773,6 +783,8 @@ mod tests {
         assert!(json.contains("\"consentMarkers\""));
         assert!(json.contains("\"formFields\""));
         assert!(json.contains("\"autocomplete\""));
+        assert!(json.contains("\"storageKeys\""));
+        assert!(json.contains("\"bytes\""));
         assert!(json.contains("\"capturedAtEpochSeconds\""));
     }
 

@@ -27,6 +27,16 @@ function collectionPointsNotice(result: ScanResult): string | null {
   return pages.size === 0 ? null : STRINGS.collectionPointsDiscovered(pages.size)
 }
 
+/**
+ * The storage-key count to append, or null when the scan captured none — mirrors `cookieNotice`:
+ * a scan that recorded no key says nothing about them, rather than reporting a hollow "0 storage
+ * keys recorded".
+ */
+function storageKeysNotice(result: ScanResult): string | null {
+  if (result.storageKeys.length === 0) return null
+  return STRINGS.storageKeysRecorded(result.storageKeys.length)
+}
+
 /** Joins whichever of several sentences apply, in order, dropping the ones that do not. */
 function joinAll(...parts: (string | null)[]): string {
   return parts.filter((p): p is string => p !== null).join(' ')
@@ -58,20 +68,23 @@ function consentNotice(result: ScanResult): string {
  * trustworthy result, not the cleanest one, and the printed sheet already shows the gap count in
  * that situation — this notice must agree with it rather than say the opposite.
  *
- * The cookie count, when there is one, is appended to whichever sentence above applies — or
- * stands alone when none of them do. The consent-banner sentence is always appended last: it is
- * always a fact, one way or the other, so it never leaves the whole notice empty.
+ * The cookie count, the collection-point count and the storage-key count, when there is one of
+ * each, are appended in that order to whichever sentence above applies — or stand alone when none
+ * of them do. The consent-banner sentence is always appended last: it is always a fact, one way
+ * or the other, so it never leaves the whole notice empty.
  */
 export function scanResultNotice(result: ScanResult): string {
   const cookies = cookieNotice(result)
   const collectionPoints = collectionPointsNotice(result)
+  const storageKeys = storageKeysNotice(result)
   const consent = consentNotice(result)
   if (result.stoppedEarly) {
-    return joinAll(STRINGS.scanStopped(result.possibleGaps), cookies, collectionPoints, consent)
+    return joinAll(STRINGS.scanStopped(result.possibleGaps), cookies, collectionPoints, storageKeys, consent)
   }
   if (result.possibleGaps > 0) {
-    return joinAll(STRINGS.scanIncomplete(result.possibleGaps), cookies, collectionPoints, consent)
+    return joinAll(STRINGS.scanIncomplete(result.possibleGaps), cookies, collectionPoints, storageKeys, consent)
   }
-  if (result.hosts.length <= 1) return joinAll(STRINGS.scanFoundNothing, cookies, collectionPoints, consent)
-  return joinAll(cookies, collectionPoints, consent)
+  if (result.hosts.length <= 1)
+    return joinAll(STRINGS.scanFoundNothing, cookies, collectionPoints, storageKeys, consent)
+  return joinAll(cookies, collectionPoints, storageKeys, consent)
 }
