@@ -70,9 +70,17 @@ function escapeRegExp(s: string): string {
  * system version is declared — so on an older Mac the pattern would throw where it is built,
  * which is inside document ingestion, and the only thing the user would see is "the documents
  * could not be read". A capture group costs one offset at the call site and nothing else.
+ *
+ * The space between the words of a multi-word term is whatever the file happened to contain. A
+ * PDF wraps at the column, so "buste paga" arrives as "buste\npaga" about as often as with a
+ * space, and matching on one literal space made every multi-word term in the dictionary a coin
+ * toss. Each word is escaped on its own and joined with `\s+`, which is why the term is split
+ * before escaping and not after: escaping first would leave a literal space to split on that had
+ * already been treated as a pattern character.
  */
 function wholeWord(term: string): RegExp {
-  return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, 'gu')
+  const body = term.split(' ').map(escapeRegExp).join('\\s+')
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, 'gu')
 }
 
 /**
@@ -128,7 +136,6 @@ export function extractCandidates(
   // between documents.
   const terms = Object.entries(internal).map(([term, entry]) => ({
     entry,
-    length: term.length,
     pattern: wholeWord(term.toLowerCase()),
   }))
 
@@ -149,14 +156,19 @@ export function extractCandidates(
     // 1. Internal-systems dictionary: whole-word term match, case-insensitive. Denial is judged
     //    per occurrence, so a term denied in one sentence and asserted in another is still offered
     //    -- carrying the sentence that asserts it as its evidence, which is what the user judges.
-    for (const { entry, length, pattern } of terms) {
+    for (const { entry, pattern } of terms) {
       let at = -1
+      let matched = 0
       for (const m of lower.matchAll(pattern)) {
         // The match starts after whatever the opening group swallowed: one character mid-text,
-        // nothing at all at the very start of the document.
-        const start = m.index + (m[1]?.length ?? 0)
+        // nothing at all at the very start of the document. What remains is the term as this
+        // document actually wrote it, which may be longer than the dictionary key -- a newline
+        // and an indent where the key has one space.
+        const lead = m[1]?.length ?? 0
+        const start = m.index + lead
         if (isDenied(lower, start)) continue
         at = start
+        matched = m[0].length - lead
         break
       }
       if (at === -1) continue
@@ -167,7 +179,7 @@ export function extractCandidates(
           purposeGroup: entry.purposeGroup,
           holder: entry.holder,
           kind: entry.layer === 'internal' ? 'internal' : 'processor',
-          evidence: evidenceAround(text, at, length),
+          evidence: evidenceAround(text, at, matched),
         },
         doc.name,
       )

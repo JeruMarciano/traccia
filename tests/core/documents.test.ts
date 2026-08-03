@@ -170,6 +170,90 @@ describe('matching terms that are not ASCII', () => {
   })
 })
 
+// A PDF wraps lines wherever the column ends, so a two-word term arrives with a newline in the
+// middle of it as often as with a space. Matching on one literal space made every multi-word
+// term in the dictionary a coin toss.
+describe('a term broken across a line', () => {
+  const MULTIWORD: InternalSystemDictionary = {
+    'buste paga': {
+      name: 'Payroll system',
+      purposeGroup: 'Payroll & HR',
+      layer: 'internal',
+      holder: 'you',
+    },
+    'access control': {
+      name: 'Access control',
+      purposeGroup: 'Facilities & Security',
+      layer: 'internal',
+      holder: 'you',
+    },
+  }
+  const names = (text: string): string[] =>
+    extractCandidates([{ name: 'a.pdf', text }], VENDORS, MULTIWORD)
+      .map((c) => c.name)
+      .sort()
+
+  it('matches across a newline', () => {
+    expect(names('Le buste\npaga sono elaborate internamente.')).toEqual(['Payroll system'])
+  })
+
+  it('matches across a line break with indentation', () => {
+    expect(names('badge e access\n    control all’ingresso')).toEqual(['Access control'])
+  })
+
+  it('matches across a run of spaces left by a two-column layout', () => {
+    expect(names('buste     paga')).toEqual(['Payroll system'])
+  })
+
+  it('still refuses the two words run together', () => {
+    expect(names('bustepaga')).toEqual([])
+  })
+
+  it('still refuses a term that is only part of a longer word', () => {
+    expect(names('le buste\npagate dal fornitore')).toEqual([])
+  })
+
+  it('does not bridge a comma between the two words', () => {
+    // \s+ is whitespace only. "buste, paga" is a list, not the term.
+    expect(names('buste, paga')).toEqual([])
+  })
+
+  it('does not bridge a word between the two words', () => {
+    expect(names('buste di paga')).toEqual([])
+  })
+
+  it('shows the whole matched term in its evidence, newline and all', () => {
+    const [c] = extractCandidates(
+      [{ name: 'a.pdf', text: 'Elaborazione delle buste\npaga mensili per i dipendenti.' }],
+      VENDORS,
+      MULTIWORD,
+    )
+    if (c === undefined) throw new Error('expected a candidate')
+    expect(c.evidence).toContain('mensili')
+  })
+
+  it('measures the evidence window from what matched, not from the dictionary key', () => {
+    // "access\n      control" is 20 characters where the key "access control" is 14, so a window
+    // sized from the key falls 6 characters short at the tail. "deposito" sits in that gap: it
+    // ends 2 characters inside the window measured from the match and 4 characters outside the
+    // window measured from the key. Only the second implementation truncates it to "depo".
+    const [c] = extractCandidates(
+      [
+        {
+          name: 'a.pdf',
+          text:
+            'Il badge e access\n      control regola l’ingresso agli uffici e agli archivi ' +
+            'del deposito comunale.',
+        },
+      ],
+      VENDORS,
+      MULTIWORD,
+    )
+    if (c === undefined) throw new Error('expected a candidate')
+    expect(c.evidence).toContain('deposito')
+  })
+})
+
 function confirmed(over: Partial<Candidate>): Candidate {
   return {
     id: 'payroll-system',
