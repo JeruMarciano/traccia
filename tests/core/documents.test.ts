@@ -457,6 +457,39 @@ describe('categories of personal data', () => {
   })
 })
 
+describe('one category term written inside another', () => {
+  // "indirizzo" sits inside "indirizzo email" and inside "indirizzo IP", and the dictionary keeps
+  // all three. Without a precedence rule a sentence naming an email address also asserts a postal
+  // address the document never claimed -- and a category is confirmed as a bundle, with no
+  // per-category tick, so the falsehood is written into the saved project.
+  const OVERLAPPING: DataCategoryDictionary = {
+    indirizzo: { name: 'Postal address' },
+    'indirizzo email': { name: 'Email address' },
+    'indirizzo ip': { name: 'Browsing data' },
+  }
+
+  const cats = (text: string): string[] | undefined =>
+    placesOnly(
+      extractCandidates([{ name: 'a.pdf', text }], VENDORS, INTERNAL, SUBJECTS, OVERLAPPING),
+    ).find((c) => c.name === 'Salesforce')?.dataCategories
+
+  it('reads the longer term and not the shorter one it contains', () => {
+    expect(cats('Salesforce riceve il vostro indirizzo email.')).toEqual(['Email address'])
+    expect(cats('Salesforce conserva l’indirizzo IP per 30 giorni.')).toEqual(['Browsing data'])
+  })
+
+  it('still reads the shorter term where it stands on its own', () => {
+    expect(cats('Salesforce conserva l’indirizzo di fatturazione.')).toEqual(['Postal address'])
+  })
+
+  it('reads both when the sentence writes the shorter term somewhere else too', () => {
+    expect(cats('Salesforce riceve l’indirizzo email e l’indirizzo di fatturazione.')).toEqual([
+      'Email address',
+      'Postal address',
+    ])
+  })
+})
+
 // A vendor is matched by its domain, and a domain is full of dots. The sentence a dot ends is the
 // same sentence the attribute extractors read, so a dot inside "google-analytics.com" truncated
 // every reading at the first label and made everything stated after the vendor's name invisible.
@@ -693,7 +726,30 @@ describe('the controller and the processor, by name', () => {
   it('reads a heading-and-value layout, and never puts a line break inside a name', () => {
     const text = 'Titolare del trattamento\nAcme S.r.l.\nVia Roma 12'
     expect(roles(text)).toEqual([{ name: 'Acme S.r.l.', holder: 'you' }])
-    expect(roles(text)[0]?.name).not.toContain('\n')
+  })
+
+  it('reads past a bare heading to the sentence below, rather than naming the article', () => {
+    // The bare phrase as a heading is followed by a line break, which is a separator, and the
+    // capitalised token after it is the article that opens the sentence. "Il" is not an
+    // organisation, and stopping there loses the one the document actually names.
+    expect(
+      roles('Titolare del trattamento\nIl titolare del trattamento è Offdigit S.r.l.'),
+    ).toEqual([{ name: 'Offdigit S.r.l.', holder: 'you' }])
+  })
+
+  it('offers nothing rather than an article when the heading is the only occurrence', () => {
+    expect(
+      roles('RESPONSABILE DEL TRATTAMENTO\nLa società Nuvola Informatica S.r.l. tratta i dati.'),
+    ).toEqual([])
+    expect(roles('Titolare del trattamento\nvedi la sezione precedente.')).toEqual([])
+  })
+
+  it('keeps a name that begins with an article', () => {
+    // The rejection is for a capture that is nothing but an article. "La Rinascente S.p.A." is a
+    // company, and a rule broad enough to strip its first word would rename it.
+    expect(roles('Titolare del trattamento è La Rinascente S.p.A.')).toEqual([
+      { name: 'La Rinascente S.p.A.', holder: 'you' },
+    ])
   })
 
   it('reads past an all-caps heading to the sentence that names the organisation', () => {

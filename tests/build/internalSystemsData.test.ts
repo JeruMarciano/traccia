@@ -41,6 +41,19 @@ const found = (text: string): string[] =>
     .map((c) => c.name)
     .sort()
 
+/**
+ * The same call, read for the categories of data the sentence attaches to a place. One sentence
+ * can name several systems and each carries the same reading of it, so the names are deduplicated:
+ * what is under test is which categories the sentence yields, not how many places carry them.
+ */
+const catsFound = (text: string): string[] => [
+  ...new Set(
+    extractCandidates([{ name: 'informativa.pdf', text }], V, dict, SUBJECTS, CATEGORIES)
+      .filter((c) => c.sort === 'place')
+      .flatMap((c) => (c.sort === 'place' ? (c.dataCategories ?? []) : [])),
+  ),
+]
+
 /** The same call, read for the other half of what a document says: whose data it is. */
 const subjectsFound = (text: string): string[] =>
   extractCandidates([{ name: 'informativa.pdf', text }], V, dict, SUBJECTS, CATEGORIES)
@@ -154,6 +167,32 @@ describe('reading an Italian document', () => {
     expect(found('Le pratiche passano per la posta\nelettronica\ncertificata.')).toEqual([
       'Certified email (PEC)',
       'Email',
+    ])
+  })
+
+  it('does not read a geolocation clause as fleet tracking', () => {
+    // "geolocalizzazione" means the browser or device sense at least as often as the vehicle one,
+    // and a confirm row offering "Vehicle tracking" does not read as a guess. The unambiguous
+    // phrase "localizzazione veicoli" carries that case on its own.
+    expect(
+      found('Il sito utilizza la geolocalizzazione del dispositivo per mostrare il negozio più vicino.'),
+    ).toEqual([])
+    expect(found('La localizzazione veicoli è attiva sulla flotta aziendale.')).toEqual([
+      'Vehicle tracking',
+    ])
+  })
+
+  it('does not assert a postal address from "indirizzo email" or "indirizzo IP"', () => {
+    // "indirizzo" is a category term in its own right and sits inside both of these. A longer
+    // term outranks a shorter one it contains, so only the category actually named is offered.
+    expect(catsFound('Il gestionale conserva il vostro indirizzo email.')).toEqual([
+      'Email address',
+    ])
+    expect(catsFound('Il gestionale conserva l’indirizzo IP per 30 giorni.')).toEqual([
+      'Browsing data',
+    ])
+    expect(catsFound('Il gestionale conserva l’indirizzo di residenza.')).toEqual([
+      'Postal address',
     ])
   })
 

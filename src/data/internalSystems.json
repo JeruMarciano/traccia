@@ -165,7 +165,6 @@
   "customer portal": { "name": "Customer login area", "purposeGroup": "Sales & CRM", "layer": "internal", "holder": "you" },
   "whistleblowing": { "name": "Whistleblowing channel", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
   "segnalazione illeciti": { "name": "Whistleblowing channel", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
-  "geolocalizzazione": { "name": "Vehicle tracking", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
   "localizzazione veicoli": { "name": "Vehicle tracking", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
   "registro visitatori": { "name": "Visitor log", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" },
   "visitor log": { "name": "Visitor log", "purposeGroup": "Facilities & Security", "layer": "internal", "holder": "you" }

@@ -269,21 +269,33 @@ export function jurisdictionIn(sentence: string): string | undefined {
  *
  * Denial is judged per occurrence, as it is for a term: "non riceve il codice fiscale, solo il
  * nome" names two categories and asserts one.
+ *
+ * The precedence rule, within data categories: a longer term outranks a shorter one it contains.
+ * "indirizzo" is a category of its own and sits inside both "indirizzo email" and "indirizzo IP",
+ * so without the rule a sentence naming an email address also asserts a postal address the
+ * document never claimed. A category matters more than a term does elsewhere in this module,
+ * because categories are confirmed as a bundle with no per-category tick: an unfounded one is
+ * written straight into the saved project. Containment is judged per occurrence, so the shorter
+ * term still counts where the sentence writes it on its own.
  */
 export function dataCategoriesIn(
   sentence: string,
   categories: ReadonlyArray<{ entry: DataCategoryEntry; pattern: RegExp }>,
 ): string[] | undefined {
   const lower = sentence.toLowerCase()
-  const found: Array<{ name: string; at: number }> = []
+  // Every occurrence, not the first per term: which occurrence survives depends on what the other
+  // terms matched, and that is not known until all of them have been read.
+  const hits: Array<{ name: string; at: number; end: number }> = []
   for (const { entry, pattern } of categories) {
     for (const m of lower.matchAll(pattern)) {
       const start = m.index + (m[1]?.length ?? 0)
       if (isDenied(lower, start)) continue
-      found.push({ name: entry.name, at: start })
-      break
+      hits.push({ name: entry.name, at: start, end: start + m[0].length - (m[1]?.length ?? 0) })
     }
   }
+  const found = hits.filter(
+    (h) => !hits.some((o) => o.at <= h.at && o.end >= h.end && o.end - o.at > h.end - h.at),
+  )
   if (found.length === 0) return undefined
   found.sort((a, b) => a.at - b.at)
   return [...new Set(found.map((f) => f.name))]
@@ -335,7 +347,8 @@ const ORGANISATION = `(\\p{Lu}${TOKEN}(?:\\s+(?:${JOINERS}|\\p{Lu}${TOKEN})){0,4
  * silently stops working.
  *
  * Global, because the first occurrence of the phrase is often a heading and the name is in the
- * sentence below it. The first occurrence that produces a name wins, not the first occurrence.
+ * sentence below it. The first occurrence that produces a usable name wins, not the first
+ * occurrence, and a capture rejected as an article does not count as usable.
  */
 const ROLE_PATTERNS = ROLES.map(({ phrase, holder }) => ({
   holder,
@@ -371,6 +384,17 @@ const KEPT_DOT = /(^|[^\p{L}])\p{L}\.$/u
 /** A joiner the capture ran out on: "Acme e successivamente il gruppo" is a company called Acme. */
 const TRAILING_JOINER = /(?:\s+(?:e|and|di|de|dei|degli|of))+$/u
 
+/**
+ * A capture that is nothing but an article or a determiner. The bare role phrase printed as a
+ * heading is followed by a line break, which the separator accepts, and the capitalised token
+ * after it is whatever opens the sentence below -- "Il titolare del trattamento è Acme S.r.l."
+ * names a controller called "Il" and loses Acme.
+ *
+ * Exactly one such token, and nothing more: "La Rinascente S.p.A." is a company, and a rule that
+ * stripped a leading article would rename it.
+ */
+const ARTICLE_ONLY = /^(?:il|lo|la|i|gli|le|l['’]|un|uno|una|questo|questa|the|a|an|this)$/iu
+
 /** The sentence punctuation and dangling joiners a capture can carry away with it. */
 function trimName(captured: string): string {
   const trimmed = captured.replace(/[.,;:]+$/u, (end) => (KEPT_DOT.test(captured) ? end : ''))
@@ -403,7 +427,10 @@ function roleCandidates(
       const t = ORGANISATION_AT.exec(text.slice(nameAt, stop))
       if (t === null) continue
       const name = trimName(t[1] ?? '')
-      if (name === '') continue
+      // Nothing usable here: go on to the next occurrence of the phrase rather than stopping. The
+      // heading is where a bare article is captured, and the sentence that names the organisation
+      // is the occurrence after it.
+      if (name === '' || ARTICLE_ONLY.test(name)) continue
       out.push({ name, holder, at: p.index, length: nameAt - p.index + t[0].length })
       break
     }
@@ -520,7 +547,6 @@ export function extractCandidates(
     // 2. Vendor dictionary: anything that looks like a domain, resolved the same way a
     //    scanned host is, so a domain in an invoice and the same domain observed by a scan
     //    produce the same place name and merge instead of duplicating.
-    DOMAIN_PATTERN.lastIndex = 0
     for (const m of text.matchAll(DOMAIN_PATTERN)) {
       const host = m[0].toLowerCase()
       const hit = identify(host, vendors)
