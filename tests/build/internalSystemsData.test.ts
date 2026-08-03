@@ -1,16 +1,20 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import dictionary from '../../src/data/internalSystems.json'
 import vendors from '../../src/data/vendors.json'
 import { extractCandidates } from '../../src/core/documents'
+import subjectGroupsJson from '../../src/data/subjectGroups.json'
 import dataCategoriesJson from '../../src/data/dataCategories.json'
 import type {
   DataCategoryDictionary,
   InternalSystemDictionary,
+  SubjectGroupDictionary,
   VendorDictionary,
 } from '../../src/core/types'
 
 const dict = dictionary as InternalSystemDictionary
 const V = vendors as VendorDictionary
+const SUBJECTS = subjectGroupsJson as SubjectGroupDictionary
 const CATEGORIES = dataCategoriesJson as DataCategoryDictionary
 
 // Closed, because `purposeGroup` is only a `string` in types.ts and the map groups by its exact
@@ -32,7 +36,15 @@ const PURPOSE_GROUPS = new Set([
 
 /** What the shipped documents say, read straight out of a real Italian informativa. */
 const found = (text: string): string[] =>
-  extractCandidates([{ name: 'informativa.pdf', text }], V, dict, CATEGORIES)
+  extractCandidates([{ name: 'informativa.pdf', text }], V, dict, SUBJECTS, CATEGORIES)
+    .filter((c) => c.sort === 'place')
+    .map((c) => c.name)
+    .sort()
+
+/** The same call, read for the other half of what a document says: whose data it is. */
+const subjectsFound = (text: string): string[] =>
+  extractCandidates([{ name: 'informativa.pdf', text }], V, dict, SUBJECTS, CATEGORIES)
+    .filter((c) => c.sort === 'subjectGroup')
     .map((c) => c.name)
     .sort()
 
@@ -109,6 +121,62 @@ describe('reading an Italian document', () => {
       'Payroll system',
       'Workday',
       'Xero',
+    ])
+  })
+})
+
+describe('the shipped subject-group dictionary', () => {
+  it('keys every entry by a lowercase term', () => {
+    for (const term of Object.keys(SUBJECTS)) expect(term, term).toBe(term.toLowerCase())
+  })
+
+  it('spells the scan-seeded group exactly as ingestScan does, so the two merge', () => {
+    expect(Object.values(SUBJECTS).map((e) => e.name)).toContain('Website visitors')
+  })
+
+  it('reads the second paragraph of a real informativa', () => {
+    const text =
+      'Il Titolare tratta i dati personali di clienti, fornitori, dipendenti e candidati, ' +
+      'nonché degli utenti del sito che navigano le pagine pubbliche.'
+    expect(subjectsFound(text)).toEqual([
+      'Customers',
+      'Employees',
+      'Job applicants',
+      'Suppliers',
+      'Website visitors',
+    ])
+  })
+
+  it('is passed in its own parameter and not in the data-category one', () => {
+    // SubjectGroupDictionary and DataCategoryDictionary are the same shape -- a record of term to
+    // { name } -- so transposing the two arguments at a call site compiles and typecheck says
+    // nothing. This is what catches it: one sentence carrying a term from each dictionary, read
+    // for both answers at once. Swap the two arguments below and both assertions fail.
+    const text = 'Le buste paga dei dipendenti riportano il codice fiscale.'
+    const out = extractCandidates([{ name: 'informativa.pdf', text }], V, dict, SUBJECTS, CATEGORIES)
+    expect(out.filter((c) => c.sort === 'subjectGroup').map((c) => c.name)).toEqual(['Employees'])
+    expect(
+      out.filter((c) => c.sort === 'place').flatMap((c) => c.dataCategories ?? []),
+    ).toEqual(['Tax identifier'])
+  })
+
+  it('is wired into the app in its own position', () => {
+    // The assertion above covers the call sites a test controls. The one that matters most is in
+    // App.tsx, which no test calls: transposing the two arguments there compiles, passes the whole
+    // suite, and silently searches documents for subject groups using the category dictionary. So
+    // the order is read out of the source, the way the loose-strings guard reads the components.
+    const source = readFileSync('src/renderer/App.tsx', 'utf8')
+    const call = /extractCandidates\(([^)]*)\)/u.exec(source)
+    const args = (call?.[1] ?? '')
+      .split(',')
+      .map((a) => a.trim())
+      .filter((a) => a !== '')
+    expect(args).toEqual([
+      'documents',
+      'VENDORS',
+      'INTERNAL_SYSTEMS',
+      'SUBJECT_GROUPS',
+      'DATA_CATEGORIES',
     ])
   })
 })

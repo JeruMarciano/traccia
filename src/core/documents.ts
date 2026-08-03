@@ -1,4 +1,4 @@
-import { addPlace } from './graph'
+import { addPlace, addSubjectGroup } from './graph'
 import { displayName } from './scan'
 import { identify } from './vendors'
 import type {
@@ -6,9 +6,13 @@ import type {
   DataCategoryDictionary,
   DataCategoryEntry,
   DocumentText,
+  Holder,
   InternalSystemDictionary,
   Place,
+  PlaceCandidate,
   Project,
+  SubjectGroupCandidate,
+  SubjectGroupDictionary,
   VendorDictionary,
 } from './types'
 
@@ -286,6 +290,95 @@ export function dataCategoriesIn(
 }
 
 /**
+ * The purpose group a named controller or processor lands in. The same group `ingestScan` gives
+ * the scanned site (see src/core/scan.ts), because it is the same answer to the same question:
+ * this is the organisation, not one of the things it uses.
+ */
+const RUNNING = 'Running the systems'
+
+/**
+ * The role phrases an informativa uses, each with who holds the data. The Italian phrases must
+ * carry "del trattamento": bare "titolare" is ordinary Italian for an owner or a holder of
+ * anything at all, and the holder of a bank account is not the controller of anything.
+ */
+const ROLES: ReadonlyArray<{ phrase: string; holder: Holder }> = [
+  { phrase: 'titolare\\s+del\\s+trattamento', holder: 'you' },
+  { phrase: 'data\\s+controller', holder: 'you' },
+  { phrase: 'responsabile\\s+del\\s+trattamento', holder: 'supplier' },
+  { phrase: 'data\\s+processor', holder: 'supplier' },
+]
+
+/**
+ * A capitalised organisation name: up to five tokens, each either capitalised or one of the
+ * lowercase words an Italian company name is allowed to contain ("Verdi e Figli"). Dots stay in
+ * the character class so "S.r.l." survives; commas do not, so the clause after the name is cut
+ * off. Five tokens rather than an open run, because an unbounded capture swallows the rest of a
+ * sentence that happens to be in title case.
+ *
+ * The joiners end in a boundary, or "e" matches the "E" of "Editore" and "Rossi Editore S.r.l."
+ * is captured as "Rossi E".
+ */
+const TOKEN = "[\\p{L}\\p{N}&.’'-]*"
+const JOINERS = '(?:e|and|di|de|dei|degli|of)(?![\\p{L}\\p{N}])'
+const ORGANISATION = `(\\p{Lu}${TOKEN}(?:\\s+(?:${JOINERS}|\\p{Lu}${TOKEN})){0,4})`
+
+/**
+ * The role phrase and the name are matched by two patterns rather than one, because they need
+ * different flags and JavaScript has no way to change flags mid-pattern that this build can rely
+ * on. The phrase is case-insensitive -- an informativa prints "TITOLARE DEL TRATTAMENTO" as a
+ * heading as often as in a sentence -- while the name must not be: under `i`, `\p{Lu}` matches
+ * lowercase letters too, and the whole capitalisation rule that separates a name from ordinary
+ * prose silently stops working.
+ *
+ * The tail is the connector and the name. The connector may be absent; a comma is not a
+ * connector, so the clause after the name is cut off rather than read as part of it.
+ */
+const ROLE_PATTERNS = ROLES.map(({ phrase, holder }) => ({
+  holder,
+  phrase: new RegExp(phrase, 'iu'),
+  tail: new RegExp(`^\\s*(?:[èÈ]|[eE]['’]|:|[iI][sS](?![\\p{L}\\p{N}]))?\\s+${ORGANISATION}`, 'u'),
+}))
+
+/**
+ * A trailing dot that belongs to the name rather than to the sentence: the token before it is a
+ * single letter, as in "S.r.l." or "S.p.A.". After a whole word -- "Acme Ltd." -- the dot is the
+ * sentence's full stop as much as it is the abbreviation's, and nothing in the text tells the two
+ * apart, so it goes.
+ */
+const KEPT_DOT = /(^|[^\p{L}])\p{L}\.$/u
+
+/**
+ * Every organisation the text names in a controller or processor role, with where the phrase sat
+ * so the caller can size an evidence window and judge a denial. Names are trimmed of the sentence
+ * punctuation a capture can carry away.
+ */
+export function roleCandidates(
+  text: string,
+): Array<{ name: string; holder: Holder; at: number; length: number }> {
+  const out: Array<{ name: string; holder: Holder; at: number; length: number }> = []
+  for (const { holder, phrase, tail } of ROLE_PATTERNS) {
+    const p = phrase.exec(text)
+    if (p === null) continue
+    const t = tail.exec(text.slice(p.index + p[0].length))
+    if (t === null) continue
+    const captured = t[1] ?? ''
+    const name = captured.replace(/[.,;:]+$/u, (end) => (KEPT_DOT.test(captured) ? end : ''))
+    if (name === '') continue
+    out.push({ name, holder, at: p.index, length: p[0].length + t[0].length })
+  }
+  return out
+}
+
+/**
+ * A candidate before the extractor has given it an id and a source list. Written as a union of
+ * two Omits rather than one Omit of the union, because Omit over a union keeps only the keys the
+ * members share -- which would drop every field that tells a place from a group.
+ */
+type NewCandidate =
+  | Omit<PlaceCandidate, 'id' | 'sourceNames'>
+  | Omit<SubjectGroupCandidate, 'id' | 'sourceNames'>
+
+/**
  * Every candidate the given documents suggest, deduplicated by name across documents (a
  * system named in three files is one candidate carrying three source names). Order:
  * first appearance across the documents, in the order given.
@@ -294,6 +387,7 @@ export function extractCandidates(
   documents: DocumentText[],
   vendors: VendorDictionary,
   internal: InternalSystemDictionary,
+  subjects: SubjectGroupDictionary,
   categories: DataCategoryDictionary,
 ): Candidate[] {
   const byKey = new Map<string, Candidate>()
@@ -311,16 +405,25 @@ export function extractCandidates(
     pattern: wholeWord(term.toLowerCase()),
   }))
 
-  const add = (candidate: Omit<Candidate, 'id' | 'sourceNames'>, sourceName: string): void => {
-    const key = candidate.name.toLowerCase()
+  const subjectTerms = Object.entries(subjects).map(([term, entry]) => ({
+    entry,
+    pattern: wholeWord(term.toLowerCase()),
+  }))
+
+  const add = (candidate: NewCandidate, sourceName: string): void => {
+    // The sort is part of the key: a supplier and a group of people can share a word, and two
+    // different things under one name would merge into whichever was found first.
+    const key = `${candidate.sort}:${candidate.name.toLowerCase()}`
     const existing = byKey.get(key)
     if (existing === undefined) {
       byKey.set(key, { ...candidate, id: slug(candidate.name), sourceNames: [sourceName] })
-    } else {
-      if (!existing.sourceNames.includes(sourceName)) existing.sourceNames.push(sourceName)
-      // First document to say something wins. A second document that says something different is
-      // a contradiction, and this list is not where a contradiction gets resolved -- the user
-      // sees both files named under the candidate and decides.
+      return
+    }
+    if (!existing.sourceNames.includes(sourceName)) existing.sourceNames.push(sourceName)
+    // First document to say something wins. A second document that says something different is
+    // a contradiction, and this list is not where a contradiction gets resolved -- the user
+    // sees both files named under the candidate and decides.
+    if (existing.sort === 'place' && candidate.sort === 'place') {
       existing.retention ??= candidate.retention
       existing.jurisdiction ??= candidate.jurisdiction
       existing.dataCategories ??= candidate.dataCategories
@@ -354,6 +457,7 @@ export function extractCandidates(
       const sentence = text.slice(sStart, sEnd)
       add(
         {
+          sort: 'place',
           name: entry.name,
           layer: entry.layer,
           purposeGroup: entry.purposeGroup,
@@ -381,6 +485,7 @@ export function extractCandidates(
       const sentence = text.slice(sStart, sEnd)
       add(
         {
+          sort: 'place',
           name: displayName(host, vendors),
           layer: 'external',
           purposeGroup: hit.purposeGroup,
@@ -390,6 +495,46 @@ export function extractCandidates(
           retention: retentionIn(sentence),
           jurisdiction: jurisdictionIn(sentence),
           dataCategories: dataCategoriesIn(sentence, categoryTerms),
+        },
+        doc.name,
+      )
+    }
+
+    // 3. Subject groups: whose data this is. Same term matching and the same denial rule as a
+    //    place -- "non trattiamo dati di minori" must not put children on the map any more than
+    //    a denied cookie. No attributes: a group of people has no retention and no jurisdiction.
+    for (const { entry, pattern } of subjectTerms) {
+      let at = -1
+      let matched = 0
+      for (const m of lower.matchAll(pattern)) {
+        const lead = m[1]?.length ?? 0
+        const start = m.index + lead
+        if (isDenied(lower, start)) continue
+        at = start
+        matched = m[0].length - lead
+        break
+      }
+      if (at === -1) continue
+      add(
+        { sort: 'subjectGroup', name: entry.name, evidence: evidenceAround(text, at, matched) },
+        doc.name,
+      )
+    }
+
+    // 4. The organisations named in a role. The controller is the one point on this map that is
+    //    the organisation itself rather than something it uses, which is why it is 'you' and
+    //    internal; a named processor is a supplier like any other.
+    for (const role of roleCandidates(text)) {
+      if (isDenied(lower, role.at)) continue
+      add(
+        {
+          sort: 'place',
+          name: role.name,
+          layer: role.holder === 'you' ? 'internal' : 'external',
+          purposeGroup: RUNNING,
+          holder: role.holder,
+          kind: role.holder === 'you' ? 'internal' : 'processor',
+          evidence: evidenceAround(text, role.at, role.length),
         },
         doc.name,
       )
@@ -418,6 +563,22 @@ export function ingestDocument(project: Project, confirmed: Candidate[]): Projec
   ])
 
   for (const candidate of confirmed) {
+    if (candidate.sort === 'subjectGroup') {
+      // A group a scan already seeded is the same people under a different word -- "utenti del
+      // sito" and the seeded "Website visitors" are one group, so this merges by name rather
+      // than adding a second point for the same population.
+      const already = working.subjectGroups.some(
+        (s) => s.name.toLowerCase() === candidate.name.toLowerCase(),
+      )
+      if (already) continue
+      let sgN = 1
+      while (taken.has(`doc-sg-${sgN}`)) sgN += 1
+      const sgId = `doc-sg-${sgN}`
+      taken.add(sgId)
+      working = addSubjectGroup(working, { name: candidate.name }, sgId)
+      continue
+    }
+
     const existing = working.places.find(
       (p) => p.name.toLowerCase() === candidate.name.toLowerCase(),
     )

@@ -1,4 +1,4 @@
-import type { Flow, Place, Project } from './types'
+import type { Flow, Place, Project, SubjectGroup } from './types'
 
 function knownIds(project: Project): Set<string> {
   return new Set<string>([
@@ -12,6 +12,18 @@ export function addPlace(project: Project, place: Omit<Place, 'id'>, id: string)
     throw new Error(`Place id already exists: ${id}`)
   }
   return { ...project, places: [...project.places, { ...place, id }] }
+}
+
+/** Mirrors addPlace: the caller supplies the id, and an id already in use is a programming error. */
+export function addSubjectGroup(
+  project: Project,
+  group: Omit<SubjectGroup, 'id'>,
+  id: string,
+): Project {
+  if (project.subjectGroups.some((s) => s.id === id)) {
+    throw new Error(`Subject group id already exists: ${id}`)
+  }
+  return { ...project, subjectGroups: [...project.subjectGroups, { ...group, id }] }
 }
 
 export function updatePlace(

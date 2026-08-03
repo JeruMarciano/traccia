@@ -48,22 +48,28 @@ export function SuggestionsPanel({ candidates, read, onConfirm, onCancel }: Prop
               />
               <span className="suggestion-name">{c.name}</span>
               <span className="suggestion-tag">
-                {c.layer === 'internal' ? STRINGS.suggestionInternal : STRINGS.suggestionExternal}
+                {c.sort === 'subjectGroup'
+                  ? STRINGS.suggestionSubjectGroup
+                  : c.layer === 'internal'
+                    ? STRINGS.suggestionInternal
+                    : STRINGS.suggestionExternal}
               </span>
-              <span className="suggestion-group">{c.purposeGroup}</span>
+              <span className="suggestion-group">
+                {c.sort === 'subjectGroup' ? '' : c.purposeGroup}
+              </span>
             </label>
             <p className="suggestion-evidence">“{c.evidence}”</p>
-            {c.retention === undefined ? null : (
+            {c.sort === 'place' && c.retention !== undefined ? (
               <p className="suggestion-attribute">{STRINGS.suggestionRetention(c.retention)}</p>
-            )}
-            {c.jurisdiction === undefined ? null : (
+            ) : null}
+            {c.sort === 'place' && c.jurisdiction !== undefined ? (
               <p className="suggestion-attribute">{STRINGS.suggestionJurisdiction(c.jurisdiction)}</p>
-            )}
-            {c.dataCategories === undefined ? null : (
+            ) : null}
+            {c.sort === 'place' && c.dataCategories !== undefined ? (
               <p className="suggestion-attribute">
                 {STRINGS.suggestionDataCategories(c.dataCategories.join(', '))}
               </p>
-            )}
+            ) : null}
             <p className="suggestion-sources">{STRINGS.suggestionFoundIn(c.sourceNames.join(', '))}</p>
           </li>
         ))}

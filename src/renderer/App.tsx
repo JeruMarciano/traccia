@@ -8,10 +8,12 @@ import type {
   Candidate,
   DataCategoryDictionary,
   InternalSystemDictionary,
+  SubjectGroupDictionary,
   VendorDictionary,
 } from '../core/types'
 import vendorsJson from '../data/vendors.json'
 import internalSystemsJson from '../data/internalSystems.json'
+import subjectGroupsJson from '../data/subjectGroups.json'
 import dataCategoriesJson from '../data/dataCategories.json'
 import { DetailPanel } from './components/DetailPanel'
 import { MapView } from './components/MapView'
@@ -34,6 +36,7 @@ import { STYLESHEET } from './theme'
 
 const VENDORS = vendorsJson as VendorDictionary
 const INTERNAL_SYSTEMS = internalSystemsJson as InternalSystemDictionary
+const SUBJECT_GROUPS = subjectGroupsJson as SubjectGroupDictionary
 const DATA_CATEGORIES = dataCategoriesJson as DataCategoryDictionary
 
 export function App() {
@@ -111,7 +114,13 @@ export function App() {
         setNotice(notes.length > 0 ? notes.join(' ') : null)
         return
       }
-      const found = extractCandidates(documents, VENDORS, INTERNAL_SYSTEMS, DATA_CATEGORIES)
+      const found = extractCandidates(
+        documents,
+        VENDORS,
+        INTERNAL_SYSTEMS,
+        SUBJECT_GROUPS,
+        DATA_CATEGORIES,
+      )
       if (found.length === 0) notes.push(STRINGS.documentsNothingFound)
       setNotice(notes.length > 0 ? notes.join(' ') : null)
       setSuggestions(found.length > 0 ? { candidates: found, read: documents.map((d) => d.name) } : null)

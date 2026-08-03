@@ -2,12 +2,16 @@
 // into the project. See src/core/documents.ts.
 import { describe, it, expect } from 'vitest'
 import { extractCandidates, ingestDocument } from '../../src/core/documents'
+import { ingestScan } from '../../src/core/scan'
 import { emptyProject, place } from '../fixtures/projects'
 import { addPlace } from '../../src/core/graph'
 import type {
   Candidate,
   DataCategoryDictionary,
   InternalSystemDictionary,
+  PlaceCandidate,
+  SubjectGroupCandidate,
+  SubjectGroupDictionary,
   VendorDictionary,
 } from '../../src/core/types'
 
@@ -21,6 +25,14 @@ const INTERNAL: InternalSystemDictionary = {
   stripe: { name: 'Stripe', purposeGroup: 'Payments', layer: 'external', holder: 'supplier' },
 }
 
+const SUBJECTS: SubjectGroupDictionary = {
+  clienti: { name: 'Customers' },
+  dipendenti: { name: 'Employees' },
+  minori: { name: 'Children' },
+  fornitori: { name: 'Suppliers' },
+  'utenti del sito': { name: 'Website visitors' },
+}
+
 const CATEGORIES: DataCategoryDictionary = {
   email: { name: 'Email address' },
   'dati di navigazione': { name: 'Browsing data' },
@@ -28,10 +40,14 @@ const CATEGORIES: DataCategoryDictionary = {
   nome: { name: 'Name' },
 }
 
+/** A candidate is a place or a group of people; most of these cases are about the places. */
+const placesOnly = (cs: Candidate[]): PlaceCandidate[] =>
+  cs.filter((c): c is PlaceCandidate => c.sort === 'place')
+
 describe('extractCandidates', () => {
   it('finds an internal system by term, case-insensitively, with evidence around the match', () => {
     const docs = [{ name: 'contract.pdf', text: 'The monthly PAYROLL run is outsourced.' }]
-    const out = extractCandidates(docs, VENDORS, INTERNAL, CATEGORIES)
+    const out = placesOnly(extractCandidates(docs, VENDORS, INTERNAL, SUBJECTS, CATEGORIES))
     expect(out).toHaveLength(1)
     expect(out[0]?.name).toBe('Payroll system')
     expect(out[0]?.layer).toBe('internal')
@@ -43,12 +59,12 @@ describe('extractCandidates', () => {
 
   it('does not match a term inside a longer word', () => {
     const docs = [{ name: 'a.txt', text: 'the stripes on the flag' }]
-    expect(extractCandidates(docs, VENDORS, INTERNAL, CATEGORIES)).toHaveLength(0)
+    expect(extractCandidates(docs, VENDORS, INTERNAL, SUBJECTS, CATEGORIES)).toHaveLength(0)
   })
 
   it('finds a vendor by domain and names it exactly as a scan would', () => {
     const docs = [{ name: 'invoice.pdf', text: 'Billed for www.google-analytics.com usage.' }]
-    const out = extractCandidates(docs, VENDORS, INTERNAL, CATEGORIES)
+    const out = placesOnly(extractCandidates(docs, VENDORS, INTERNAL, SUBJECTS, CATEGORIES))
     expect(out).toHaveLength(1)
     expect(out[0]?.name).toBe('Google Analytics')
     expect(out[0]?.layer).toBe('external')
@@ -57,7 +73,7 @@ describe('extractCandidates', () => {
 
   it('ignores a domain the vendor dictionary does not know', () => {
     const docs = [{ name: 'a.txt', text: 'see internal-wiki.example for details' }]
-    expect(extractCandidates(docs, VENDORS, INTERNAL, CATEGORIES)).toHaveLength(0)
+    expect(extractCandidates(docs, VENDORS, INTERNAL, SUBJECTS, CATEGORIES)).toHaveLength(0)
   })
 
   it('deduplicates across documents, collecting every source name once', () => {
@@ -65,13 +81,13 @@ describe('extractCandidates', () => {
       { name: 'one.docx', text: 'Payroll data is processed monthly. Payroll again.' },
       { name: 'two.csv', text: 'payroll;employee;amount' },
     ]
-    const out = extractCandidates(docs, VENDORS, INTERNAL, CATEGORIES)
+    const out = extractCandidates(docs, VENDORS, INTERNAL, SUBJECTS, CATEGORIES)
     expect(out).toHaveLength(1)
     expect(out[0]?.sourceNames).toEqual(['one.docx', 'two.csv'])
   })
 
   it('is empty for empty documents', () => {
-    expect(extractCandidates([{ name: 'x.txt', text: '' }], VENDORS, INTERNAL, CATEGORIES)).toHaveLength(0)
+    expect(extractCandidates([{ name: 'x.txt', text: '' }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES)).toHaveLength(0)
   })
 })
 
@@ -84,7 +100,7 @@ describe('a term the document denies', () => {
     cookie: { name: 'Cookies', purposeGroup: 'Website tracking', layer: 'external', holder: 'supplier' },
   }
   const names = (text: string): string[] =>
-    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, DENIABLE, CATEGORIES)
+    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, DENIABLE, SUBJECTS, CATEGORIES)
       .map((c) => c.name)
       .sort()
 
@@ -112,6 +128,7 @@ describe('a term the document denies', () => {
       [{ name: 'a.pdf', text: 'Non utilizziamo Hotjar per la pubblicità. Hotjar resta attivo per le heatmap.' }],
       VENDORS,
       DENIABLE,
+      SUBJECTS,
       CATEGORIES,
     )
     if (c === undefined) throw new Error('expected a candidate')
@@ -168,24 +185,24 @@ describe('matching terms that are not ASCII', () => {
 
   it('finds a term ending in an accented letter', () => {
     const docs = [{ name: 'nota.pdf', text: 'La contabilità è tenuta internamente.' }]
-    const out = extractCandidates(docs, VENDORS, ACCENTED, CATEGORIES)
+    const out = extractCandidates(docs, VENDORS, ACCENTED, SUBJECTS, CATEGORIES)
     expect(out.map((c) => c.name)).toEqual(['Accounting system'])
   })
 
   it('still refuses a term that is only part of a longer word', () => {
     const docs = [{ name: 'a.txt', text: 'contabilitàaziendale videosorveglianzaX' }]
-    expect(extractCandidates(docs, VENDORS, ACCENTED, CATEGORIES)).toHaveLength(0)
+    expect(extractCandidates(docs, VENDORS, ACCENTED, SUBJECTS, CATEGORIES)).toHaveLength(0)
   })
 
   it('treats an accented letter next to the term as part of a longer word', () => {
     // "è" is a letter, so "èvideosorveglianza" is one word and holds no term.
     const docs = [{ name: 'a.txt', text: 'èvideosorveglianza' }]
-    expect(extractCandidates(docs, VENDORS, ACCENTED, CATEGORIES)).toHaveLength(0)
+    expect(extractCandidates(docs, VENDORS, ACCENTED, SUBJECTS, CATEGORIES)).toHaveLength(0)
   })
 
   it('matches a term sitting against punctuation', () => {
     const docs = [{ name: 'a.txt', text: 'Impianti: videosorveglianza, badge.' }]
-    const out = extractCandidates(docs, VENDORS, ACCENTED, CATEGORIES)
+    const out = extractCandidates(docs, VENDORS, ACCENTED, SUBJECTS, CATEGORIES)
     expect(out.map((c) => c.name)).toEqual(['Video surveillance'])
   })
 })
@@ -209,7 +226,7 @@ describe('a term broken across a line', () => {
     },
   }
   const names = (text: string): string[] =>
-    extractCandidates([{ name: 'a.pdf', text }], VENDORS, MULTIWORD, CATEGORIES)
+    extractCandidates([{ name: 'a.pdf', text }], VENDORS, MULTIWORD, SUBJECTS, CATEGORIES)
       .map((c) => c.name)
       .sort()
 
@@ -247,6 +264,7 @@ describe('a term broken across a line', () => {
       [{ name: 'a.pdf', text: 'Elaborazione delle buste\npaga mensili per i dipendenti.' }],
       VENDORS,
       MULTIWORD,
+      SUBJECTS,
       CATEGORIES,
     )
     if (c === undefined) throw new Error('expected a candidate')
@@ -269,6 +287,7 @@ describe('a term broken across a line', () => {
       ],
       VENDORS,
       MULTIWORD,
+      SUBJECTS,
       CATEGORIES,
     )
     if (c === undefined) throw new Error('expected a candidate')
@@ -282,9 +301,9 @@ describe('a term broken across a line', () => {
 // shown next to the evidence the user ticks.
 describe('retention read off the sentence', () => {
   const retentionFor = (text: string, name: string): string | undefined =>
-    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, CATEGORIES).find(
-      (c) => c.name === name,
-    )?.retention
+    placesOnly(
+      extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES),
+    ).find((c) => c.name === name)?.retention
 
   it('reads an Italian retention phrase', () => {
     expect(retentionFor('I dati in Salesforce sono conservati per 24 mesi.', 'Salesforce')).toBe(
@@ -332,9 +351,9 @@ describe('retention read off the sentence', () => {
 
 describe('jurisdiction read off the sentence', () => {
   const whereFor = (text: string, name: string): string | undefined =>
-    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, CATEGORIES).find(
-      (c) => c.name === name,
-    )?.jurisdiction
+    placesOnly(
+      extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES),
+    ).find((c) => c.name === name)?.jurisdiction
 
   it('reads an Italian placement phrase', () => {
     expect(whereFor('I server di Salesforce sono ubicati in Irlanda.', 'Salesforce')).toBe('Irlanda')
@@ -375,9 +394,9 @@ describe('jurisdiction read off the sentence', () => {
 // The question a client asks first, and the model had nowhere to put the answer. See §4.7.
 describe('categories of personal data', () => {
   const categoriesFor = (text: string, name: string): string[] | undefined =>
-    extractCandidates([{ name: 'a.pdf', text }], VENDORS, INTERNAL, CATEGORIES).find(
-      (c) => c.name === name,
-    )?.dataCategories
+    placesOnly(
+      extractCandidates([{ name: 'a.pdf', text }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES),
+    ).find((c) => c.name === name)?.dataCategories
 
   it('reads one category from the sentence that names the system', () => {
     expect(categoriesFor('Salesforce conserva il codice fiscale del cliente.', 'Salesforce')).toEqual([
@@ -424,9 +443,9 @@ describe('categories of personal data', () => {
 // every reading at the first label and made everything stated after the vendor's name invisible.
 describe('attributes read around a vendor domain', () => {
   const vendorSays = (text: string) =>
-    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, CATEGORIES).find(
-      (c) => c.name === 'Google Analytics',
-    )
+    placesOnly(
+      extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES),
+    ).find((c) => c.name === 'Google Analytics')
 
   const AFTER =
     'Il fornitore google-analytics.com conserva i dati per 24 mesi, ubicati in Irlanda, ' +
@@ -453,8 +472,272 @@ describe('attributes read around a vendor domain', () => {
   })
 })
 
-function confirmed(over: Partial<Candidate>): Candidate {
+// Whose data this is. Today the only group that can exist is the one a scan seeds; an informativa
+// lists four of them in its second paragraph. See §4.2 of the extraction-depth spec.
+describe('subject groups named in a document', () => {
+  const subjects = (text: string): string[] =>
+    extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES)
+      .filter((c) => c.sort === 'subjectGroup')
+      .map((c) => c.name)
+      .sort()
+
+  it('finds the groups an informativa lists', () => {
+    expect(subjects('Trattiamo i dati di clienti, dipendenti e utenti del sito.')).toEqual([
+      'Customers',
+      'Employees',
+      'Website visitors',
+    ])
+  })
+
+  it('names them in English however the document wrote them', () => {
+    expect(subjects('We process data about clienti.')).toEqual(['Customers'])
+  })
+
+  it('offers a group and a place from the same document without confusing them', () => {
+    const out = extractCandidates(
+      [{ name: 'a.pdf', text: 'I dati dei dipendenti sono elaborati in Salesforce.' }],
+      VENDORS,
+      INTERNAL,
+      SUBJECTS,
+      CATEGORIES,
+    )
+    expect(out.filter((c) => c.sort === 'subjectGroup').map((c) => c.name)).toEqual(['Employees'])
+    expect(out.filter((c) => c.sort === 'place').map((c) => c.name)).toEqual(['Salesforce'])
+  })
+
+  it('is not offered when the sentence denies it', () => {
+    expect(subjects('Non trattiamo dati di minori.')).toEqual([])
+  })
+
+  it('carries the sentence as evidence, like a place does', () => {
+    const [c] = extractCandidates(
+      [{ name: 'a.pdf', text: 'Il titolare tratta i dati dei dipendenti assunti.' }],
+      VENDORS,
+      INTERNAL,
+      SUBJECTS,
+      CATEGORIES,
+    )
+    if (c === undefined) throw new Error('expected a candidate')
+    expect(c.evidence).toContain('dipendenti')
+  })
+
+  it('deduplicates a group named in two documents, keeping both sources', () => {
+    const out = extractCandidates(
+      [
+        { name: 'one.pdf', text: 'clienti e fornitori' },
+        { name: 'two.pdf', text: 'i clienti del sito' },
+      ],
+      VENDORS,
+      INTERNAL,
+      SUBJECTS,
+      CATEGORIES,
+    )
+    const customers = out.find((c) => c.name === 'Customers')
+    expect(customers?.sourceNames).toEqual(['one.pdf', 'two.pdf'])
+  })
+
+  it('keeps a place and a group of the same name apart', () => {
+    // The dedup key carries the sort, so a supplier called "Fornitori" and the people called
+    // "Suppliers" would not collide even where the two dictionaries agree on a word.
+    const SAME: InternalSystemDictionary = {
+      clienti: {
+        name: 'Customers',
+        purposeGroup: 'Sales & CRM',
+        layer: 'internal',
+        holder: 'you',
+      },
+    }
+    const out = extractCandidates(
+      [{ name: 'a.pdf', text: 'Trattiamo i dati dei clienti.' }],
+      VENDORS,
+      SAME,
+      SUBJECTS,
+      CATEGORIES,
+    )
+    expect(out.map((c) => `${c.sort}:${c.name}`).sort()).toEqual([
+      'place:Customers',
+      'subjectGroup:Customers',
+    ])
+  })
+})
+
+// An informativa names the controller in a near-fixed position, and it is the one organisation on
+// the map that is not a supplier. See §4.3 of the extraction-depth spec.
+describe('the controller and the processor, by name', () => {
+  const roles = (text: string): Array<{ name: string; holder: string }> =>
+    placesOnly(extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES))
+      .filter((c) => c.purposeGroup === 'Running the systems')
+      .map((c) => ({ name: c.name, holder: c.holder }))
+
+  it('names the controller from an Italian informativa', () => {
+    expect(roles('Titolare del trattamento è Rossi Editore S.r.l., con sede in Milano.')).toEqual([
+      { name: 'Rossi Editore S.r.l.', holder: 'you' },
+    ])
+  })
+
+  it('names the controller when it is introduced with a colon', () => {
+    expect(roles('Titolare del trattamento: Bianchi S.p.A.')).toEqual([
+      { name: 'Bianchi S.p.A.', holder: 'you' },
+    ])
+  })
+
+  it('names the controller in English', () => {
+    // "Ltd." loses its dot: the dot is the full stop of the sentence as much as it is the
+    // abbreviation's, and the two cannot be told apart after a multi-letter token. See the
+    // amendment note under Task 5 in the plan.
+    expect(roles('The data controller is Acme Ltd.')).toEqual([{ name: 'Acme Ltd', holder: 'you' }])
+  })
+
+  it('keeps the dot of a company suffix and drops the one that ends the sentence', () => {
+    // "S.r.l." ends in a dot that belongs to the name; "Editore." does not. The single letter
+    // before the dot is what separates them.
+    expect(roles('Titolare del trattamento è Rossi S.r.l.')).toEqual([
+      { name: 'Rossi S.r.l.', holder: 'you' },
+    ])
+    expect(roles('Titolare del trattamento è Rossi Editore.')).toEqual([
+      { name: 'Rossi Editore', holder: 'you' },
+    ])
+  })
+
+  it('marks a named processor as a supplier rather than as the organisation', () => {
+    expect(roles('Responsabile del trattamento è Cloud Servizi S.r.l.')).toEqual([
+      { name: 'Cloud Servizi S.r.l.', holder: 'supplier' },
+    ])
+  })
+
+  it('stops at the comma after the name', () => {
+    expect(
+      roles('Il Titolare del trattamento è Verdi e Figli S.n.c., in persona del legale rappresentante.'),
+    ).toEqual([{ name: 'Verdi e Figli S.n.c.', holder: 'you' }])
+  })
+
+  it('does not read bare "titolare" as the role', () => {
+    // Ordinary Italian for the owner or holder of anything: the account holder is not the
+    // controller, and reading him as one puts a stranger at the centre of the map.
+    expect(roles('Il titolare del conto corrente è Mario Rossi.')).toEqual([])
+    expect(roles('Il titolare è Mario Rossi.')).toEqual([])
+  })
+
+  it('does not swallow the rest of a title-case sentence', () => {
+    const [first] = roles('Titolare del trattamento è Rossi Editore Group Holding Italia Spa Roma')
+    expect(first?.name).toBe('Rossi Editore Group Holding Italia')
+  })
+
+  it('offers nothing when the phrase introduces the topic rather than a name', () => {
+    // "il titolare del trattamento adotta misure" is prose about the role, not a name.
+    expect(roles('Il titolare del trattamento adotta misure di sicurezza adeguate.')).toEqual([])
+  })
+
+  it('is not offered when the sentence denies it', () => {
+    expect(roles('Non è stato nominato un responsabile del trattamento esterno.')).toEqual([])
+    // The case that needs the guard rather than the capitalisation rule: a name is right there.
+    expect(roles('Non abbiamo nominato responsabile del trattamento Cloud Servizi S.r.l.')).toEqual([])
+  })
+})
+
+describe('confirming a subject group', () => {
+  const group = (over: Partial<SubjectGroupCandidate> = {}): SubjectGroupCandidate => ({
+    sort: 'subjectGroup',
+    id: 'customers',
+    name: 'Customers',
+    evidence: 'i clienti',
+    sourceNames: ['informativa.pdf'],
+    ...over,
+  })
+
+  it('adds it to the project as a subject group, not as a place', () => {
+    const p = ingestDocument(emptyProject(), [group()])
+    expect(p.subjectGroups.map((s) => s.name)).toEqual(['Customers'])
+    expect(p.places).toHaveLength(0)
+  })
+
+  it('merges into the group a scan already seeded rather than duplicating it', () => {
+    // ingestScan seeds "Website visitors"; a document naming "utenti del sito" is the same people.
+    const seeded = ingestScan(
+      emptyProject(),
+      {
+        scannedHost: 'rossi-editore.it',
+        hosts: [{ host: 'rossi-editore.it', requestCount: 1 }],
+        pagesVisited: 1,
+        possibleGaps: 0,
+        stoppedEarly: false,
+      },
+      {},
+      { prefix: 'scan1' },
+    )
+    const out = ingestDocument(seeded, [
+      group({ id: 'website-visitors', name: 'Website visitors' }),
+    ])
+    expect(out.subjectGroups).toHaveLength(1)
+    expect(out.subjectGroups[0]?.id).toBe(seeded.subjectGroups[0]?.id)
+  })
+
+  it('is not duplicated by a scan that runs after the document', () => {
+    // The other order. The spelling in subjectGroups.json has to match the one ingestScan seeds
+    // exactly, or the same people appear twice on the map.
+    const fromDoc = ingestDocument(emptyProject(), [
+      group({ id: 'website-visitors', name: 'Website visitors' }),
+    ])
+    const out = ingestScan(
+      fromDoc,
+      {
+        scannedHost: 'rossi-editore.it',
+        hosts: [{ host: 'rossi-editore.it', requestCount: 1 }],
+        pagesVisited: 1,
+        possibleGaps: 0,
+        stoppedEarly: false,
+      },
+      {},
+      { prefix: 'scan1' },
+    )
+    expect(out.subjectGroups.map((s) => s.name)).toEqual(['Website visitors'])
+  })
+
+  it('does not add the same group twice from two confirmations', () => {
+    const once = ingestDocument(emptyProject(), [group()])
+    const twice = ingestDocument(once, [group()])
+    expect(twice.subjectGroups).toHaveLength(1)
+  })
+
+  it('does not collide with a place id', () => {
+    const p = ingestDocument(emptyProject(), [
+      group(),
+      {
+        sort: 'place' as const,
+        id: 'payroll-system',
+        name: 'Payroll system',
+        layer: 'internal' as const,
+        purposeGroup: 'Payroll & HR',
+        holder: 'you' as const,
+        kind: 'internal' as const,
+        evidence: 'payroll',
+        sourceNames: ['a.pdf'],
+      },
+    ])
+    const ids = [...p.places.map((x) => x.id), ...p.subjectGroups.map((x) => x.id)]
+    expect(new Set(ids).size).toBe(ids.length)
+    // Not merely distinct: a group is numbered in its own series, so the two cannot run into
+    // each other as a project accumulates documents.
+    expect(p.places[0]?.id).toBe('doc-pl-1')
+    expect(p.subjectGroups[0]?.id).toBe('doc-sg-1')
+  })
+
+  it('numbers a second group past the one an earlier document left', () => {
+    const first = ingestDocument(emptyProject(), [group()])
+    const second = ingestDocument(first, [group({ id: 'employees', name: 'Employees' })])
+    expect(second.subjectGroups.map((s) => s.id)).toEqual(['doc-sg-1', 'doc-sg-2'])
+  })
+
+  it('does not reuse an id a scan already assigned', () => {
+    const seeded = { ...emptyProject(), subjectGroups: [{ id: 'doc-sg-1', name: 'Website visitors' }] }
+    const out = ingestDocument(seeded, [group()])
+    expect(out.subjectGroups.map((s) => s.id)).toEqual(['doc-sg-1', 'doc-sg-2'])
+  })
+})
+
+function confirmed(over: Partial<PlaceCandidate>): Candidate {
   return {
+    sort: 'place',
     id: 'payroll-system',
     name: 'Payroll system',
     layer: 'internal',
@@ -592,14 +875,14 @@ describe('trackers and cookies named in prose', () => {
         text: 'We use profiling cookies and a Facebook Pixel, plus Hotjar for session replay.',
       },
     ]
-    const out = extractCandidates(docs, VENDORS, TRACKING, CATEGORIES)
+    const out = placesOnly(extractCandidates(docs, VENDORS, TRACKING, SUBJECTS, CATEGORIES))
     expect(out.map((c) => c.name).sort()).toEqual(['Cookies', 'Hotjar', 'Meta Pixel'])
     expect(out.every((c) => c.layer === 'external')).toBe(true)
   })
 
   it('keeps the file name as the source and nothing of what the file said', () => {
     const docs = [{ name: 'policy.pdf', text: 'The site sets profiling cookies on first visit.' }]
-    const [candidate] = extractCandidates(docs, VENDORS, TRACKING, CATEGORIES)
+    const [candidate] = extractCandidates(docs, VENDORS, TRACKING, SUBJECTS, CATEGORIES)
     if (candidate === undefined) throw new Error('expected a candidate')
     // The evidence exists while confirming -- it is what the user judges the suggestion on --
     // and must not survive into the project.
