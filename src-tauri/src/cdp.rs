@@ -57,11 +57,49 @@ pub struct ScanCookie {
     pub expires_epoch_seconds: f64,
 }
 
+/// One form field found on one visited page — never its value, see
+/// [`FORM_PROBE`].
+///
+/// Serialises to `ScanResult["formFields"][n]` in `src/core/types.ts`, field
+/// for field with `RawFormField`: `page`, `name`, `type`, `autocomplete`,
+/// `label`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormField {
+    pub page: String,
+    pub name: String,
+    pub r#type: String,
+    pub autocomplete: String,
+    pub label: String,
+}
+
 /// The most cookies one scan will record. The browser is driving a page this
 /// app does not trust, so this is a bound on attacker-chosen data, the same
 /// reasoning as [`MAX_HOSTS`]. Reaching it is a gap, never a silent
 /// truncation.
 const MAX_COOKIES: usize = 512;
+/// The most form fields one whole scan will record, across every page — not
+/// per page. [`FORM_PROBE`] itself already stops at 64 per page, so an
+/// ordinary ten-page walk (the [`crate::scan`] budget) can still trip this at
+/// 640; hitting it is a gap, the designed behaviour, not an accident.
+const MAX_FORM_FIELDS: usize = 256;
+/// The longest any one captured form-field string may be after [`tame`] —
+/// `name`, `type`, `autocomplete`, `label`. **Not** `page` — see
+/// [`MAX_PAGE_URL`] — a real URL routinely exceeds 128 characters, and
+/// truncating it here would merge two distinct long URLs into the one
+/// collection point Task 9 groups by `page`. The same number is baked into
+/// [`FORM_PROBE`] itself as the in-page `.slice(0, 128)` on every element
+/// string before it ever becomes a WebSocket frame — see that constant's doc
+/// comment for why capping the element count alone is not enough.
+const MAX_FIELD_TEXT: usize = 128;
+/// The longest [`page_identity`] will return, after [`tame`]. Aligned with
+/// `scan::MAX_URL_LEN` (2048) — the bound already enforced on any URL this
+/// module is ever handed, by `scan::parse_target` on the entry URL and by
+/// [`same_origin_links`]'s own filtering on every link followed after it —
+/// rather than with [`MAX_FIELD_TEXT`], which is sized for a short attribute
+/// value, not a path. A page's own bound, not a shared one: two distinct long
+/// URLs must not truncate to the same prefix and merge into one door.
+const MAX_PAGE_URL: usize = 2048;
 /// The longest a cookie `name` may be after [`tame`].
 const MAX_COOKIE_NAME: usize = 256;
 /// The longest a cookie `domain` may be after [`tame`] — one hostname, the
@@ -144,6 +182,75 @@ fn sanitise_cookies(raw: &[serde_json::Value]) -> (Vec<ScanCookie>, bool) {
     (cookies, gap)
 }
 
+/// Reads the `name`, `type`, `autocomplete` and `label` keys [`FORM_PROBE`]
+/// hands back for one page, and nothing else — in particular, never a
+/// `value` (there is none in the probe's own shape) and never anything the
+/// page itself might claim about its own URL, such as a `location` key
+/// planted in `raw` [B4].
+///
+/// `page` is not read from `raw` at all: it is `page_url`, exactly as
+/// [`Driver::run`]'s own walk already knows it, reduced by [`page_identity`]
+/// to scheme + authority + path with the query and fragment stripped. An
+/// entry of the wrong shape is dropped and counted rather than propagated,
+/// the same rule as [`sanitise_cookies`]. `already` is how many fields this
+/// scan has retained on earlier pages; the scan-wide [`MAX_FORM_FIELDS`] cap
+/// is enforced against `already + fields.len()`, so a page-by-page walk stays
+/// bounded across the whole scan and not just within one page's probe.
+fn sanitise_form_fields(
+    page_url: &str,
+    raw: &serde_json::Value,
+    already: usize,
+) -> (Vec<FormField>, bool) {
+    let mut gap = false;
+    let mut fields = Vec::new();
+    let page = page_identity(page_url);
+    let Some(array) = raw.as_array() else {
+        return (fields, true);
+    };
+    for item in array {
+        if already + fields.len() >= MAX_FORM_FIELDS {
+            gap = true;
+            continue;
+        }
+        let name = item.get("name").and_then(|v| v.as_str());
+        let field_type = item.get("type").and_then(|v| v.as_str());
+        let autocomplete = item.get("autocomplete").and_then(|v| v.as_str());
+        let label = item.get("label").and_then(|v| v.as_str());
+        let (Some(name), Some(field_type), Some(autocomplete), Some(label)) =
+            (name, field_type, autocomplete, label)
+        else {
+            gap = true;
+            continue;
+        };
+        fields.push(FormField {
+            page: page.clone(),
+            name: tame(name, MAX_FIELD_TEXT),
+            r#type: tame(field_type, MAX_FIELD_TEXT),
+            autocomplete: tame(autocomplete, MAX_FIELD_TEXT),
+            label: tame(label, MAX_FIELD_TEXT),
+        });
+    }
+    (fields, gap)
+}
+
+/// The visited URL reduced to what identifies the page in a form-field
+/// report: scheme + authority + path, with the query and fragment stripped
+/// and the result run through [`tame`] and bounded by [`MAX_PAGE_URL`] — not
+/// [`MAX_FIELD_TEXT`], which is too short for a real path and would merge two
+/// distinct long URLs into the one collection point Task 9 groups by `page`.
+///
+/// This is *the walk's own knowledge* of what it navigated to [B4] — the
+/// argument is always the URL [`Driver::run`] itself passed to
+/// [`Driver::visit`], never anything read off the page (`location.href` is
+/// page-controlled and must never stand in for it: a hostile page could
+/// rewrite `history.replaceState` to attribute its fields to a different
+/// page entirely).
+fn page_identity(url: &str) -> String {
+    let without_fragment = url.split('#').next().unwrap_or("");
+    let without_query = without_fragment.split('?').next().unwrap_or("");
+    tame(without_query, MAX_PAGE_URL)
+}
+
 /// What one scan saw.
 ///
 /// Serialises to
@@ -214,6 +321,12 @@ pub struct Observation {
     /// known markers, not that no consent banner exists at all: a page using
     /// a fifth product is indistinguishable from a page using none.
     pub consent_markers: Vec<String>,
+    /// Form fields found across every visited page, capped scan-wide at
+    /// [`MAX_FORM_FIELDS`] — never a value, only the field's own shape. A
+    /// page whose navigation was refused (`Driver::visit` returned `false`)
+    /// contributes nothing here: it was never loaded under its own identity,
+    /// so nothing on it was ever this walk's to attribute.
+    pub form_fields: Vec<FormField>,
 }
 
 /// The most distinct gap keys tracked before the ledger stops deduplicating.
@@ -273,6 +386,38 @@ const CONSENT_PROBE: &str = r#"(() => {
 
 /// The only marker names [`sanitise_consent_markers`] will ever pass through.
 const CONSENT_MARKERS: [&str; 4] = ["OneTrust", "Cookiebot", "Iubenda", "Usercentrics"];
+
+/// A fixed expression, evaluated once per visited page: reads `name`, `type`,
+/// `autocomplete` and a best-effort `label` off every `input`/`select`/
+/// `textarea` element — never `value` (spec §5.3, "Never values — nothing is
+/// ever typed"). Nothing from the page is interpolated into this string; it
+/// is a `const`, sent byte for byte, the same discipline as [`CONSENT_PROBE`].
+///
+/// **[B1]** Every string is sliced *inside the page*, at [`MAX_FIELD_TEXT`] —
+/// the same number [`sanitise_form_fields`] uses on the Rust side — before
+/// any of it becomes a WebSocket frame: chromiumoxide's `Connection` is built
+/// with `max_message_size: None, max_frame_size: None` (`conn.rs:43-46`), so
+/// capping the element count at 64 alone would not bound the bytes a single
+/// unsliced DOMString could carry.
+///
+/// `label` is coerced with `String(...)` before `.slice()` runs, even though
+/// it is only ever assigned a string (`|| ''`) inside its own `try`: a page
+/// that poisons `Node.prototype.textContent`'s getter to return an object
+/// instead of a string would otherwise throw on the bare `.slice()` call,
+/// which sits outside that `try` — and that throw would zero every field on
+/// the whole page, not just the poisoned one.
+const FORM_PROBE: &str = r#"(() => {
+  const out = [];
+  const els = document.querySelectorAll('input, select, textarea');
+  for (let i = 0; i < els.length && out.length < 64; i++) {
+    const el = els[i];
+    let label = '';
+    try { if (el.labels && el.labels[0]) label = el.labels[0].textContent || ''; } catch (e) {}
+    out.push({ name: String(el.name || el.id || '').slice(0, 128), type: String(el.type || el.tagName || '').toLowerCase().slice(0, 128),
+               autocomplete: String(el.getAttribute('autocomplete') || '').slice(0, 128), label: String(label).slice(0, 128) });
+  }
+  return out;
+})()"#;
 
 /// Filters a raw `Runtime.evaluate` result against [`CONSENT_MARKERS`]: order
 /// preserved, duplicates dropped, anything not in the fixed set dropped. A
@@ -846,6 +991,10 @@ struct Driver<T: CdpTransport> {
     /// own visit — never touched again afterwards, including on any
     /// subsequent page in the walk.
     consent_markers: Vec<String>,
+    /// Form fields accumulated across every page [`Driver::visit`] actually
+    /// loaded, via [`Driver::probe_form_fields`] — see
+    /// [`Observation::form_fields`].
+    form_fields: Vec<FormField>,
 }
 
 impl<T: CdpTransport> Driver<T> {
@@ -858,6 +1007,7 @@ impl<T: CdpTransport> Driver<T> {
             load_fired: false,
             gaps: GapLedger::default(),
             consent_markers: Vec::new(),
+            form_fields: Vec::new(),
         }
     }
 
@@ -1292,6 +1442,61 @@ impl<T: CdpTransport> Driver<T> {
         Ok(sanitise_consent_markers(value))
     }
 
+    /// Evaluates the fixed [`FORM_PROBE`] on `session` and folds the result
+    /// through [`sanitise_form_fields`], attributing every retained field to
+    /// `page_url`.
+    ///
+    /// [B2]: the same call contract as [`Driver::links`]/[`Driver::probe_consent`]
+    /// — `return_by_value`, `silent`, `await_promise: false`, an explicit
+    /// 2000 ms timeout. `exceptionDetails` present, or any `CdpError` other
+    /// than [`CdpError::BrowserGone`], is zero fields plus one counted gap.
+    ///
+    /// **[B4]** Callers must only ever pass `session` for the page's own
+    /// top-level session, never any attached cross-origin iframe session —
+    /// that would capture a third party's fields under the scanned site's
+    /// name — and only after [`Driver::visit`] returned `true` for `page_url`.
+    async fn probe_form_fields(
+        &mut self,
+        session: &SessionId,
+        page_url: &str,
+    ) -> Result<Vec<FormField>, CdpError> {
+        let mut params = EvaluateParams::new(FORM_PROBE.to_string());
+        params.return_by_value = Some(true);
+        params.silent = Some(true);
+        params.await_promise = Some(false);
+        params.timeout = Some(chromiumoxide::cdp::js_protocol::runtime::TimeDelta::new(
+            2000.0,
+        ));
+        let result = match self
+            .call(
+                Some(session.clone()),
+                MethodId::from(EvaluateParams::IDENTIFIER),
+                to_params(&params)?,
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
+            Err(_) => {
+                self.gaps.note("form_fields:probe-failed");
+                return Ok(Vec::new());
+            }
+        };
+        if result.get("exceptionDetails").is_some() {
+            self.gaps.note("form_fields:probe-exception");
+            return Ok(Vec::new());
+        }
+        let Some(value) = result.get("result").and_then(|r| r.get("value")) else {
+            return Ok(Vec::new());
+        };
+        let (fields, sanitiser_gap) =
+            sanitise_form_fields(page_url, value, self.form_fields.len());
+        if sanitiser_gap {
+            self.gaps.note("form_fields:sanitiser");
+        }
+        Ok(fields)
+    }
+
     async fn run(
         &mut self,
         entry_url: &str,
@@ -1337,6 +1542,14 @@ impl<T: CdpTransport> Driver<T> {
             if !cancel.is_cancelled() {
                 self.consent_markers = self.probe_consent(&session).await?;
             }
+            // [B4] Only for a page this walk actually loaded, only on the
+            // page's own top-level session, and attributed to `entry_url` as
+            // the walk itself knows it — never to anything the page's own
+            // `location` might report.
+            if !cancel.is_cancelled() {
+                let fields = self.probe_form_fields(&session, entry_url).await?;
+                self.form_fields.extend(fields);
+            }
         }
 
         if cancel.is_cancelled() || max_pages <= 1 {
@@ -1351,6 +1564,10 @@ impl<T: CdpTransport> Driver<T> {
             }
             if self.visit(&session, &url, cancel).await? {
                 pages_visited += 1;
+                if !cancel.is_cancelled() {
+                    let fields = self.probe_form_fields(&session, &url).await?;
+                    self.form_fields.extend(fields);
+                }
             }
         }
         self.finish(pages_visited, cancel.is_cancelled()).await
@@ -1373,6 +1590,7 @@ impl<T: CdpTransport> Driver<T> {
             // Never fetched here — see the field's own doc comment.
             cookies: Vec::new(),
             consent_markers: std::mem::take(&mut self.consent_markers),
+            form_fields: std::mem::take(&mut self.form_fields),
         }
     }
 
@@ -2554,6 +2772,7 @@ mod tests {
             stopped_early: false,
             cookies: Vec::new(),
             consent_markers: Vec::new(),
+            form_fields: Vec::new(),
         };
         assert_eq!(
             serde_json::to_value(&observation).expect("json"),
@@ -2563,7 +2782,8 @@ mod tests {
                 "possibleGaps": 0,
                 "stoppedEarly": false,
                 "cookies": [],
-                "consentMarkers": []
+                "consentMarkers": [],
+                "formFields": []
             })
         );
     }
@@ -2672,5 +2892,227 @@ mod tests {
             .expect("a refused probe is a gap, not a scan failure");
         assert!(hrefs.is_empty());
         assert_eq!(driver.observation(1, false).possible_gaps, 1);
+    }
+
+    // --- Task 8: form fields ---
+
+    #[test]
+    fn the_in_page_slice_matches_the_rust_side_cap() {
+        // [B1]. Mirrors caps_the_length_of_each_href_inside_the_page above:
+        // capping the element count (64) alone does not bound the bytes a
+        // single unsliced DOMString can carry, since chromiumoxide's
+        // Connection sets max_frame_size to None. There is one number, used
+        // both here and as MAX_FIELD_TEXT.
+        //
+        // Asserted by *count*, not mere presence: four strings are captured
+        // per field (name, type, autocomplete, label) and every one of them
+        // must be sliced, so a future edit that adds a fifth captured string
+        // without slicing it — or removes the slice from just one of the
+        // four — must fail here rather than pass on the other three still
+        // matching.
+        let needle = format!("slice(0, {MAX_FIELD_TEXT})");
+        let count = FORM_PROBE.matches(&needle).count();
+        assert_eq!(
+            count, 4,
+            "expected exactly 4 in-page slices to MAX_FIELD_TEXT (name, type, \
+             autocomplete, label), found {count}: {FORM_PROBE}"
+        );
+    }
+
+    #[test]
+    fn a_page_is_reduced_to_scheme_authority_and_path_never_the_pages_own_report() {
+        // [B4]. Query and fragment stripped; the value comes from the walk's
+        // own URL knowledge, never from anything the page could claim about
+        // itself.
+        let raw = json!([{
+            "name": "email",
+            "type": "email",
+            "autocomplete": "email",
+            "label": "Email",
+            // A hostile or merely confused page reporting its own location —
+            // must never be read for `page`.
+            "location": "https://evil.example/somewhere-else",
+        }]);
+        let (fields, _) = sanitise_form_fields("https://x.it/c?utm=1&id=abc#frag", &raw, 0);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].page, "https://x.it/c");
+    }
+
+    #[test]
+    fn a_page_url_longer_than_max_field_text_survives_untruncated() {
+        // Security advisory: `page` must not share MAX_FIELD_TEXT (128) with
+        // the short field attributes — a real URL routinely exceeds that,
+        // and two distinct long URLs truncated to the same 128-char prefix
+        // would merge into one collection point once Task 9 groups by
+        // `page`. It gets its own bound, MAX_PAGE_URL, aligned with
+        // scan::MAX_URL_LEN (2048).
+        let long_path = "a".repeat(200);
+        let url = format!("https://x.it/{long_path}");
+        assert!(url.len() > MAX_FIELD_TEXT, "the fixture must exceed the old shared bound");
+        let raw = json!([{"name": "n", "type": "text", "autocomplete": "off", "label": ""}]);
+        let (fields, _) = sanitise_form_fields(&url, &raw, 0);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].page, url, "a long real URL must not be truncated");
+    }
+
+    #[test]
+    fn strings_are_tamed_and_bounded_to_max_field_text() {
+        let raw = json!([{
+            "name": "a\u{0007}b".repeat(200),
+            "type": "text",
+            "autocomplete": "off",
+            "label": format!("{}\u{202E}", "x".repeat(MAX_FIELD_TEXT - 2)),
+        }]);
+        let (fields, _) = sanitise_form_fields("https://x.it/page", &raw, 0);
+        assert_eq!(fields.len(), 1);
+        assert!(!fields[0].name.contains('\u{0007}'));
+        assert_eq!(fields[0].name.chars().count(), MAX_FIELD_TEXT);
+        assert!(!fields[0].label.contains('\u{202E}'));
+    }
+
+    #[test]
+    fn a_form_field_of_invalid_shape_is_dropped_and_counted_not_propagated() {
+        let raw = json!([
+            {"name": 5},
+            {"name": "ok", "type": "text", "autocomplete": "off", "label": ""},
+        ]);
+        let (fields, gap) = sanitise_form_fields("https://x.it/", &raw, 0);
+        assert_eq!(fields.len(), 1);
+        assert!(gap);
+    }
+
+    #[test]
+    fn hitting_the_scan_wide_cap_records_a_gap_never_a_clean_sheet() {
+        // MAX_FORM_FIELDS bounds the whole scan, not one page's probe (which
+        // already stops at 64 in FORM_PROBE itself), so the cap is enforced
+        // against `already` plus what this call would add.
+        let raw: Vec<serde_json::Value> = (0..10)
+            .map(|i| {
+                json!({"name": format!("f{i}"), "type": "text", "autocomplete": "off", "label": ""})
+            })
+            .collect();
+        let (fields, gap) =
+            sanitise_form_fields("https://x.it/", &json!(raw), MAX_FORM_FIELDS - 2);
+        assert_eq!(fields.len(), 2);
+        assert!(gap, "hitting the cap must surface as a gap, never a clean sheet");
+    }
+
+    #[test]
+    fn a_non_array_probe_result_yields_no_fields_and_a_gap() {
+        let (fields, gap) = sanitise_form_fields("https://x.it/", &json!("not-an-array"), 0);
+        assert!(fields.is_empty());
+        assert!(gap);
+    }
+
+    #[test]
+    fn serialises_form_fields_in_the_shape_the_renderer_expects() {
+        let json = serde_json::to_string(&FormField {
+            page: "https://x.it/contatti".into(),
+            name: "email".into(),
+            r#type: "email".into(),
+            autocomplete: "email".into(),
+            label: "Email".into(),
+        })
+        .unwrap();
+        for key in ["\"page\"", "\"name\"", "\"type\"", "\"autocomplete\"", "\"label\""] {
+            assert!(json.contains(key), "missing {key}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_transport_that_refuses_the_form_probe_yields_a_gap_not_an_error() {
+        // [B2], same call contract as links()/probe_consent().
+        let mut transport = FakeTransport::new();
+        transport.refuse_on("Runtime.evaluate", Some("SESSION-A"));
+        let mut driver = Driver::new(transport);
+        let session = SessionId::from("SESSION-A".to_string());
+        let fields = driver
+            .probe_form_fields(&session, "https://x.it/")
+            .await
+            .expect("a refused probe is a gap, not a scan failure");
+        assert!(fields.is_empty());
+        assert_eq!(driver.observation(1, false).possible_gaps, 1);
+    }
+
+    #[tokio::test]
+    async fn visits_the_entry_page_and_attributes_its_form_fields_to_the_walks_own_url() {
+        let mut transport = FakeTransport::new();
+        transport
+            .results
+            .insert("Target.createTarget".to_string(), json!({"targetId": "T-1"}));
+        transport.inject_on(
+            "Target.createTarget",
+            None,
+            attached_event("SESSION-A", "T-1", "page", true),
+        );
+        transport.inject_on(
+            "Page.navigate",
+            Some("SESSION-A"),
+            CdpJsonEventMessage {
+                method: MethodId::from(EventLoadEventFired::IDENTIFIER),
+                session_id: Some("SESSION-A".to_string()),
+                params: json!({"timestamp": 0.0}),
+            },
+        );
+        transport.results.insert(
+            "Runtime.evaluate".to_string(),
+            json!({"result": {"value": [
+                {"name": "email", "type": "email", "autocomplete": "email", "label": "Email"}
+            ]}}),
+        );
+        // The post-load settle window reads with no more events queued; a
+        // transport that ends the stream there reads as `BrowserGone`
+        // (correctly, for a live browser), so this fake — the one transport
+        // in this suite that actually drives a `visit()` all the way through
+        // a load — has to look like a browser that is merely quiet rather
+        // than one that hung up.
+        transport.hang_when_empty = true;
+        let mut driver = Driver::new(transport);
+        let observation = driver
+            .run(
+                "https://rossi-editore.it/c?utm=1&id=abc#frag",
+                1,
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("run");
+        assert_eq!(
+            observation.form_fields,
+            vec![FormField {
+                page: "https://rossi-editore.it/c".to_string(),
+                name: "email".to_string(),
+                r#type: "email".to_string(),
+                autocomplete: "email".to_string(),
+                label: "Email".to_string(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_navigation_contributes_no_fields_for_that_page() {
+        let mut transport = FakeTransport::new();
+        transport
+            .results
+            .insert("Target.createTarget".to_string(), json!({"targetId": "T-1"}));
+        transport.inject_on(
+            "Target.createTarget",
+            None,
+            attached_event("SESSION-A", "T-1", "page", true),
+        );
+        transport.refuse_on("Page.navigate", Some("SESSION-A"));
+        let mut driver = Driver::new(transport);
+        let observation = driver
+            .run("https://rossi-editore.it/", 1, &CancellationToken::new())
+            .await
+            .expect("run");
+        assert_eq!(observation.pages_visited, 0);
+        assert!(observation.form_fields.is_empty());
+        assert!(
+            !driver
+                .transport
+                .methods_for(Some("SESSION-A"))
+                .contains(&"Runtime.evaluate"),
+            "a page whose navigation was refused must never be probed at all"
+        );
     }
 }

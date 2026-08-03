@@ -74,6 +74,10 @@ pub struct ScanOutput {
     /// `cdp::CONSENT_MARKERS`. Empty means none of those four were found, not
     /// that no consent banner exists.
     pub consent_markers: Vec<String>,
+    /// Form fields found across every visited page — see
+    /// `cdp::Observation::form_fields`. Never a value, only the field's own
+    /// shape.
+    pub form_fields: Vec<cdp::FormField>,
     /// When the cookie jar was captured — `SystemTime::now()` taken as close
     /// as this module can get to the moment `cdp::observe` actually sent
     /// `Network.getAllCookies`, deliberately not `profile_dir_path()` time,
@@ -491,6 +495,7 @@ async fn run_pipeline(
             stopped_early: observation.stopped_early,
             cookies: observation.cookies,
             consent_markers: observation.consent_markers,
+            form_fields: observation.form_fields,
             captured_at_epoch_seconds,
         })
     })();
@@ -748,6 +753,13 @@ mod tests {
                 expires_epoch_seconds: 2.0e9,
             }],
             consent_markers: vec!["OneTrust".into()],
+            form_fields: vec![cdp::FormField {
+                page: "https://rossi-editore.it/contatti".into(),
+                name: "email".into(),
+                r#type: "email".into(),
+                autocomplete: "email".into(),
+                label: "Email".into(),
+            }],
             captured_at_epoch_seconds: 1_700_000_000,
         })
         .expect("serialise");
@@ -759,6 +771,8 @@ mod tests {
         assert!(json.contains("\"cookies\""));
         assert!(json.contains("\"expiresEpochSeconds\""));
         assert!(json.contains("\"consentMarkers\""));
+        assert!(json.contains("\"formFields\""));
+        assert!(json.contains("\"autocomplete\""));
         assert!(json.contains("\"capturedAtEpochSeconds\""));
     }
 
