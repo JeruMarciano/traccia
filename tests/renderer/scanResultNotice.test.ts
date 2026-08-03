@@ -36,9 +36,14 @@ describe('scanResultNotice', () => {
   })
 
   it('presents a stopped scan as stopped first, never as a completed scan with gaps', () => {
-    const stopped = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 2 }))
-    const completedWithSameGaps = scanResultNotice(result({ stoppedEarly: false, possibleGaps: 2 }))
-    expect(stopped).toBe(`${STRINGS.scanStopped(2)} ${STRINGS.consentBannerNotDetected}`)
+    // consentMarkers non-empty here so the consent sentence still applies on a stopped scan --
+    // a stopped scan with no marker found suppresses that sentence entirely (see the "consent
+    // banner" describe block below), which would make this test ambiguous about what it checks.
+    const stopped = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 2, consentMarkers: ['OneTrust'] }))
+    const completedWithSameGaps = scanResultNotice(
+      result({ stoppedEarly: false, possibleGaps: 2, consentMarkers: ['OneTrust'] }),
+    )
+    expect(stopped).toBe(`${STRINGS.scanStopped(2)} ${STRINGS.consentBannerDetected('OneTrust')}`)
     expect(stopped).not.toBe(completedWithSameGaps)
   })
 
@@ -68,7 +73,9 @@ describe('scanResultNotice', () => {
         stoppedEarly: true,
       }),
     )
-    expect(notice).toBe(`${STRINGS.scanStopped(2)} ${STRINGS.consentBannerNotDetected}`)
+    // No consentMarkers on a stopped scan: the consent probe never ran, so nothing is claimed
+    // about it either way (see the "consent banner" describe block below).
+    expect(notice).toBe(STRINGS.scanStopped(2))
   })
 
   describe('cookie count', () => {
@@ -104,10 +111,17 @@ describe('scanResultNotice', () => {
     })
 
     it('is appended even to a stopped-scan notice', () => {
+      // No consentMarkers here: the consent probe never ran on this stopped scan, so the
+      // notice ends after the cookie sentence rather than claiming an absence (see below).
       const notice = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 1, cookies: twoCookies }))
-      expect(notice).toBe(
-        `${STRINGS.scanStopped(1)} ${STRINGS.cookiesRecorded(2, 1)} ${STRINGS.consentBannerNotDetected}`,
-      )
+      expect(notice).toBe(`${STRINGS.scanStopped(1)} ${STRINGS.cookiesRecorded(2, 1)}`)
+    })
+
+    it('uses the singular for exactly one cookie', () => {
+      const oneCookie = [{ name: 'lang', domain: 'rossi-editore.it', session: true, expiresEpochSeconds: -1 }]
+      const notice = scanResultNotice(result({ cookies: oneCookie }))
+      expect(notice).toBe(`${STRINGS.cookiesRecorded(1, 0)} ${STRINGS.consentBannerNotDetected}`)
+      expect(STRINGS.cookiesRecorded(1, 0)).toBe('1 cookie recorded (0 third-party).')
     })
   })
 
@@ -125,6 +139,14 @@ describe('scanResultNotice', () => {
       )
       expect(notice).toBe(STRINGS.consentBannerNotDetected)
     })
+
+    it('uses the singular for exactly one collection point', () => {
+      const notice = scanResultNotice(
+        result({ formFields: [{ page: 'https://rossi-editore.it/contatti', name: 'email', type: 'email', autocomplete: '', label: '' }] }),
+      )
+      expect(notice).toBe(`${STRINGS.collectionPointsDiscovered(1)} ${STRINGS.consentBannerNotDetected}`)
+      expect(STRINGS.collectionPointsDiscovered(1)).toBe('1 collection point discovered.')
+    })
   })
 
   describe('storage keys', () => {
@@ -138,6 +160,14 @@ describe('scanResultNotice', () => {
     it('says nothing about storage keys when none were captured', () => {
       const notice = scanResultNotice(result({ storageKeys: [] }))
       expect(notice).toBe(STRINGS.consentBannerNotDetected)
+    })
+
+    it('uses the singular for exactly one storage key', () => {
+      const notice = scanResultNotice(
+        result({ storageKeys: [{ scope: 'local', key: 'auth_token', bytes: 42 }] }),
+      )
+      expect(notice).toBe(`${STRINGS.storageKeysRecorded(1)} ${STRINGS.consentBannerNotDetected}`)
+      expect(STRINGS.storageKeysRecorded(1)).toBe('1 storage key recorded.')
     })
 
     it('is appended after the gap and cookie sentences and before the consent sentence', () => {
@@ -176,6 +206,27 @@ describe('scanResultNotice', () => {
       expect(notice).toBe(
         `${STRINGS.scanIncomplete(3)} ${STRINGS.cookiesRecorded(2, 1)} ${STRINGS.consentBannerDetected('Cookiebot')}`,
       )
+    })
+
+    // A scan stopped early (e.g. after the entry-page visit but before the consent probe ran)
+    // must never claim an absence the probe never checked for. Presence found before the stop
+    // is still a fact and is still reported either way.
+    it('says nothing about consent when the scan stopped early and no marker was found', () => {
+      const notice = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 1, consentMarkers: [] }))
+      expect(notice).toBe(STRINGS.scanStopped(1))
+      expect(notice.toLowerCase()).not.toContain('consent')
+    })
+
+    it('still reports presence when a marker was found before a stopped scan', () => {
+      const notice = scanResultNotice(
+        result({ stoppedEarly: true, possibleGaps: 1, consentMarkers: ['OneTrust'] }),
+      )
+      expect(notice).toBe(`${STRINGS.scanStopped(1)} ${STRINGS.consentBannerDetected('OneTrust')}`)
+    })
+
+    it('still reports absence when a completed scan found no marker', () => {
+      const notice = scanResultNotice(result({ stoppedEarly: false, consentMarkers: [] }))
+      expect(notice).toBe(STRINGS.consentBannerNotDetected)
     })
   })
 })

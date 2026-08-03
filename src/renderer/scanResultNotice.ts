@@ -49,10 +49,20 @@ function joinAll(...parts: (string | null)[]): string {
  * never "required". `consentMarkers[0]` names the marker when more than one fixed name matched;
  * matching more than one is not expected in practice, and either way it does not change what the
  * sentence should say.
+ *
+ * A scan stopped early runs its pages in a fixed order, and the consent probe is one step in
+ * that order; stopping before it is reached means the probe never ran, which is not the same
+ * situation as a probe that ran and found nothing. Absence can only be claimed when the probe
+ * actually ran to completion — so when the scan stopped early and no marker was found, this
+ * returns null rather than asserting an absence that was never checked. A marker that *was*
+ * found before the scan stopped is still a fact regardless of the stop, so presence is always
+ * reported.
  */
-function consentNotice(result: ScanResult): string {
+function consentNotice(result: ScanResult): string | null {
   const [first] = result.consentMarkers
-  return first === undefined ? STRINGS.consentBannerNotDetected : STRINGS.consentBannerDetected(first)
+  if (first !== undefined) return STRINGS.consentBannerDetected(first)
+  if (result.stoppedEarly) return null
+  return STRINGS.consentBannerNotDetected
 }
 
 /**
@@ -70,8 +80,10 @@ function consentNotice(result: ScanResult): string {
  *
  * The cookie count, the collection-point count and the storage-key count, when there is one of
  * each, are appended in that order to whichever sentence above applies — or stand alone when none
- * of them do. The consent-banner sentence is always appended last: it is always a fact, one way
- * or the other, so it never leaves the whole notice empty.
+ * of them do. The consent-banner sentence is always appended last, one way or the other, except
+ * when the scan stopped before the consent probe ever ran and found no marker — there, absence
+ * would be a claim about a check that never happened, so the sentence is dropped rather than
+ * stated wrongly (see `consentNotice`).
  */
 export function scanResultNotice(result: ScanResult): string {
   const cookies = cookieNotice(result)

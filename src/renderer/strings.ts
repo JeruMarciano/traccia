@@ -106,9 +106,11 @@ export const STRINGS = {
       ? 'Scan stopped before it finished.'
       : `Scan stopped before it finished — ${n} ${n === 1 ? 'place' : 'places'} where the map may be incomplete.`,
   cookiesRecorded: (n: number, thirdParty: number): string =>
-    `${n} cookies recorded (${thirdParty} third-party).`,
-  storageKeysRecorded: (n: number): string => `${n} storage keys recorded.`,
-  collectionPointsDiscovered: (n: number): string => `${n} collection points discovered.`,
+    `${n} ${n === 1 ? 'cookie' : 'cookies'} recorded (${thirdParty} third-party).`,
+  storageKeysRecorded: (n: number): string =>
+    `${n} ${n === 1 ? 'storage key' : 'storage keys'} recorded.`,
+  collectionPointsDiscovered: (n: number): string =>
+    `${n} ${n === 1 ? 'collection point' : 'collection points'} discovered.`,
   consentBannerDetected: (marker: string): string =>
     `A consent banner appears to be present (${marker}).`,
   consentBannerNotDetected: 'No consent banner was detected.',
