@@ -16,6 +16,25 @@ time you open it. Here is exactly what you will see and why.
 2. SmartScreen shows "Windows protected your PC."
 3. Click **More info**, then **Run anyway**.
 
+## Without installing anything
+
+Every release also carries a portable copy. It is the same application, only without the wizard:
+nothing is copied into system folders, no administrator rights are asked for, and nothing appears
+in Apps and Features or the Applications folder unless you put it there yourself. This is the one
+to take to a machine you do not own.
+
+- **Windows**: download `Traccia_0.3.0_x64_portable.exe` and double-click it. The portable
+  executable is larger than the installer, around 7 MB against 2 MB, because an installer
+  compresses its payload and a bare executable does not.
+- **macOS**: download `Traccia_0.3.0_universal_portable.app.zip`, unzip it, and open `Traccia.app`
+  from wherever it landed. A `.app` has always been a self-contained folder; dragging it to
+  Applications is a convention rather than a requirement.
+
+Two things are true of the portable copies as well. The first-launch warning still appears, because
+that is about the missing signature and not about how the app was packaged. And the app still
+writes its error log to the usual per-user location listed at the end of this page, so "portable"
+means nothing is installed, not that nothing is ever written outside the folder.
+
 ## From the terminal
 
 The same download, done in a way that checks what arrived before installing it. Since nothing here

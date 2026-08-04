@@ -22,6 +22,12 @@ A scan is a starting point, never a finished map. Whatever Traccia could not wor
 | Windows | [`Traccia_0.3.0_x64-setup.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_x64-setup.exe) |
 | Checksums | [`SHA256SUMS.txt`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/SHA256SUMS.txt) |
 
+No installation, if you would rather not: [`Traccia_0.3.0_x64_portable.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_x64_portable.exe)
+for Windows and [`Traccia_0.3.0_universal_portable.app.zip`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_universal_portable.app.zip)
+for macOS both run where they sit, from a Downloads folder or a USB stick, with no wizard, no
+administrator rights and no entry in the system's list of installed programs. Useful on a machine
+you do not own.
+
 Both installers are unsigned, so your operating system will warn you the first time you open the
 app. That warning is about the absence of a paid signing certificate, not about the app.
 [docs/INSTALL.md](docs/INSTALL.md) shows what you will see, how to get past it once, and how to
