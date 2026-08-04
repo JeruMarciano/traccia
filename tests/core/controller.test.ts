@@ -8,7 +8,7 @@ const internalPlace = (over: Partial<Place>): Place => ({
   id: 'pl-1',
   name: 'Payroll system',
   kind: 'internal',
-  purposeGroup: 'Payroll & HR',
+  purposeGroup: 'Payroll',
   holder: 'you',
   leavesEEA: false,
   sources: [],
@@ -32,11 +32,11 @@ describe('controllerName', () => {
   })
 
   it('does not mistake the scanned site for the controller', () => {
-    // ingestScan files the scanned host under 'Running the systems' too, but as a collection
+    // ingestScan files the scanned host under 'Systems' too, but as a collection
     // place held by the organisation -- close enough to the controller's shape to be worth a test.
     const p = emptyProject()
     p.places = [
-      internalPlace({ name: 'rossi-editore.it', kind: 'collection', purposeGroup: 'Running the systems' }),
+      internalPlace({ name: 'rossi-editore.it', kind: 'collection', purposeGroup: 'Systems' }),
     ]
     expect(controllerName(p)).toEqual({ name: null, placeId: null })
   })
@@ -44,7 +44,7 @@ describe('controllerName', () => {
   it('does not mistake a supplier in the same group for the controller', () => {
     const p = emptyProject()
     p.places = [
-      internalPlace({ name: 'CloudShip', holder: 'supplier', purposeGroup: 'Running the systems' }),
+      internalPlace({ name: 'CloudShip', holder: 'supplier', purposeGroup: 'Systems' }),
     ]
     expect(controllerName(p)).toEqual({ name: null, placeId: null })
   })

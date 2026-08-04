@@ -21,17 +21,17 @@ const CATEGORIES = dataCategoriesJson as DataCategoryDictionary
 // value. A typo -- "Payroll & Hr" -- would pass any truthiness check and quietly draw two points
 // where there is one thing.
 const PURPOSE_GROUPS = new Set([
-  'Payroll & HR',
-  'Finance & Accounting',
+  'Payroll',
+  'Finance',
   'Payments',
-  'Sales & CRM',
+  'Sales',
   'Marketing',
-  'Office & Email',
+  'Office',
   'Communication',
-  'Customer Support',
-  'IT & Infrastructure',
-  'Website tracking',
-  'Facilities & Security',
+  'Support',
+  'IT',
+  'Tracking',
+  'Facilities',
 ])
 
 /** What the shipped documents say, read straight out of a real Italian informativa. */

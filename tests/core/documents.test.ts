@@ -20,12 +20,12 @@ const VENDORS: VendorDictionary = {
 }
 
 const INTERNAL: InternalSystemDictionary = {
-  payroll: { name: 'Payroll system', purposeGroup: 'Payroll & HR', layer: 'internal', holder: 'you' },
-  salesforce: { name: 'Salesforce', purposeGroup: 'Sales & CRM', layer: 'internal', holder: 'supplier' },
+  payroll: { name: 'Payroll system', purposeGroup: 'Payroll', layer: 'internal', holder: 'you' },
+  salesforce: { name: 'Salesforce', purposeGroup: 'Sales', layer: 'internal', holder: 'supplier' },
   stripe: { name: 'Stripe', purposeGroup: 'Payments', layer: 'external', holder: 'supplier' },
   gestionale: {
     name: 'Management system',
-    purposeGroup: 'IT & Infrastructure',
+    purposeGroup: 'IT',
     layer: 'internal',
     holder: 'you',
   },
@@ -123,7 +123,7 @@ describe('a term the document denies', () => {
   const DENIABLE: InternalSystemDictionary = {
     hotjar: { name: 'Hotjar', purposeGroup: 'Marketing', layer: 'external', holder: 'supplier' },
     matomo: { name: 'Matomo', purposeGroup: 'Marketing', layer: 'external', holder: 'supplier' },
-    cookie: { name: 'Cookies', purposeGroup: 'Website tracking', layer: 'external', holder: 'supplier' },
+    cookie: { name: 'Cookies', purposeGroup: 'Tracking', layer: 'external', holder: 'supplier' },
   }
   const names = (text: string): string[] =>
     extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, DENIABLE, SUBJECTS, CATEGORIES)
@@ -197,13 +197,13 @@ describe('matching terms that are not ASCII', () => {
   const ACCENTED: InternalSystemDictionary = {
     contabilità: {
       name: 'Accounting system',
-      purposeGroup: 'Finance & Accounting',
+      purposeGroup: 'Finance',
       layer: 'internal',
       holder: 'you',
     },
     videosorveglianza: {
       name: 'Video surveillance',
-      purposeGroup: 'Facilities & Security',
+      purposeGroup: 'Facilities',
       layer: 'internal',
       holder: 'you',
     },
@@ -240,13 +240,13 @@ describe('a term broken across a line', () => {
   const MULTIWORD: InternalSystemDictionary = {
     'buste paga': {
       name: 'Payroll system',
-      purposeGroup: 'Payroll & HR',
+      purposeGroup: 'Payroll',
       layer: 'internal',
       holder: 'you',
     },
     'access control': {
       name: 'Access control',
-      purposeGroup: 'Facilities & Security',
+      purposeGroup: 'Facilities',
       layer: 'internal',
       holder: 'you',
     },
@@ -648,7 +648,7 @@ describe('jurisdiction read off the sentence', () => {
 // The reviewer's sentence: two placements, and the nearer one belongs to the term. See §4.1.
 describe('two things placed in one sentence', () => {
   const STORAGE: InternalSystemDictionary = {
-    backup: { name: 'Backup', purposeGroup: 'IT & Infrastructure', layer: 'internal', holder: 'you' },
+    backup: { name: 'Backup', purposeGroup: 'IT', layer: 'internal', holder: 'you' },
   }
 
   it('gives the backup the datacenter it is actually kept in', () => {
@@ -951,7 +951,7 @@ describe('subject groups named in a document', () => {
     const SAME: InternalSystemDictionary = {
       clienti: {
         name: 'Customers',
-        purposeGroup: 'Sales & CRM',
+        purposeGroup: 'Sales',
         layer: 'internal',
         holder: 'you',
       },
@@ -975,7 +975,7 @@ describe('subject groups named in a document', () => {
 describe('the controller and the processor, by name', () => {
   const rolePlaces = (text: string): PlaceCandidate[] =>
     placesOnly(extractCandidates([{ name: 'informativa.pdf', text }], VENDORS, INTERNAL, SUBJECTS, CATEGORIES))
-      .filter((c) => c.purposeGroup === 'Running the systems')
+      .filter((c) => c.purposeGroup === 'Systems')
 
   const roles = (text: string): Array<{ name: string; holder: string }> =>
     rolePlaces(text).map((c) => ({ name: c.name, holder: c.holder }))
@@ -1224,7 +1224,7 @@ describe('confirming a subject group', () => {
         id: 'payroll-system',
         name: 'Payroll system',
         layer: 'internal' as const,
-        purposeGroup: 'Payroll & HR',
+        purposeGroup: 'Payroll',
         holder: 'you' as const,
         kind: 'internal' as const,
         evidence: 'payroll',
@@ -1258,7 +1258,7 @@ function confirmed(over: Partial<PlaceCandidate>): Candidate {
     id: 'payroll-system',
     name: 'Payroll system',
     layer: 'internal',
-    purposeGroup: 'Payroll & HR',
+    purposeGroup: 'Payroll',
     holder: 'you',
     kind: 'internal',
     evidence: 'the payroll run',
@@ -1381,7 +1381,7 @@ describe('ingestDocument', () => {
 describe('trackers and cookies named in prose', () => {
   const TRACKING: InternalSystemDictionary = {
     'facebook pixel': { name: 'Meta Pixel', purposeGroup: 'Marketing', layer: 'external', holder: 'supplier' },
-    cookies: { name: 'Cookies', purposeGroup: 'Website tracking', layer: 'external', holder: 'supplier' },
+    cookies: { name: 'Cookies', purposeGroup: 'Tracking', layer: 'external', holder: 'supplier' },
     hotjar: { name: 'Hotjar', purposeGroup: 'Marketing', layer: 'external', holder: 'supplier' },
   }
 

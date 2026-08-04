@@ -138,7 +138,7 @@ export function ingestScan(
       id,
       name: result.scannedHost,
       kind: 'collection',
-      purposeGroup: 'Running the systems',
+      purposeGroup: 'Systems',
       holder: 'you',
       leavesEEA: 'unknown',
       sources: [],
@@ -331,7 +331,7 @@ function visitorFlow(from: string, to: string): Omit<Flow, 'id'> {
     from,
     to,
     dataDescription: 'Whatever a visitor sends by loading the site',
-    purpose: 'Running the systems',
+    purpose: 'Systems',
     sources: [],
     confidence: 'observed',
   }
@@ -342,7 +342,7 @@ function thirdPartyFlow(from: string, to: string): Omit<Flow, 'id'> {
     from,
     to,
     dataDescription: 'Whatever the page hands to this third party',
-    purpose: 'Running the systems',
+    purpose: 'Systems',
     sources: [],
     confidence: 'observed',
   }

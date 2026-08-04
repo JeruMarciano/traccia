@@ -25,7 +25,7 @@ describe('the Rossi Editore sample project', () => {
   it('names a controller', () => {
     const p = rossiEditore()
     expect(
-      p.places.some((pl) => pl.holder === 'you' && pl.purposeGroup === 'Running the systems'),
+      p.places.some((pl) => pl.holder === 'you' && pl.purposeGroup === 'Systems'),
     ).toBe(true)
   })
 })

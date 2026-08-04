@@ -6,7 +6,7 @@ import type { ScanResult, VendorDictionary } from '../../src/core/types'
 const DICT: VendorDictionary = {
   'google-analytics.com': { owner: 'Google', category: 'analytics', purposeGroup: 'Marketing' },
   'doubleclick.net': { owner: 'Google', category: 'ads', purposeGroup: 'Marketing' },
-  'stripe.com': { owner: 'Stripe', category: 'payments', purposeGroup: 'Getting paid' },
+  'stripe.com': { owner: 'Stripe', category: 'payments', purposeGroup: 'Payments' },
 }
 
 const IDS = { prefix: 'scan1' }
@@ -149,8 +149,8 @@ describe('ingestScan', () => {
     // facing map, none of which are things that exist.
     const d: VendorDictionary = {
       ...DICT,
-      'cloudflare.com': { owner: 'Cloudflare', category: 'cdn', purposeGroup: 'Running the systems' },
-      'hubspot.com': { owner: 'HubSpot', category: 'crm', purposeGroup: 'Selling' },
+      'cloudflare.com': { owner: 'Cloudflare', category: 'cdn', purposeGroup: 'Systems' },
+      'hubspot.com': { owner: 'HubSpot', category: 'crm', purposeGroup: 'Sales' },
       'optimizely.com': { owner: 'Optimizely', category: 'a-b-testing', purposeGroup: 'Marketing' },
     }
     const p = ingestScan(

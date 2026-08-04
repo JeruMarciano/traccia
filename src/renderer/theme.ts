@@ -185,6 +185,9 @@ export const STYLESHEET = `
   letter-spacing:.2em;
 }
 .disc-count{fill:var(--paper);font-family:var(--mono);font-size:9px;opacity:.85;}
+/* The controller's name sits below its disc, so it is ink on paper rather than reversed out. */
+.controller{cursor:pointer;}
+.controller-label{font-size:10.5px;font-weight:600;letter-spacing:.01em;fill:var(--ink);}
 
 .node{cursor:pointer;}
 .node-fill{fill:var(--paper-lift);}
@@ -221,18 +224,21 @@ export const STYLESHEET = `
 
 /* The key. The notation is not common knowledge, and the sheet is read by someone seeing it
    for the first time, often on paper. */
+/* One line, quiet. The key explains notation to someone seeing the sheet for the first time,
+   which is worth a strip of the page and not a block of it: the map is the document. */
 .legend{
   margin:0;
-  padding:13px 0 0;
+  padding:7px 0 0;
   border-top:1px solid var(--rule);
-  display:grid;
-  grid-template-columns:repeat(5,minmax(0,1fr));
-  gap:16px;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:4px 15px;
 }
-.key{display:flex;gap:9px;align-items:flex-start;}
-.key-mark{flex:none;margin-top:1px;}
-.key-term{display:block;font-size:10.5px;font-weight:600;letter-spacing:.02em;}
-.key-gloss{display:block;margin:1px 0 0;font-size:10.5px;line-height:1.35;color:var(--ink-soft);}
+.key{display:flex;gap:5px;align-items:center;}
+.key-mark{flex:none;width:13px;height:13px;}
+.key-term{font-size:9px;font-weight:600;letter-spacing:.02em;color:var(--ink-soft);}
+.key-gloss{display:none;}
 
 /* Found-in-documents suggestions: a working list. Nothing here is on the map until it is
    ticked onto it, so it reads as a proposal, not a finding. */
@@ -280,7 +286,7 @@ export const STYLESHEET = `
 /* The detail bar: what the clicked point holds. Present only while something is selected, so
    the sheet is the drawing alone until a click asks a question of it. */
 .detail{
-  width:338px;
+  width:290px;
   flex:none;
   background:var(--paper-lift);
   border-left:1px solid var(--rule);

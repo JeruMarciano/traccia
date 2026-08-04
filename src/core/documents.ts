@@ -532,7 +532,7 @@ function dataCategoriesIn(
  * the scanned site (see src/core/scan.ts), because it is the same answer to the same question:
  * this is the organisation, not one of the things it uses.
  */
-const RUNNING = 'Running the systems'
+const RUNNING = 'Systems'
 
 /**
  * The role phrases an informativa uses, each with who holds the data. The Italian phrases must

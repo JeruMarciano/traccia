@@ -17,11 +17,11 @@ import { STRINGS } from '../strings'
  * carry and no longer does.
  */
 
-const CONTROLLER_R = 33
+const CONTROLLER_R = 17
 const DOOR_W = 13
 const DOOR_H = 24
-const NODE_MIN_R = 15
-const NODE_MAX_R = 26
+const NODE_MIN_R = 13
+const NODE_MAX_R = 21
 const SUBJECT_R = 10
 const MEMBER_R = 9
 
@@ -181,9 +181,16 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup }
 
         {controller === undefined ? null : (
           <g className={`controller${dim(controller.id)}`} {...select(controller.id)}>
-            <circle className="disc-halo" cx={controller.x} cy={controller.y} r={CONTROLLER_R + 9} />
+            <circle className="disc-halo" cx={controller.x} cy={controller.y} r={CONTROLLER_R + 7} />
             <circle className="disc" cx={controller.x} cy={controller.y} r={CONTROLLER_R} />
-            <text className="disc-label" x={controller.x} y={controller.y + 4} textAnchor="middle">
+            {/* The name sits under the disc, not inside it. At this size the disc holds a mark,
+                not a sentence, and a name shrunk to fit inside would be unreadable. */}
+            <text
+              className="controller-label"
+              x={controller.x}
+              y={controller.y + CONTROLLER_R + 15}
+              textAnchor="middle"
+            >
               {controller.label === '' ? STRINGS.yourOrganisation : controller.label}
             </text>
           </g>

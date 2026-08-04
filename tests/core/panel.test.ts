@@ -157,7 +157,7 @@ describe('panelFor a group', () => {
   })
 
   it('leaves out the door and the controller, exactly as the map does', () => {
-    const d = panel('group:Running the systems')
+    const d = panel('group:Systems')
     if (d?.sort !== 'group') throw new Error('expected a group panel')
     expect(d.members.map((m) => m.id)).toEqual(['pl-9'])
   })

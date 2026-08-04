@@ -22,7 +22,7 @@ describe('createEmptyProject', () => {
     const a = createEmptyProject('A', '2026-07-30T09:00:00.000Z')
     const b = createEmptyProject('B', '2026-07-30T09:00:00.000Z')
     a.places.push({
-      id: 'p1', name: 'X', kind: 'internal', purposeGroup: 'Selling',
+      id: 'p1', name: 'X', kind: 'internal', purposeGroup: 'Sales',
       holder: 'you', leavesEEA: false, sources: [], confidence: 'declared',
     })
     expect(b.places).toEqual([])

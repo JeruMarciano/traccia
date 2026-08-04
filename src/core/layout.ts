@@ -74,13 +74,31 @@ function round(n: number): number {
   return Math.round(n * 100) / 100
 }
 
-/** Evenly spaced down the middle 80% of the sheet. One item sits centred, not at the top. */
-function column(count: number, height: number): number[] {
+/**
+ * Evenly spaced down a band in the middle of the sheet. One item sits centred, not at the top.
+ *
+ * The band is half the height rather than the whole of it: the inbound side is read as a
+ * sequence, and a person at the top of the sheet joined to a door at the bottom draws a long
+ * diagonal that says nothing except that both exist.
+ */
+function column(count: number, height: number, band = 0.5): number[] {
   if (count === 0) return []
   if (count === 1) return [round(height / 2)]
-  const top = height * 0.1
-  const span = height * 0.8
+  const span = height * band
+  const top = (height - span) / 2
   return Array.from({ length: count }, (_, i) => round(top + (span * i) / (count - 1)))
+}
+
+/**
+ * Where a purpose group sits around the controller. Groups ring the centre rather than stacking
+ * in a column, but only across the eastern side: the western sector is where the people and the
+ * doors are, and a group drawn into it would collide with the way in.
+ */
+const GROUP_ARC = (100 * Math.PI) / 180
+
+function groupAngle(i: number, count: number): number {
+  if (count === 1) return 0
+  return -GROUP_ARC + (2 * GROUP_ARC * i) / (count - 1)
 }
 
 export function computeLayout(
@@ -107,24 +125,26 @@ export function computeLayout(
   const colourOf = new Map(doors.map((d) => [d.id, d.colourIndex]))
   const groupOfPlace = new Map(onTheRight.map((p) => [p.id, p.purposeGroup]))
 
-  // Column 1: the people who reach a door, in the project's own order. Somebody with no traced
-  // way in is not drawn -- an unconnected dot on the far left reads as a person nobody handles,
-  // which is a claim this map has no evidence for.
+  // The inbound side, read left to right: the people who reach a door, then the doors. Somebody
+  // with no traced way in is not drawn -- an unconnected dot on the far left reads as a person
+  // nobody handles, which is a claim this map has no evidence for.
+  //
+  // The three columns sit close together on purpose. They are one phrase, and a long arrow
+  // between them adds distance without adding meaning.
   const reaching = new Set(paths.flatMap((p) => p.subjectIds))
   const subjects = project.subjectGroups.filter((s) => reaching.has(s.id))
-  const subjectY = column(subjects.length, size.height)
+  const subjectY = column(subjects.length, size.height, 0.44)
   subjects.forEach((s, i) => {
-    nodes.push({ id: s.id, kind: 'subject', label: s.name, x: round(size.width * 0.08), y: subjectY[i] ?? 0 })
+    nodes.push({ id: s.id, kind: 'subject', label: s.name, x: round(size.width * 0.07), y: subjectY[i] ?? 0 })
   })
 
-  // Column 2: the doors.
-  const doorY = column(doors.length, size.height)
+  const doorY = column(doors.length, size.height, 0.44)
   doors.forEach((d, i) => {
     nodes.push({
       id: `door:${d.id}`,
       kind: 'door',
       label: d.label,
-      x: round(size.width * 0.28),
+      x: round(size.width * 0.21),
       y: doorY[i] ?? 0,
       origin: d.origin,
       colourIndex: d.colourIndex,
@@ -135,25 +155,32 @@ export function computeLayout(
   // before a document names it -- the sentence has no subject otherwise. The empty label is the
   // renderer's cue to say "Your organisation"; core holds no words the user reads.
   const anything = project.places.length > 0 || subjects.length > 0
+  const cx = round(size.width * 0.42)
+  const cy = round(size.height / 2)
   if (anything) {
     nodes.push({
       id: 'controller',
       kind: 'controller',
       label: controller.name ?? '',
-      x: round(size.width * 0.5),
-      y: round(size.height / 2),
+      x: cx,
+      y: cy,
       count: project.places.length,
     })
   }
 
-  // Column 4: the purpose groups. A ring that opens stays exactly where it is and keeps its
-  // place in the column -- it becomes a boundary with its members set out around its centre,
-  // rather than vanishing and leaving a reader no way back to it.
-  const rightY = column(groups.length, size.height)
+  // The purpose groups, set around the controller rather than stacked in a column: what the
+  // organisation hands data to surrounds it, and a ring of five reads at a glance where a column
+  // of five crowds. They occupy the eastern side only, so none of them lands on the way in.
+  //
+  // A ring that opens stays exactly where it is, becoming a boundary with its members set out
+  // around its centre, rather than vanishing and leaving a reader no way back to it.
+  const rx = size.width * 0.235
+  const ry = size.height * 0.35
   groups.forEach((g, i) => {
     const inGroup = onTheRight.filter((p) => p.purposeGroup === g)
-    const x = round(size.width * 0.78)
-    const y = rightY[i] ?? 0
+    const angle = groupAngle(i, groups.length)
+    const x = round(cx + Math.cos(angle) * rx)
+    const y = round(cy + Math.sin(angle) * ry)
     const orbit = MEMBER_ORBIT + Math.max(inGroup.length - 3, 0) * 5
     nodes.push({
       id: `group:${g}`,

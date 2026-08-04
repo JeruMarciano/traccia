@@ -56,10 +56,10 @@ export function identify(host: string, dictionary: VendorDictionary): VendorEntr
  * ambiguous.
  */
 const PURPOSE_HINTS: readonly (readonly [readonly string[], string])[] = [
-  [['checkout', 'payment', 'paypal', 'billing', 'invoice', 'wallet'], 'Getting paid'],
+  [['checkout', 'payment', 'paypal', 'billing', 'invoice', 'wallet'], 'Payments'],
   [['livechat', 'zendesk', 'helpdesk', 'support', 'helpshift', 'ticket'], 'Support'],
-  [['shipping', 'courier', 'delivery', 'fulfil', 'fulfill'], 'Delivering orders'],
-  [['shop', 'store', 'cart', 'basket', 'ecommerce', 'catalog'], 'Selling'],
+  [['shipping', 'courier', 'delivery', 'fulfil', 'fulfill'], 'Delivery'],
+  [['shop', 'store', 'cart', 'basket', 'ecommerce', 'catalog'], 'Sales'],
   [
     [
       'analytic', 'analytics', 'stats', 'statistic', 'metric', 'telemetry', 'measure',
@@ -78,7 +78,7 @@ const PURPOSE_HINTS: readonly (readonly [readonly string[], string])[] = [
       'host', 'server', 'origin', 'monitor', 'status', 'error', 'sentry', 'log', 'maps',
       'video', 'player', 'embed', 'mail', 'smtp', 'push', 'notification',
     ],
-    'Running the systems',
+    'Systems',
   ],
 ]
 

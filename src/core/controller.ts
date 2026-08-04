@@ -10,7 +10,7 @@ import type { Project } from './types'
  */
 
 /** The group extractCandidates files a named controller under (see documents.ts). */
-const RUNNING = 'Running the systems'
+const RUNNING = 'Systems'
 
 export interface ControllerName {
   /** The name to draw, or null when no document has named one. */

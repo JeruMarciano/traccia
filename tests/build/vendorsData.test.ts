@@ -5,12 +5,12 @@ import type { VendorDictionary } from '../../src/core/types'
 
 const PURPOSE_GROUPS = new Set([
   'Marketing',
-  'Running the systems',
-  'Getting paid',
+  'Systems',
+  'Payments',
   'Employing people',
   'Support',
-  'Selling',
-  'Delivering orders',
+  'Sales',
+  'Delivery',
 ])
 
 const dict = dictionary as VendorDictionary

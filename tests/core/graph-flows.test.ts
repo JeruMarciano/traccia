@@ -5,7 +5,7 @@ import type { Flow, Place } from '../../src/core/types'
 
 const NOW = '2026-07-30T09:00:00.000Z'
 const place = (name: string): Omit<Place, 'id'> => ({
-  name, kind: 'internal', purposeGroup: 'Selling',
+  name, kind: 'internal', purposeGroup: 'Sales',
   holder: 'you', leavesEEA: false, sources: [], confidence: 'declared',
 })
 const flow: Omit<Flow, 'id'> = {

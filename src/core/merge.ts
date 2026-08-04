@@ -55,7 +55,7 @@ export function mergeObservations(
       {
         name: o.domain,
         kind: 'unknown',
-        purposeGroup: 'Running the systems',
+        purposeGroup: 'Systems',
         holder: 'unknown',
         leavesEEA: 'unknown',
         sources: [],

@@ -8,11 +8,38 @@ const l = (open: string | null = null) => computeLayout(rossiEditore(), SIZE, op
 const node = (id: string, open: string | null = null) => l(open).nodes.find((n) => n.id === id)
 
 describe('the sentence, left to right', () => {
-  it('puts the people left of the doors, the doors left of the controller, the groups right of it', () => {
+  it('puts the people left of the doors, and the doors left of the controller', () => {
     const x = (id: string) => node(id)?.x ?? NaN
     expect(x('sg-2')).toBeLessThan(x('door:place:pl-2'))
     expect(x('door:place:pl-2')).toBeLessThan(x('controller'))
-    expect(x('controller')).toBeLessThan(x('group:Marketing'))
+  })
+
+  it('sets the groups around the controller, on the far side from the way in', () => {
+    // Groups ring the centre rather than stacking in a column, so "every group is right of the
+    // controller" is no longer the rule and a test asserting it would pass or fail on which
+    // group it happened to pick. What must hold is that no group lands on the inbound side.
+    const l0 = l()
+    const doors = l0.nodes.filter((n) => n.kind === 'door')
+    const rightmostDoor = Math.max(...doors.map((d) => d.x))
+    const groups = l0.nodes.filter((n) => n.kind === 'group')
+    expect(groups.length).toBeGreaterThan(1)
+    for (const g of groups) {
+      expect(g.x).toBeGreaterThan(rightmostDoor + 60)
+    }
+  })
+
+  it('spreads the groups around the centre rather than down one line', () => {
+    const groups = l().nodes.filter((n) => n.kind === 'group')
+    expect(new Set(groups.map((g) => g.x)).size).toBeGreaterThan(1)
+    expect(new Set(groups.map((g) => g.y)).size).toBe(groups.length)
+  })
+
+  it('keeps the inbound arrows short by holding the three columns close together', () => {
+    const x = (id: string) => node(id)?.x ?? NaN
+    // The people, the door and the centre are one phrase. Distance between them adds no meaning,
+    // so the gap stays under a quarter of the sheet at each step.
+    expect(x('door:place:pl-2') - x('sg-2')).toBeLessThan(SIZE.width * 0.25)
+    expect(x('controller') - x('door:place:pl-2')).toBeLessThan(SIZE.width * 0.25)
   })
 
   it('draws exactly one controller', () => {
@@ -69,18 +96,18 @@ describe('nothing is drawn twice', () => {
   })
 
   it('leaves the controller out of its own purpose group', () => {
-    // pl-1 is the controller and shares 'Running the systems' with pl-9.
-    expect(node('group:Running the systems')?.count).toBe(1)
+    // pl-1 is the controller and shares 'Systems' with pl-9.
+    expect(node('group:Systems')?.count).toBe(1)
   })
 
   it('still draws every occupied group', () => {
     const groups = l().nodes.filter((n) => n.kind === 'group').map((n) => n.label)
     expect(groups).toEqual([
-      'Delivering orders',
+      'Delivery',
       'Marketing',
-      'Payroll & HR',
-      'Running the systems',
+      'Payroll',
       'Support',
+      'Systems',
     ])
   })
 })
@@ -107,7 +134,7 @@ describe('direction and colour', () => {
   })
 
   it('connects a group no door reaches with one uncoloured line', () => {
-    const toPayroll = l().edges.filter((e) => e.to === 'group:Payroll & HR')
+    const toPayroll = l().edges.filter((e) => e.to === 'group:Payroll')
     expect(toPayroll).toHaveLength(1)
     expect(toPayroll[0]?.colourIndex).toBeUndefined()
     expect(toPayroll[0]?.from).toBe('controller')
@@ -136,7 +163,7 @@ describe('a ring that opens in place', () => {
 
   it('does not move the ring when it opens', () => {
     expect(node('group:Marketing', 'Marketing')?.y).toBe(node('group:Marketing')?.y)
-    expect(node('group:Payroll & HR', 'Marketing')?.y).toBe(node('group:Payroll & HR')?.y)
+    expect(node('group:Payroll', 'Marketing')?.y).toBe(node('group:Payroll')?.y)
   })
 
   it('sets the members out around the ring’s centre, all at one distance', () => {
@@ -150,11 +177,11 @@ describe('a ring that opens in place', () => {
   it('marks every other group closed', () => {
     const groups = l('Marketing').nodes.filter((n) => n.kind === 'group')
     expect(groups.map((g) => g.label)).toEqual([
-      'Delivering orders',
+      'Delivery',
       'Marketing',
-      'Payroll & HR',
-      'Running the systems',
+      'Payroll',
       'Support',
+      'Systems',
     ])
     expect(groups.filter((g) => g.open).map((g) => g.label)).toEqual(['Marketing'])
   })
