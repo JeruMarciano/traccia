@@ -149,24 +149,37 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: '1.97.1'
+          # Both macOS architectures, because the .dmg is built as a universal binary. A runner
+          # only ever has its own target installed by default, and macos-latest is Apple Silicon:
+          # without this the release ships a download that does not start on an Intel Mac.
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
       - run: npm ci
-      - run: npm run tauri build
+      - name: build the installer
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            npm run tauri build -- --target universal-apple-darwin
+          else
+            npm run tauri build
+          fi
       - name: report the shipped size
         shell: bash
         run: |
           # The download size is a product requirement, not a curiosity. Print it on every run so
           # a regression is visible in the log without anyone going looking.
-          find src-tauri/target/release/bundle -type f \
+          find src-tauri/target -type f \
             \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \) \
             -exec ls -l {} \;
       - uses: actions/upload-artifact@v4
         with:
           name: traccia-${{ matrix.os }}
+          # The universal build lands under its own target directory, so both roots are listed.
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: warn
