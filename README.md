@@ -16,20 +16,20 @@ A scan is a starting point, never a finished map. Whatever Traccia could not wor
 
 **[v0.3.0 (beta)](https://github.com/JeruMarciano/traccia/releases/latest)**
 
-| | |
-|---|---|
-| macOS | [`Traccia_0.3.0_universal.dmg`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_universal.dmg) (Apple Silicon and Intel) |
-| Windows | [`Traccia_0.3.0_x64-setup.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_x64-setup.exe) |
-| Checksums | [`SHA256SUMS.txt`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/SHA256SUMS.txt) |
+| | Installer | Portable, nothing installed |
+|---|---|---|
+| **macOS** | [`Traccia_0.3.0_universal.dmg`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_universal.dmg) | [`Traccia_0.3.0_universal_portable.app.zip`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_universal_portable.app.zip) |
+| **Windows** | [`Traccia_0.3.0_x64-setup.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_x64-setup.exe) | [`Traccia_0.3.0_x64_portable.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_x64_portable.exe) |
 
-No installation, if you would rather not: [`Traccia_0.3.0_x64_portable.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_x64_portable.exe)
-for Windows and [`Traccia_0.3.0_universal_portable.app.zip`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_universal_portable.app.zip)
-for macOS both run where they sit, from a Downloads folder or a USB stick, with no wizard, no
-administrator rights and no entry in the system's list of installed programs. Useful on a machine
-you do not own.
+The macOS builds are universal, running on Apple Silicon and Intel alike. Checksums for all four
+downloads: [`SHA256SUMS.txt`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/SHA256SUMS.txt).
 
-Both installers are unsigned, so your operating system will warn you the first time you open the
-app. That warning is about the absence of a paid signing certificate, not about the app.
+The portable copies are the same application without the wizard. They run where they sit, from a
+Downloads folder or a USB stick, asking for no administrator rights and leaving no entry in the
+system's list of installed programs, which is what you want on a machine you do not own.
+
+None of these downloads is signed, so your operating system will warn you the first time you open
+the app, portable copies included. That warning is about the absence of a paid signing certificate, not about the app.
 [docs/INSTALL.md](docs/INSTALL.md) shows what you will see, how to get past it once, and how to
 install from the terminal with the checksum checked first. A scan needs Google Chrome or Microsoft
 Edge installed; Traccia drives whichever it finds and never bundles a browser.
