@@ -243,7 +243,18 @@ async fn run_scan_and_cancel_midway(site: &Site) -> (PathBuf, u32) {
         hook,
     ));
 
-    let (pid, profile) = rx.await.expect("browser launched before the scan finished");
+    // A closed channel means the hook never fired, so the pipeline ended before it launched
+    // anything. That is a different failure from the one this test is about, and saying
+    // "browser launched before the scan finished" for it sends the reader looking at cancel
+    // when the truth is usually that no browser could be started on this machine. Wait for the
+    // task and report what actually went wrong.
+    let (pid, profile) = match rx.await {
+        Ok(launched) => launched,
+        Err(_) => match handle.await.expect("scan task panicked") {
+            Err(e) => panic!("the scan ended before launching a browser: {e}"),
+            Ok(_) => panic!("the scan completed without ever launching a browser"),
+        },
+    };
     scan::cancel(&state);
 
     // The inner `Result<ScanRun, String>` is discarded deliberately, not overlooked: a

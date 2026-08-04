@@ -27,29 +27,14 @@ on:
 permissions:
   contents: read
 
-# This repository is private, and private-repo Actions minutes are billed with a multiplier per
-# runner: Linux ×1, Windows ×2, macOS ×10. A ten-minute macOS bundle therefore costs a hundred
-# minutes of the monthly allowance, and running two macOS jobs on every push and every PR — the
-# shape this workflow had until 2026-08-03 — spent roughly 220 billed minutes per run, about 82%
-# of it on macOS alone. That exhausted a 2,000-minute month in nine runs, security-update PRs
-# included.
+# The repository is public, so Actions minutes are free and the test matrix is not rationed:
+# every push and pull request runs the Rust suite on both macOS and Windows.
 #
-# So macOS is opt-in and bundling is release-only. Everyday pushes and PRs get the Ubuntu checks
-# and the Windows Rust suite, about 40 billed minutes. A manual run adds the installers — Windows
-# only by default, roughly 36 minutes, because a development Mac builds its own .dmg for free with
-# `npm run tauri build` and paying ×10 for a machine to repeat that is the expensive habit this
-# note exists to break. Tick the `macos` input, or push a tag, when the full matrix is wanted.
-#
-# What this gives up is macOS CI coverage between releases, which is the coverage a developer
-# working on a Mac already performs by hand before every commit (CONTRIBUTING.md's checks: cargo test,
-# clippy).
-#
-# If the repository is ever made public, Actions is free and unlimited and both of these
-# conditions can be deleted outright.
-#
-# The release condition is spelled out at each use rather than hoisted into a workflow-level
-# `env`: the `env` context is not available inside `strategy`, so a hoisted value would silently
-# evaluate to an empty string there and quietly put macOS back on every run.
+# Bundling stays release-only, and that is not a cost decision. Building installers on every push
+# spends ten minutes producing a .dmg and an .msi that nobody downloads until a release is cut.
+# It runs on a tag, or on a manual run, which is when the artefacts are actually wanted. Ticking
+# the `macos` input adds the macOS installer to a manual run; a Mac can also build its own with
+# `npm run tauri build`.
 
 jobs:
   check:
@@ -71,12 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows every time; macOS on a tag, or on a manual run that asks for it (see the note
-        # above the jobs). macOS bills at ×10, and a Mac can build its own .dmg for free.
-        os: >-
-          ${{ (startsWith(github.ref, 'refs/tags/') || inputs.macos)
-          && fromJSON('["macos-latest", "windows-latest"]')
-          || fromJSON('["windows-latest"]') }}
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
