@@ -69,10 +69,18 @@ function factValue(fact: PanelFact): string {
   return fact.value === 'outside' ? STRINGS.detailEEAOutside : STRINGS.detailEEAInside
 }
 
-/** How this fact is known, and from what. One short line. */
+/**
+ * Who said this. The document's name when there is one, because the name is the answer and
+ * "declared" in front of it only repeats what a filename already implies.
+ *
+ * Where nothing named it -- a host a scan saw, a place a rule inferred -- the confidence word is
+ * all there is, and it is still said. A fact with no attribution at all would break the one
+ * promise this panel makes.
+ */
 function attribution(f: PanelFact): string {
   if (f.byHand) return STRINGS.detailRecordedByHand
-  return STRINGS.detailAttribution(CONFIDENCE_WORD[f.confidence], f.sourceNames.join(', '))
+  if (f.sourceNames.length > 0) return f.sourceNames.join(', ')
+  return CONFIDENCE_WORD[f.confidence]
 }
 
 function Facts({ facts }: { facts: PanelFact[] }) {
@@ -83,7 +91,7 @@ function Facts({ facts }: { facts: PanelFact[] }) {
         <div key={f.field}>
           <dt>{FIELD_LABEL[f.field]}</dt>
           <dd>{factValue(f)}</dd>
-          <dd className={`detail-said-by said-by--${f.byHand ? 'hand' : f.confidence}`}>
+          <dd className="detail-said-by">
             {/* Wrapped so it can be shortened to one line without losing the full text, which
                 stays on the tooltip. */}
             <span title={attribution(f)}>{attribution(f)}</span>
@@ -94,12 +102,12 @@ function Facts({ facts }: { facts: PanelFact[] }) {
   )
 }
 
+/** The controller's own attribution: the document that named it, by the same rule as a fact. */
 function Attribution({ sourceNames, confidence }: { sourceNames: string[]; confidence: Confidence }) {
+  const said = sourceNames.length > 0 ? sourceNames.join(', ') : CONFIDENCE_WORD[confidence]
   return (
     <p className="detail-said-by">
-      {sourceNames.length === 0
-        ? STRINGS.detailRecordedByHand
-        : STRINGS.detailAttribution(CONFIDENCE_WORD[confidence], sourceNames.join(', '))}
+      <span title={said}>{said}</span>
     </p>
   )
 }

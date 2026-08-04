@@ -342,10 +342,8 @@ export const STYLESHEET = `
 }
 .detail-none{margin:8px 0 0;font-size:12px;color:var(--ink-soft);}
 
-/* Under every fact: how it is known, and from what. A footnote to the fact, not the fact, so it
-   is small and quiet. The dot repeats what the first word already says -- observed, declared,
-   inferred, or a hand -- so the panel gains a second reading without gaining an explanation, and
-   loses nothing in print or to a reader who cannot separate the hues. */
+/* Under every fact: who said it. A footnote to the fact, not the fact, so it is small and
+   quiet. Usually a filename, which says both what it is and where it came from. */
 .detail-said-by{
   display:flex;
   align-items:center;
@@ -363,18 +361,6 @@ export const STYLESHEET = `
   text-overflow:ellipsis;
   white-space:nowrap;
 }
-.detail-said-by::before{
-  content:"";
-  flex:none;
-  width:5px;
-  height:5px;
-  border-radius:50%;
-  background:var(--rule);
-}
-.said-by--observed::before{background:var(--person);}
-.said-by--declared::before{background:var(--internal);}
-.said-by--inferred::before{background:var(--external);}
-.said-by--hand::before{background:var(--ink-soft);}
 .detail-facts dd.detail-said-by{margin:3px 0 0;}
 .detail-totals{margin:10px 0 0;font-family:var(--mono);font-size:10px;color:var(--ink-soft);}
 

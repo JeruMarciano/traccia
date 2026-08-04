@@ -15,11 +15,12 @@ function show(id: string, project: Project = rossiEditore()): string {
 
 describe('DetailPanel', () => {
   it('states a fact and, under it, who said it', () => {
+    // The document's name is the attribution. Prefixing it with "declared" only repeated what a
+    // filename already implies.
     const markup = show('pl-4')
     expect(markup).toContain('until unsubscribed')
-    expect(markup).toContain(
-      STRINGS.detailAttribution(STRINGS.detailConfidenceDeclared, 'informativa-clienti.pdf'),
-    )
+    expect(markup).toContain('informativa-clienti.pdf')
+    expect(markup).not.toContain(`${STRINGS.detailConfidenceDeclared} ·`)
   })
 
   it('says how an unsourced fact is known rather than hiding it', () => {

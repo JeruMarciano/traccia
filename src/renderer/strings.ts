@@ -83,9 +83,6 @@ export const STRINGS = {
 
   detailHeading: 'What is here',
   detailPeopleHeading: 'People',
-  /** Under every fact: how it is known, and from what. A fact nobody sourced still shows. */
-  detailAttribution: (confidence: string, sources: string): string =>
-    sources === '' ? confidence : `${confidence} · ${sources}`,
   detailRecordedByHand: 'recorded by hand',
   detailConfidenceObserved: 'observed',
   detailConfidenceDeclared: 'declared',
