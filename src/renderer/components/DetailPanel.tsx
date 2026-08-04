@@ -69,6 +69,12 @@ function factValue(fact: PanelFact): string {
   return fact.value === 'outside' ? STRINGS.detailEEAOutside : STRINGS.detailEEAInside
 }
 
+/** How this fact is known, and from what. One short line. */
+function attribution(f: PanelFact): string {
+  if (f.byHand) return STRINGS.detailRecordedByHand
+  return STRINGS.detailAttribution(CONFIDENCE_WORD[f.confidence], f.sourceNames.join(', '))
+}
+
 function Facts({ facts }: { facts: PanelFact[] }) {
   if (facts.length === 0) return null
   return (
@@ -78,12 +84,9 @@ function Facts({ facts }: { facts: PanelFact[] }) {
           <dt>{FIELD_LABEL[f.field]}</dt>
           <dd>{factValue(f)}</dd>
           <dd className={`detail-said-by said-by--${f.byHand ? 'hand' : f.confidence}`}>
-            {f.byHand
-              ? STRINGS.detailRecordedByHand
-              : STRINGS.detailAttribution(
-                  CONFIDENCE_WORD[f.confidence],
-                  f.sourceNames.join(', '),
-                )}
+            {/* Wrapped so it can be shortened to one line without losing the full text, which
+                stays on the tooltip. */}
+            <span title={attribution(f)}>{attribution(f)}</span>
           </dd>
         </div>
       ))}
