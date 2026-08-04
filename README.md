@@ -44,11 +44,15 @@ the app attempts any connection beyond the site being scanned.
 Full instructions, including what the operating-system warnings mean, are in
 [docs/INSTALL.md](docs/INSTALL.md).
 
-On macOS, download the `.dmg` from Releases (about 1.6 MB), open it and drag Traccia to
-Applications. On Windows, download and run the installer. Both will warn you about an
-unidentified developer, which reflects the absence of a paid signing certificate rather than
-anything about the app: right-click and choose **Open** on macOS, or **More info** then **Run
-anyway** on Windows.
+On macOS, download the universal `.dmg` from Releases, open it and drag Traccia to Applications.
+On Windows, download and run the installer. Both will warn you about an unidentified developer,
+which reflects the absence of a paid signing certificate rather than anything about the app:
+right-click and choose **Open** on macOS, or **More info** then **Run anyway** on Windows.
+
+Prefer the terminal? [docs/INSTALL.md](docs/INSTALL.md) has the `curl` commands, including how to
+check the download against its published checksum, which is worth doing precisely because nothing
+here is signed. It also covers building the app yourself, which skips the warnings entirely since
+the operating system does not quarantine what you built on your own machine.
 
 A scan needs Google Chrome or Microsoft Edge installed. Traccia uses whichever it finds.
 
