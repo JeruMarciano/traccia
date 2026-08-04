@@ -356,8 +356,28 @@ Test-driven throughout. Beyond ordinary unit coverage, three suites carry partic
 1. **Vendor dictionary source and licence.** Public tracker lists exist and their licences differ.
    Must permit commercial and closed-source use per §8.1, which excludes copyleft lists. Settle
    before Phase 3 extraction work begins.
-2. **Project file encryption.** A file describing every data flow in a business is sensitive. Optional
-   passphrase encryption is probably right; deferred until the file format is stable.
+2. **Project file encryption.** Still open, deliberately, and not in 0.3.0 (reviewed 2026-08-03).
+
+   The reason it matters is worth stating properly, because "the app is open source" invites the
+   wrong conclusion: the code is public, the files it writes are not. A project file carries the
+   client's name, every supplier receiving personal data, what categories go where, how long each
+   keeps them, what sits outside the EEA, and an itemised list of everything the organisation
+   cannot yet account for. It is a structured map of where a business is exposed, written in plain
+   JSON that anybody who obtains it can read.
+
+   Full-disk encryption already covers a powered-off laptop. It does nothing for a file emailed to
+   a colleague, copied to a USB stick, sitting in a synced folder, or carried into a backup, which
+   is where the exposure actually is.
+
+   Against doing it now: a passphrase introduces a failure worse than the problem for a
+   non-technical user, since forgetting it destroys the file and there is no server to reset it
+   from. It only helps when a file travels, at which point the recipient needs the passphrase too,
+   and that key exchange is where such features usually die. Encrypting a format that is still
+   moving complicates every later migration.
+
+   When it is built: optional, per file, with a blunt warning that there is no recovery, and after
+   the format settles. Worth checking first whether project files leave the machine in practice; if
+   they mostly do not, disk encryption is doing the work and this is ceremony.
 3. ~~**Code signing.**~~ **Closed 2026-08-03: the app is not signed, and that is the answer rather
    than a postponement.** Certificates from Apple and a certificate authority are a recurring cost
    this project is not taking on. The consequence is real and stays documented for users rather than
