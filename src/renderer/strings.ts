@@ -83,10 +83,15 @@ export const STRINGS = {
 
   detailHeading: 'What is here',
   detailPeopleHeading: 'People',
+  /**
+   * Where a fact came from, when no document names it. These say the origin in plain words
+   * rather than the model's own vocabulary: "observed" is what the code calls a scan result,
+   * and it reads to everyone else like somebody watched something happen.
+   */
   detailRecordedByHand: 'recorded by hand',
-  detailConfidenceObserved: 'observed',
-  detailConfidenceDeclared: 'declared',
-  detailConfidenceInferred: 'inferred',
+  detailConfidenceObserved: 'website scan',
+  detailConfidenceDeclared: 'from a document',
+  detailConfidenceInferred: 'expected, not yet confirmed',
   /** One line per selection. Absent when nothing is unknown — never "0 things". */
   detailUnknownsSummary: (n: number): string =>
     `${n} ${n === 1 ? 'thing' : 'things'} not yet identified`,
