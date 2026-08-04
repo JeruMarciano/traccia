@@ -12,6 +12,24 @@ Print the sheet to PDF when you need to hand it over.
 A scan is a starting point, never a finished map. Whatever Traccia could not work out is marked
 "not yet identified" so that a person can finish the job.
 
+## Download
+
+**[v0.3.0 (beta)](https://github.com/JeruMarciano/traccia/releases/latest)**
+
+| | |
+|---|---|
+| macOS | [`Traccia_0.3.0_universal.dmg`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_universal.dmg) (Apple Silicon and Intel) |
+| Windows | [`Traccia_0.3.0_x64-setup.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_x64-setup.exe) |
+| Checksums | [`SHA256SUMS.txt`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/SHA256SUMS.txt) |
+
+Both installers are unsigned, so your operating system will warn you the first time you open the
+app. That warning is about the absence of a paid signing certificate, not about the app.
+[docs/INSTALL.md](docs/INSTALL.md) shows what you will see, how to get past it once, and how to
+install from the terminal with the checksum checked first. A scan needs Google Chrome or Microsoft
+Edge installed; Traccia drives whichever it finds and never bundles a browser.
+
+It is a beta: the file format is still settling, and so far one pair of hands has used it.
+
 ## Who it's for
 
 Privacy consultants who need a first draft from whatever a client can hand over, plus a
@@ -38,23 +56,6 @@ sheet carries this statement on it.
 
 The no-traffic promise is not a matter of trust: `src-tauri/tests/egress.rs` fails the build if
 the app attempts any connection beyond the site being scanned.
-
-## Install
-
-Full instructions, including what the operating-system warnings mean, are in
-[docs/INSTALL.md](docs/INSTALL.md).
-
-On macOS, download the universal `.dmg` from Releases, open it and drag Traccia to Applications.
-On Windows, download and run the installer. Both will warn you about an unidentified developer,
-which reflects the absence of a paid signing certificate rather than anything about the app:
-right-click and choose **Open** on macOS, or **More info** then **Run anyway** on Windows.
-
-Prefer the terminal? [docs/INSTALL.md](docs/INSTALL.md) has the `curl` commands, including how to
-check the download against its published checksum, which is worth doing precisely because nothing
-here is signed. It also covers building the app yourself, which skips the warnings entirely since
-the operating system does not quarantine what you built on your own machine.
-
-A scan needs Google Chrome or Microsoft Edge installed. Traccia uses whichever it finds.
 
 ## Running from source
 
