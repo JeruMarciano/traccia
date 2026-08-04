@@ -61,23 +61,20 @@ from an unexplained project, which is the opposite of the product's pitch.
 Gatekeeper/SmartScreen consequence stated honestly, and build instructions.
 **Gates:** making the repository public.
 
-### 3. Code signing — macOS Gatekeeper
+### 3 and 4. Code signing, on both platforms — closed, not deferred
 
-Unsigned `.dmg`. macOS refuses to open the app until the user right-clicks and confirms. Spec
-§8.1 records this as "a genuine adoption problem" for a tool whose pitch is trustworthiness, and
-§11.3 defers it explicitly.
+**Decided 2026-08-03: Traccia ships unsigned.** An Apple Developer account and a Windows
+code-signing certificate are recurring costs, and this project is not taking them on. It was
+carried as "deferred, revisit before the app goes to anyone non-technical" through three releases,
+which made it a permanent open question rather than a decision.
 
-**Needs:** an Apple Developer account, then notarisation in the macOS CI job.
-**Gates:** putting the app in front of anyone non-technical.
+The consequence does not disappear with the decision, so it is documented where the person meeting
+it will be standing: `docs/INSTALL.md` says what each warning looks like, that it means the
+operating system cannot confirm the publisher rather than that anything is wrong with the app, and
+how to get past it. It also gives the way to avoid the warning entirely, which is to build from
+source, since an app compiled locally is not quarantined.
 
-### 4. Code signing — Windows SmartScreen
-
-Unsigned NSIS installer, 1,124,383 bytes, produced by the Windows CI runner added in Phase 1
-Task 11. SmartScreen shows a warning. Now that CI produces Windows artefacts, the signing step
-has an obvious home.
-
-**Needs:** a Windows code-signing certificate, then a signing step in the Windows CI job.
-**Gates:** the same moment as item 3.
+What would reopen it: a certificate that costs nothing, or a budget. Neither is expected.
 
 ### 5. MPL-2.0 in the dependency tree — the one that needs a real decision
 

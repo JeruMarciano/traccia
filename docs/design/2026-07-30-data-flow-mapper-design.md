@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-30
 **Status:** Draft for review
-**Working name:** Traccia (placeholder)
+**Name:** Traccia (settled 2026-08-03, see §11)
 
 ---
 
@@ -358,9 +358,16 @@ Test-driven throughout. Beyond ordinary unit coverage, three suites carry partic
    before Phase 3 extraction work begins.
 2. **Project file encryption.** A file describing every data flow in a business is sensitive. Optional
    passphrase encryption is probably right; deferred until the file format is stable.
-3. **Code signing.** Deferred, with the consequences recorded in §8.1. Revisit before the app goes to
-   anyone non-technical, since Gatekeeper and SmartScreen warnings undercut the product's own pitch.
-4. **Naming.** "Traccia" is a placeholder.
+3. ~~**Code signing.**~~ **Closed 2026-08-03: the app is not signed, and that is the answer rather
+   than a postponement.** Certificates from Apple and a certificate authority are a recurring cost
+   this project is not taking on. The consequence is real and stays documented for users rather than
+   hidden: both operating systems warn on first launch, and `docs/INSTALL.md` explains what the
+   warning means, that it is about the absence of a paid certificate and not about the app, and how
+   to get past it once. Anyone who would rather not see it at all can build from source, which is not
+   quarantined. Reopen this only if a paid certificate becomes free or the project acquires a budget.
+4. ~~**Naming.**~~ **Closed 2026-08-03: the app is called Traccia.** It stopped being a placeholder
+   somewhere around the point it was on the title block of sheets being shown to real people. It is
+   the repository name, the wordmark, the bundle identifier and the released binary.
 5. **Visual direction.** Open, per §6.3. Does not block implementation.
 
 ## 11.1 Deliberately not open
