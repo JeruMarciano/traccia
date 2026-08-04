@@ -185,9 +185,11 @@ export const STYLESHEET = `
   letter-spacing:.2em;
 }
 .disc-count{fill:var(--paper);font-family:var(--mono);font-size:9px;opacity:.85;}
-/* The controller's name sits below its disc, so it is ink on paper rather than reversed out. */
+/* The centre carries a house and no text: the organisation is named on the title block, in this
+   mark's tooltip, and in the panel a click opens. */
 .controller{cursor:pointer;}
-.controller-label{font-size:10.5px;font-weight:600;letter-spacing:.01em;fill:var(--ink);}
+.disc-home{fill:var(--paper);}
+.controller:hover .disc-halo{opacity:.55;}
 
 .node{cursor:pointer;}
 .node-fill{fill:var(--paper-lift);}
@@ -233,7 +235,8 @@ export const STYLESHEET = `
   display:flex;
   flex-wrap:wrap;
   align-items:center;
-  gap:4px 15px;
+  justify-content:space-between;
+  gap:6px 24px;
 }
 .key{display:flex;gap:5px;align-items:center;}
 .key-mark{flex:none;width:13px;height:13px;}

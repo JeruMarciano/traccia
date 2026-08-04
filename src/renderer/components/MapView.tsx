@@ -17,7 +17,15 @@ import { STRINGS } from '../strings'
  * carry and no longer does.
  */
 
-const CONTROLLER_R = 17
+const CONTROLLER_R = 13
+
+/**
+ * A house, drawn in a 16x16 box and centred on the controller's disc: roof, then the body with a
+ * doorway cut out of it. Drawn rather than fetched, like everything else here, because the app
+ * ships without a single outbound request and an icon set would be one.
+ */
+const HOME_PATH =
+  'M 8 1.6 L 15.2 8.2 L 13 8.2 L 13 14.4 L 9.6 14.4 L 9.6 10.6 L 6.4 10.6 L 6.4 14.4 L 3 14.4 L 3 8.2 L 0.8 8.2 Z'
 const DOOR_W = 13
 const DOOR_H = 24
 const NODE_MIN_R = 13
@@ -181,18 +189,17 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup }
 
         {controller === undefined ? null : (
           <g className={`controller${dim(controller.id)}`} {...select(controller.id)}>
-            <circle className="disc-halo" cx={controller.x} cy={controller.y} r={CONTROLLER_R + 7} />
+            {/* The disc carries a house and no text. The organisation's name is on the title
+                block above the map, in this mark's tooltip, and in the panel a click opens, so
+                dropping it here loses nothing and gives the centre back its quiet. */}
+            <title>{controller.label === '' ? STRINGS.yourOrganisation : controller.label}</title>
+            <circle className="disc-halo" cx={controller.x} cy={controller.y} r={CONTROLLER_R + 6} />
             <circle className="disc" cx={controller.x} cy={controller.y} r={CONTROLLER_R} />
-            {/* The name sits under the disc, not inside it. At this size the disc holds a mark,
-                not a sentence, and a name shrunk to fit inside would be unreadable. */}
-            <text
-              className="controller-label"
-              x={controller.x}
-              y={controller.y + CONTROLLER_R + 15}
-              textAnchor="middle"
-            >
-              {controller.label === '' ? STRINGS.yourOrganisation : controller.label}
-            </text>
+            <path
+              className="disc-home"
+              d={HOME_PATH}
+              transform={`translate(${controller.x - 8} ${controller.y - 8})`}
+            />
           </g>
         )}
 
