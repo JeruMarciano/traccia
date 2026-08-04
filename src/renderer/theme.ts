@@ -308,23 +308,20 @@ export const STYLESHEET = `
 .detail-subject-name{margin:0;font-size:14px;}
 .detail-subject-notes{margin:3px 0 0;font-size:12px;line-height:1.45;color:var(--ink-soft);}
 .detail-place{padding:16px 0;border-bottom:1px solid var(--rule);}
-.detail-place-name{margin:0;font-size:16px;font-weight:500;letter-spacing:-.01em;}
-.detail-facts{
-  margin:12px 0 0;
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:10px 12px;
-}
+.detail-place-name{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em;line-height:1.25;}
+/* One fact per row. Two columns at this width broke every label and every attribution onto a
+   second line, which made the panel read as one grey block instead of a list of answers. */
+.detail-facts{margin:13px 0 0;display:flex;flex-direction:column;gap:11px;}
 .detail-facts>div{min-width:0;}
 .detail-facts dt{
   margin:0;
-  font-size:9px;
+  font-size:8.5px;
   font-weight:600;
-  letter-spacing:.1em;
+  letter-spacing:.11em;
   text-transform:uppercase;
   color:var(--ink-soft);
 }
-.detail-facts dd{margin:3px 0 0;font-size:13px;line-height:1.35;}
+.detail-facts dd{margin:2px 0 0;font-size:13.5px;line-height:1.3;color:var(--ink);}
 .detail-sub{
   margin:16px 0 0;
   font-size:9px;
@@ -337,27 +334,45 @@ export const STYLESHEET = `
 }
 .detail-none{margin:8px 0 0;font-size:12px;color:var(--ink-soft);}
 
-/* Under every fact: how it is known, and from what. Quiet, because it is the footnote to the
-   fact and not the fact. */
+/* Under every fact: how it is known, and from what. A footnote to the fact, not the fact, so it
+   is small and quiet. The dot repeats what the first word already says -- observed, declared,
+   inferred, or a hand -- so the panel gains a second reading without gaining an explanation, and
+   loses nothing in print or to a reader who cannot separate the hues. */
 .detail-said-by{
-  margin:2px 0 0;
-  font-family:var(--mono);
-  font-size:9px;
-  letter-spacing:.02em;
+  display:flex;
+  align-items:baseline;
+  gap:5px;
+  margin:3px 0 0;
+  font-size:9.5px;
+  letter-spacing:.01em;
   color:var(--ink-soft);
 }
-.detail-facts dd.detail-said-by{margin:1px 0 0;}
+.detail-said-by::before{
+  content:"";
+  flex:none;
+  width:5px;
+  height:5px;
+  border-radius:50%;
+  background:var(--rule);
+}
+.said-by--observed::before{background:var(--person);}
+.said-by--declared::before{background:var(--internal);}
+.said-by--inferred::before{background:var(--external);}
+.said-by--hand::before{background:var(--ink-soft);}
+.detail-facts dd.detail-said-by{margin:3px 0 0;}
 .detail-totals{margin:10px 0 0;font-family:var(--mono);font-size:10px;color:var(--ink-soft);}
 
 /* Everything nobody has answered, in one line that opens. Closed, it is a count; open, it is the
    same questions the printed gaps sheet asks. */
-.detail-unknowns{margin:14px 0 0;}
+.detail-unknowns{margin:15px 0 0;border-top:1px solid var(--rule);padding-top:12px;}
 .detail-unknowns summary{
   cursor:pointer;
-  font-size:11.5px;
-  color:var(--ink-soft);
-  letter-spacing:.02em;
+  font-size:11px;
+  font-weight:500;
+  color:var(--ink);
+  letter-spacing:.01em;
 }
+.detail-unknowns summary:hover{color:var(--person);}
 .detail-unknowns ul{list-style:none;margin:8px 0 0;padding:0 0 0 12px;border-left:2px solid var(--rule);}
 .detail-unknowns li{margin:0 0 9px;font-size:11.5px;line-height:1.4;color:var(--ink);}
 
@@ -391,9 +406,10 @@ export const STYLESHEET = `
 /* The panel speaks the map's colour language: a door referenced here carries its door chip. */
 .detail-reached{display:flex;align-items:center;gap:5px;margin:12px 0 0;}
 .detail-reached-label{
-  font-family:var(--mono);
-  font-size:9px;
-  letter-spacing:.02em;
+  font-size:8.5px;
+  font-weight:600;
+  letter-spacing:.11em;
+  text-transform:uppercase;
   color:var(--ink-soft);
 }
 .chip{display:inline-block;width:9px;height:9px;border-radius:2px;}
@@ -406,7 +422,13 @@ export const STYLESHEET = `
 .detail-member--open{color:var(--ink-soft);}
 .detail-declared{margin:10px 0 0;font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);}
 .detail-observations{list-style:none;margin:9px 0 0;padding:0;}
-.detail-observations li{margin:0 0 5px;font-family:var(--mono);font-size:11px;}
+.detail-observations li{
+  margin:0 0 5px;
+  font-family:var(--mono);
+  font-size:10px;
+  line-height:1.4;
+  color:var(--ink);
+}
 
 /* The map settles rather than appears: rings first, then what sits on them. A scan is the one
    moment this tool has to show something happening, and a drawing that arrives all at once

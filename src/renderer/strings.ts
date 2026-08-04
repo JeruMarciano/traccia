@@ -99,7 +99,7 @@ export const STRINGS = {
   detailAnswerYes: 'Yes',
   detailAnswerNo: 'No',
   detailReachedFrom: 'Reached from',
-  detailEEA: 'Where it comes to rest',
+  detailEEA: 'Comes to rest',
   detailEEAOutside: 'Outside the EEA',
   detailEEAInside: 'Inside the EEA',
   detailDoorHeading: 'Way in',

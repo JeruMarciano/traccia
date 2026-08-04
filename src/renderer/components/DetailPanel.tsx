@@ -77,10 +77,13 @@ function Facts({ facts }: { facts: PanelFact[] }) {
         <div key={f.field}>
           <dt>{FIELD_LABEL[f.field]}</dt>
           <dd>{factValue(f)}</dd>
-          <dd className="detail-said-by">
-            {f.byHand || f.sourceNames.length === 0
+          <dd className={`detail-said-by said-by--${f.byHand ? 'hand' : f.confidence}`}>
+            {f.byHand
               ? STRINGS.detailRecordedByHand
-              : STRINGS.detailAttribution(CONFIDENCE_WORD[f.confidence], f.sourceNames.join(', '))}
+              : STRINGS.detailAttribution(
+                  CONFIDENCE_WORD[f.confidence],
+                  f.sourceNames.join(', '),
+                )}
           </dd>
         </div>
       ))}
@@ -185,16 +188,12 @@ function Unknowns({
 }
 
 function PlaceView({ panel, onAnswer }: { panel: PlacePanel; onAnswer?: AnswerHandler }) {
-  const unsourced = panel.facts.length > 0 && panel.facts.every((f) => f.sourceNames.length === 0)
   return (
     <>
       <h2 className="detail-head">{STRINGS.detailHeading}</h2>
       <article className="detail-place">
         <h3 className="detail-place-name">{panel.name}</h3>
         <Facts facts={panel.facts} />
-        {unsourced ? (
-          <Attribution sourceNames={[]} confidence={panel.facts[0]?.confidence ?? 'inferred'} />
-        ) : null}
         {panel.observations.length === 0 ? null : (
           <>
             <h4 className="detail-sub">{STRINGS.detailObservationsHeading}</h4>

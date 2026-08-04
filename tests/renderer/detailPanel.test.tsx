@@ -22,8 +22,13 @@ describe('DetailPanel', () => {
     )
   })
 
-  it('says recorded by hand rather than hiding an unattributed fact', () => {
-    expect(show('pl-8')).toContain(STRINGS.detailRecordedByHand)
+  it('says how an unsourced fact is known rather than hiding it', () => {
+    // pl-8 came from a scan and no document names it. Its facts are still shown, attributed as
+    // observed. Saying "recorded by hand" here, as this panel once did, claims a person typed
+    // something nobody typed.
+    const markup = show('pl-8')
+    expect(markup).toContain(STRINGS.detailConfidenceObserved)
+    expect(markup).not.toContain(STRINGS.detailRecordedByHand)
   })
 
   it('does not state a field nobody answered', () => {
