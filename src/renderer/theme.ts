@@ -309,19 +309,27 @@ export const STYLESHEET = `
 .detail-subject-notes{margin:3px 0 0;font-size:12px;line-height:1.45;color:var(--ink-soft);}
 .detail-place{padding:16px 0;border-bottom:1px solid var(--rule);}
 .detail-place-name{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em;line-height:1.25;}
-/* One fact per row. Two columns at this width broke every label and every attribution onto a
-   second line, which made the panel read as one grey block instead of a list of answers. */
-.detail-facts{margin:13px 0 0;display:flex;flex-direction:column;gap:11px;}
-.detail-facts>div{min-width:0;}
+/* One fact per row, each one fenced off from the next.
+   Two columns at this width broke every label and every attribution onto a second line, and
+   stacking them with nothing but whitespace between made the panel read as one grey block. What
+   a reader needs first is which field they are looking at, so the field name is dark and set
+   apart, and a hairline closes each fact off from the one below. */
+.detail-facts{margin:12px 0 0;display:flex;flex-direction:column;}
+.detail-facts>div{
+  min-width:0;
+  padding:9px 0;
+  border-bottom:1px solid var(--rule);
+}
+.detail-facts>div:last-child{border-bottom:0;padding-bottom:2px;}
 .detail-facts dt{
   margin:0;
   font-size:8.5px;
-  font-weight:600;
-  letter-spacing:.11em;
+  font-weight:700;
+  letter-spacing:.13em;
   text-transform:uppercase;
-  color:var(--ink-soft);
+  color:var(--ink);
 }
-.detail-facts dd{margin:2px 0 0;font-size:13.5px;line-height:1.3;color:var(--ink);}
+.detail-facts dd{margin:4px 0 0;font-size:14px;line-height:1.3;color:var(--ink);}
 .detail-sub{
   margin:16px 0 0;
   font-size:9px;
@@ -343,9 +351,10 @@ export const STYLESHEET = `
   align-items:baseline;
   gap:5px;
   margin:3px 0 0;
-  font-size:9.5px;
+  font-size:9px;
   letter-spacing:.01em;
   color:var(--ink-soft);
+  opacity:.85;
 }
 .detail-said-by::before{
   content:"";
@@ -359,7 +368,7 @@ export const STYLESHEET = `
 .said-by--declared::before{background:var(--internal);}
 .said-by--inferred::before{background:var(--external);}
 .said-by--hand::before{background:var(--ink-soft);}
-.detail-facts dd.detail-said-by{margin:3px 0 0;}
+.detail-facts dd.detail-said-by{margin:4px 0 0;}
 .detail-totals{margin:10px 0 0;font-family:var(--mono);font-size:10px;color:var(--ink-soft);}
 
 /* Everything nobody has answered, in one line that opens. Closed, it is a count; open, it is the
