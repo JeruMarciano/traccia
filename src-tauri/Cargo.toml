@@ -1,6 +1,6 @@
 [package]
 name = "traccia"
-version = "1.0.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.97"
 description = "Maps where an organisation's personal data goes."
