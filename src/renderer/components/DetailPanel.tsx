@@ -1,5 +1,20 @@
-import type { Confidence, CookieLifetime, Project, VendorDictionary } from '../../core/types'
-import type { ControllerPanel, DoorPanel, GroupPanel, PanelFact, PanelUnknowns, PlacePanel } from '../../core/panel'
+import { useState } from 'react'
+import type {
+  Confidence,
+  CookieLifetime,
+  HandEnteredField,
+  Project,
+  VendorDictionary,
+} from '../../core/types'
+import type {
+  ControllerPanel,
+  DoorPanel,
+  GroupPanel,
+  PanelFact,
+  PanelQuestion,
+  PanelUnknowns,
+  PlacePanel,
+} from '../../core/panel'
 import { panelFor } from '../../core/panel'
 import { STRINGS } from '../strings'
 
@@ -12,10 +27,19 @@ import { STRINGS } from '../strings'
  * questions the printed gaps sheet asks. When nothing is unknown that line is absent, not zero.
  */
 
+/** Answering a question the map asked: which place, which field, and what was said. */
+export type AnswerHandler = (
+  placeId: string,
+  field: HandEnteredField,
+  value: string | boolean,
+) => void
+
 interface Props {
   project: Project
   selected: string
   dictionary: VendorDictionary
+  /** Absent in contexts that only display, such as a test rendering the panel on its own. */
+  onAnswer?: AnswerHandler
 }
 
 const FIELD_LABEL: Readonly<Record<PanelFact['field'], string>> = {
@@ -54,10 +78,9 @@ function Facts({ facts }: { facts: PanelFact[] }) {
           <dt>{FIELD_LABEL[f.field]}</dt>
           <dd>{factValue(f)}</dd>
           <dd className="detail-said-by">
-            {STRINGS.detailAttribution(
-              CONFIDENCE_WORD[f.confidence],
-              f.sourceNames.length === 0 ? '' : f.sourceNames.join(', '),
-            )}
+            {f.byHand || f.sourceNames.length === 0
+              ? STRINGS.detailRecordedByHand
+              : STRINGS.detailAttribution(CONFIDENCE_WORD[f.confidence], f.sourceNames.join(', '))}
           </dd>
         </div>
       ))}
@@ -75,21 +98,93 @@ function Attribution({ sourceNames, confidence }: { sourceNames: string[]; confi
   )
 }
 
-function Unknowns({ unknowns }: { unknowns: PanelUnknowns }) {
+/**
+ * One question, with the means to answer it when there is one. Two of the three gap rules map
+ * onto a field of the place; the third asks which document says so, which no text box can
+ * answer, so it is stated and left alone.
+ */
+function Question({
+  question,
+  placeId,
+  onAnswer,
+}: {
+  question: PanelQuestion
+  placeId: string | null
+  onAnswer?: AnswerHandler
+}) {
+  const [typed, setTyped] = useState('')
+  const answerable = question.answer !== undefined && placeId !== null && onAnswer !== undefined
+  if (!answerable || question.answer === undefined || placeId === null || onAnswer === undefined) {
+    return <li>{question.question}</li>
+  }
+  const { field, kind } = question.answer
+
+  if (kind === 'yesno') {
+    return (
+      <li>
+        {question.question}
+        <span className="answer">
+          <button className="answer-choice" onClick={() => onAnswer(placeId, field, true)}>
+            {STRINGS.detailAnswerYes}
+          </button>
+          <button className="answer-choice" onClick={() => onAnswer(placeId, field, false)}>
+            {STRINGS.detailAnswerNo}
+          </button>
+        </span>
+      </li>
+    )
+  }
+
+  return (
+    <li>
+      {question.question}
+      <form
+        className="answer"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (typed.trim() === '') return
+          onAnswer(placeId, field, typed)
+          setTyped('')
+        }}
+      >
+        <input
+          className="answer-input"
+          type="text"
+          value={typed}
+          placeholder={STRINGS.detailAnswerPlaceholder}
+          onChange={(e) => setTyped(e.target.value)}
+        />
+        <button className="answer-choice" type="submit">
+          {STRINGS.detailAnswerSave}
+        </button>
+      </form>
+    </li>
+  )
+}
+
+function Unknowns({
+  unknowns,
+  placeId = null,
+  onAnswer,
+}: {
+  unknowns: PanelUnknowns
+  placeId?: string | null
+  onAnswer?: AnswerHandler
+}) {
   if (unknowns.count === 0) return null
   return (
     <details className="detail-unknowns">
       <summary>{STRINGS.detailUnknownsSummary(unknowns.count)}</summary>
       <ul>
         {unknowns.questions.map((q) => (
-          <li key={q}>{q}</li>
+          <Question key={q.id} question={q} placeId={placeId} onAnswer={onAnswer} />
         ))}
       </ul>
     </details>
   )
 }
 
-function PlaceView({ panel }: { panel: PlacePanel }) {
+function PlaceView({ panel, onAnswer }: { panel: PlacePanel; onAnswer?: AnswerHandler }) {
   const unsourced = panel.facts.length > 0 && panel.facts.every((f) => f.sourceNames.length === 0)
   return (
     <>
@@ -132,7 +227,7 @@ function PlaceView({ panel }: { panel: PlacePanel }) {
             ))}
           </p>
         )}
-        <Unknowns unknowns={panel.unknowns} />
+        <Unknowns unknowns={panel.unknowns} placeId={panel.id} onAnswer={onAnswer} />
       </article>
     </>
   )
@@ -216,7 +311,7 @@ function GroupView({ panel }: { panel: GroupPanel }) {
   )
 }
 
-export function DetailPanel({ project, selected, dictionary }: Props) {
+export function DetailPanel({ project, selected, dictionary, onAnswer }: Props) {
   if (selected === 'centre') {
     // The v0.2 people hub. The redesign draws each subject group as its own node, so this only
     // answers a selection carried over from an older sheet.
@@ -256,7 +351,7 @@ export function DetailPanel({ project, selected, dictionary }: Props) {
 
   return (
     <aside className="detail">
-      {panel.sort === 'place' ? <PlaceView panel={panel} /> : null}
+      {panel.sort === 'place' ? <PlaceView panel={panel} onAnswer={onAnswer} /> : null}
       {panel.sort === 'door' ? <DoorView panel={panel} /> : null}
       {panel.sort === 'controller' ? <ControllerView panel={panel} /> : null}
       {panel.sort === 'group' ? <GroupView panel={panel} /> : null}

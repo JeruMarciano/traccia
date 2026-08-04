@@ -3,9 +3,11 @@ import { createEmptyProject } from '../core/project'
 import { computeLayout } from '../core/layout'
 import { initHistory, push, undo, redo, canUndo, canRedo } from '../core/history'
 import { ingestScan } from '../core/scan'
+import { answerByHand } from '../core/answers'
 import { extractCandidates, ingestDocument } from '../core/documents'
 import type {
   Candidate,
+  HandEnteredField,
   DataCategoryDictionary,
   InternalSystemDictionary,
   SubjectGroupDictionary,
@@ -146,6 +148,22 @@ export function App() {
     setHistory((h) => push(h, ingestDocument(h.present, chosen)))
   }
 
+  /**
+   * A person answering one of the map's own questions. It goes through the same history the
+   * scan and the documents do, so Undo covers a mistyped answer exactly as it covers a scan
+   * nobody wanted.
+   */
+  function answer(placeId: string, field: HandEnteredField, value: string | boolean): void {
+    setHistory((h) =>
+      push(
+        h,
+        field === 'retention'
+          ? answerByHand(h.present, placeId, 'retention', String(value))
+          : answerByHand(h.present, placeId, 'leavesEEA', value === true),
+      ),
+    )
+  }
+
   async function stopScan(): Promise<void> {
     try {
       await cancelScan()
@@ -210,7 +228,12 @@ export function App() {
           </div>
         </main>
         {selected === null ? null : (
-          <DetailPanel project={project} selected={selected} dictionary={VENDORS} />
+          <DetailPanel
+            project={project}
+            selected={selected}
+            dictionary={VENDORS}
+            onAnswer={answer}
+          />
         )}
       </div>
     </>

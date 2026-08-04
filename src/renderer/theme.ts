@@ -359,7 +359,34 @@ export const STYLESHEET = `
   letter-spacing:.02em;
 }
 .detail-unknowns ul{list-style:none;margin:8px 0 0;padding:0 0 0 12px;border-left:2px solid var(--rule);}
-.detail-unknowns li{margin:0 0 6px;font-size:11.5px;line-height:1.4;color:var(--ink);}
+.detail-unknowns li{margin:0 0 9px;font-size:11.5px;line-height:1.4;color:var(--ink);}
+
+/* Answering a question in place. Deliberately plain: this is a person filling in what the map
+   could not work out, not a form. */
+.answer{display:flex;gap:5px;margin:4px 0 0;}
+.answer-input{
+  flex:1;
+  min-width:0;
+  font-family:var(--sans);
+  font-size:11px;
+  color:var(--ink);
+  background:var(--paper);
+  border:1px solid var(--rule);
+  border-radius:999px;
+  padding:3px 9px;
+}
+.answer-choice{
+  font-family:var(--sans);
+  font-size:10px;
+  font-weight:500;
+  color:var(--ink);
+  background:none;
+  border:1px solid var(--ink);
+  border-radius:999px;
+  padding:3px 10px;
+  cursor:pointer;
+}
+.answer-choice:hover{background:var(--ink);color:var(--paper);}
 
 /* The panel speaks the map's colour language: a door referenced here carries its door chip. */
 .detail-reached{display:flex;align-items:center;gap:5px;margin:12px 0 0;}

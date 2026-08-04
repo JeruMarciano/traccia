@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { DetailPanel } from '../../src/renderer/components/DetailPanel'
 import { STRINGS } from '../../src/renderer/strings'
 import { rossiEditore } from '../fixtures/rossiEditore'
+import { answerByHand } from '../../src/core/answers'
 import vendorsJson from '../../src/data/vendors.json'
 import type { Project, VendorDictionary } from '../../src/core/types'
 
@@ -84,5 +85,57 @@ describe('DetailPanel', () => {
 
   it('renders nothing for a selection that names nothing', () => {
     expect(show('pl-999')).toBe('')
+  })
+})
+
+describe('answering a question from the panel', () => {
+  const show = (id: string, project = rossiEditore()) =>
+    renderToStaticMarkup(
+      <DetailPanel project={project} selected={id} dictionary={V} onAnswer={() => {}} />,
+    )
+
+  /** A supplier with no retention on file: the shape the retention gap rule asks about. */
+  const withRetentionUnanswered = () => {
+    const project = rossiEditore()
+    const mailchimp = project.places.find((pl) => pl.id === 'pl-4')
+    if (mailchimp === undefined) throw new Error('fixture changed')
+    delete mailchimp.retention
+    return project
+  }
+
+  it('offers a text box for the question a typed answer settles', () => {
+    const markup = show('pl-4', withRetentionUnanswered())
+    expect(markup).toContain('answer-input')
+    expect(markup).toContain(STRINGS.detailAnswerSave)
+  })
+
+  it('offers yes and no for whether data leaves the EEA', () => {
+    const markup = show('pl-7')
+    expect(markup).toContain(STRINGS.detailAnswerYes)
+    expect(markup).toContain(STRINGS.detailAnswerNo)
+  })
+
+  it('states the question it cannot answer rather than offering an empty box for it', () => {
+    // "Which document says this receives data?" is not something a text box settles, so it is
+    // listed and left alone. pl-7 has that gap alongside the EEA one.
+    const markup = show('pl-7')
+    expect(markup).toContain('Which document says Payroll system receives data?')
+    expect((markup.match(/answer-input/g) ?? []).length).toBe(0)
+  })
+
+  it('attributes an answered fact to the hand that typed it', () => {
+    const answered = answerByHand(withRetentionUnanswered(), 'pl-4', 'retention', 'six weeks')
+    const markup = show('pl-4', answered)
+    expect(markup).toContain('six weeks')
+    expect(markup).toContain(STRINGS.detailRecordedByHand)
+    // The document that named the place never said this, and must not appear to have.
+    expect(markup).not.toMatch(/six weeks[\s\S]{0,120}informativa-clienti\.pdf/)
+  })
+
+  it('offers nothing to answer with when no handler is given', () => {
+    const markup = renderToStaticMarkup(
+      <DetailPanel project={rossiEditore()} selected="pl-7" dictionary={V} />,
+    )
+    expect(markup).not.toContain(STRINGS.detailAnswerYes)
   })
 })

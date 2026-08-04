@@ -93,6 +93,11 @@ export const STRINGS = {
   /** One line per selection. Absent when nothing is unknown — never "0 things". */
   detailUnknownsSummary: (n: number): string =>
     `${n} ${n === 1 ? 'thing' : 'things'} not yet identified`,
+  /** Answering one of the map's own questions, in place. */
+  detailAnswerPlaceholder: 'Type the answer',
+  detailAnswerSave: 'Save',
+  detailAnswerYes: 'Yes',
+  detailAnswerNo: 'No',
   detailReachedFrom: 'Reached from',
   detailEEA: 'Where it comes to rest',
   detailEEAOutside: 'Outside the EEA',

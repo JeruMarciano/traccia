@@ -19,6 +19,9 @@ export interface SubjectGroup {
   notes?: string
 }
 
+/** A field a person can answer by hand, from the questions the gap rules ask about a place. */
+export type HandEnteredField = 'retention' | 'leavesEEA'
+
 export interface Place {
   id: string
   name: string
@@ -35,6 +38,13 @@ export interface Place {
   dataCategories?: string[]
   sources: SourceRef[]
   confidence: Confidence
+  /**
+   * Which of this place's fields a person typed in, rather than a document or a scan supplying
+   * them. Absent on everything nobody has edited. The panel reads it to attribute each fact
+   * truthfully: without it, a typed retention would appear over the name of a document that
+   * never mentioned one.
+   */
+  handEntered?: HandEnteredField[]
 }
 
 export interface Flow {

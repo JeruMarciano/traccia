@@ -8,6 +8,7 @@ import type {
   Confidence,
   CookieLifetime,
   DoorOrigin,
+  HandEnteredField,
   Place,
   Project,
   VendorDictionary,
@@ -37,12 +38,27 @@ export interface PanelFact {
   confidence: Confidence
   /** Document names, deduplicated. Empty means recorded by hand; it never means hide the fact. */
   sourceNames: string[]
+  /** True when a person typed this one in. The place's own sources said nothing about it, so
+   *  attributing it to them would put a typed answer over a document's name. */
+  byHand: boolean
+}
+
+/**
+ * One thing nobody has answered. `answer` is present when a person can answer it here, in which
+ * case it names the field and how to ask: two of the gap rules map onto a field of the place, and
+ * the third ("which document says this?") does not, so it is stated and not offered.
+ */
+export interface PanelQuestion {
+  /** The gap's own id. Stable for a given place and field. */
+  id: string
+  question: string
+  answer?: { field: HandEnteredField; kind: 'text' | 'yesno' }
 }
 
 export interface PanelUnknowns {
   count: number
   /** The gap questions, in the same words the printed gaps sheet uses. */
-  questions: string[]
+  questions: PanelQuestion[]
 }
 
 export interface PlacePanel {
@@ -115,10 +131,17 @@ function sourceNames(place: Place): string[] {
   return [...new Set(place.sources.map((s) => s.documentName))]
 }
 
+/** Which field, if any, answers a gap. Read off the id the gap rules build. */
+function answerFor(gapId: string): PanelQuestion['answer'] {
+  if (gapId.endsWith(':retention')) return { field: 'retention', kind: 'text' }
+  if (gapId.endsWith(':leavesEEA')) return { field: 'leavesEEA', kind: 'yesno' }
+  return undefined
+}
+
 function unknownsFor(project: Project, subject: string | null): PanelUnknowns {
   const questions = computeGaps(project)
     .filter((g) => g.subject === subject)
-    .map((g) => g.question)
+    .map((g) => ({ id: g.id, question: g.question, answer: answerFor(g.id) }))
   return { count: questions.length, questions }
 }
 
@@ -132,7 +155,10 @@ function unknownsFor(project: Project, subject: string | null): PanelUnknowns {
  */
 function factsFor(place: Place): PanelFact[] {
   const facts: PanelFact[] = []
-  const at = { confidence: place.confidence, sourceNames: sourceNames(place) }
+  const hand = place.handEntered ?? []
+  const at = { confidence: place.confidence, sourceNames: sourceNames(place), byHand: false }
+  // A field somebody typed is attributed to them, not to whatever named the place.
+  const typed = { confidence: 'declared' as const, sourceNames: [], byHand: true }
 
   if (place.purposeGroup !== '' && place.purposeGroup !== NOT_IDENTIFIED) {
     facts.push({ field: 'purpose', value: place.purposeGroup, ...at })
@@ -141,13 +167,17 @@ function factsFor(place: Place): PanelFact[] {
     facts.push({ field: 'where', value: place.jurisdiction, ...at })
   }
   if (place.retention !== undefined && place.retention !== '') {
-    facts.push({ field: 'retention', value: place.retention, ...at })
+    facts.push({ field: 'retention', value: place.retention, ...(hand.includes('retention') ? typed : at) })
   }
   if (place.dataCategories !== undefined && place.dataCategories.length > 0) {
     facts.push({ field: 'dataCategories', value: place.dataCategories.join(', '), ...at })
   }
   if (place.leavesEEA !== 'unknown') {
-    facts.push({ field: 'eea', value: place.leavesEEA ? 'outside' : 'inside', ...at })
+    facts.push({
+      field: 'eea',
+      value: place.leavesEEA ? 'outside' : 'inside',
+      ...(hand.includes('leavesEEA') ? typed : at),
+    })
   }
   return facts
 }

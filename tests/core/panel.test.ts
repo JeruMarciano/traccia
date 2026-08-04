@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { panelFor } from '../../src/core/panel'
+import { answerByHand } from '../../src/core/answers'
 import { rossiEditore } from '../fixtures/rossiEditore'
 import { emptyProject } from '../fixtures/projects'
 import vendorsJson from '../../src/data/vendors.json'
@@ -62,7 +63,16 @@ describe('panelFor a place', () => {
     const d = panel('pl-7')
     if (d?.sort !== 'place') throw new Error('expected a place panel')
     expect(d.unknowns.count).toBe(2)
-    expect(d.unknowns.questions).toContain('Does data sent to Payroll system leave the EEA?')
+    expect(d.unknowns.questions.map((q) => q.question)).toContain(
+      'Does data sent to Payroll system leave the EEA?',
+    )
+    // Two of the three gap rules map onto a field of the place and can be answered here; the
+    // one asking which document says so cannot, and is stated rather than offered.
+    expect(d.unknowns.questions.find((q) => q.id.endsWith(':leavesEEA'))?.answer).toEqual({
+      field: 'leavesEEA',
+      kind: 'yesno',
+    })
+    expect(d.unknowns.questions.find((q) => q.id.endsWith(':sources'))?.answer).toBeUndefined()
   })
 
   it('says nothing at all when nothing is unknown', () => {
@@ -142,7 +152,7 @@ describe('panelFor the controller', () => {
     const d = panel('controller')
     if (d?.sort !== 'controller') throw new Error('expected a controller panel')
     expect(d.unknowns.count).toBeGreaterThan(0)
-    expect(d.unknowns.questions.every((q) => q.length > 0)).toBe(true)
+    expect(d.unknowns.questions.every((q) => q.question.length > 0)).toBe(true)
   })
 })
 
@@ -171,5 +181,37 @@ describe('a selection that names nothing', () => {
     expect(panel('door:cp:nope')).toBeNull()
     expect(panel('member:pl-999')).toBeNull()
     expect(panelFor(emptyProject(), 'controller', V)).toBeNull()
+  })
+})
+
+describe('a fact somebody typed in', () => {
+  it('is attributed to the hand that typed it, not to the document that named the place', () => {
+    // pl-4 is declared by informativa-clienti.pdf, which said nothing about how long Mailchimp
+    // keeps anything. A typed retention showing "declared · informativa-clienti.pdf" would put
+    // words in that document's mouth.
+    const typed = answerByHand(p(), 'pl-4', 'retention', 'six weeks')
+    const d = panelFor(typed, 'pl-4', V)
+    if (d?.sort !== 'place') throw new Error('expected a place panel')
+    const retention = d.facts.find((f) => f.field === 'retention')
+    expect(retention?.value).toBe('six weeks')
+    expect(retention?.byHand).toBe(true)
+    expect(retention?.sourceNames).toEqual([])
+  })
+
+  it('leaves the place’s other facts attributed to their document', () => {
+    const typed = answerByHand(p(), 'pl-4', 'retention', 'six weeks')
+    const d = panelFor(typed, 'pl-4', V)
+    if (d?.sort !== 'place') throw new Error('expected a place panel')
+    const where = d.facts.find((f) => f.field === 'where')
+    expect(where?.byHand).toBe(false)
+    expect(where?.sourceNames).toEqual(['informativa-clienti.pdf'])
+  })
+
+  it('answers the question it was asked, so the roll-up drops by one', () => {
+    const before = panelFor(p(), 'pl-7', V)
+    const after = panelFor(answerByHand(p(), 'pl-7', 'leavesEEA', false), 'pl-7', V)
+    if (before?.sort !== 'place' || after?.sort !== 'place') throw new Error('expected place panels')
+    expect(after.unknowns.count).toBe(before.unknowns.count - 1)
+    expect(after.facts.find((f) => f.field === 'eea')?.byHand).toBe(true)
   })
 })
