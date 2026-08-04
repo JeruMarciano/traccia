@@ -97,7 +97,10 @@ is in [`docs/decisions/`](docs/decisions).
 
 ## Status
 
-Working, and used on real sites. Not yet released as a versioned build.
+**v0.3.0 is out as a beta.** [Download it here](https://github.com/JeruMarciano/traccia/releases/latest):
+a universal `.dmg` for macOS, an installer for Windows, and checksums for both. Beta because the
+installers are unsigned, the project-file format is still settling, and one pair of hands has used
+it so far.
 
 Scanning a website and printing the map came first. Then document reading: hand Traccia a
 privacy notice or a DPA and it offers what the text appears to describe, for you to confirm.
