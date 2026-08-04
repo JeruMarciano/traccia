@@ -165,6 +165,28 @@ jobs:
           else
             npm run tauri build
           fi
+      # A portable copy alongside the installer. On Windows this is the compiled binary itself,
+      # which needs no installation and no administrator rights: a consultant standing at a
+      # client's machine often has neither. On macOS the .app is already a self-contained folder,
+      # so it only needs zipping, and `ditto` is used rather than `zip` because it preserves the
+      # bundle's structure and executable bits where a plain archive does not.
+      - name: package the portable copy
+        shell: bash
+        run: |
+          # The version comes from the manifest, not from the ref: a manual run's ref_name is a
+          # branch, and "Traccia_main_portable.exe" tells a downloader nothing.
+          VERSION=$(node -p "require('./package.json').version")
+          mkdir -p portable
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            ditto -c -k --sequesterRsrc --keepParent \
+              src-tauri/target/universal-apple-darwin/release/bundle/macos/Traccia.app \
+              "portable/Traccia_${VERSION}_universal_portable.app.zip"
+          else
+            cp src-tauri/target/release/traccia.exe \
+              "portable/Traccia_${VERSION}_x64_portable.exe"
+          fi
+          ls -l portable
+
       - name: report the shipped size
         shell: bash
         run: |
@@ -182,4 +204,5 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            portable/*
           if-no-files-found: warn
