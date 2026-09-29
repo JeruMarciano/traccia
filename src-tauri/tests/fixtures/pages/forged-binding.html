@@ -1,0 +1,6 @@
+<!doctype html>
+<html><body>
+<script>try { tracciaConsent('{"type":"cmpDetected","cmp":"iubenda"}') } catch (e) { document.title = 'no-binding' }</script>
+<!-- Again every 100 ms, so a forgery is also attempted while detection runs, after the binding exists. -->
+<script>setInterval(() => { try { tracciaConsent('{"type":"cmpDetected","cmp":"iubenda"}') } catch (e) {} }, 100)</script>
+</body></html>
