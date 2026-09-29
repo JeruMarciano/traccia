@@ -55,131 +55,19 @@
 //! it. None of these is asserted absent anywhere in this file. Recorded
 //! plainly rather than implied by omission.
 
-use std::net::SocketAddr;
+mod common;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::net::UdpSocket;
 
-use traccia_lib::proxy::{self, Ledger};
-use traccia_lib::scan::{self, ScanState, Target};
+use traccia_lib::proxy::Ledger;
+use traccia_lib::scan::{self, ScanState};
 
-// ---------------------------------------------------------------------------
-// The fixture site
-// ---------------------------------------------------------------------------
-
-/// The page every fixture serves. Three off-site hosts by IP literal — never
-/// resolved, never dialled, and `admission::decide` denies an IP literal
-/// unconditionally (`DenyReason::IpLiteral`) before any connector sees it —
-/// which is what proves the third assertion in
-/// `a_scan_contacts_the_target_and_nothing_else` is testing something real
-/// rather than an empty ledger nobody ever tried to fill.
-const FIXTURE_HTML: &str = concat!(
-    "<!doctype html><html><body>",
-    "<img src=\"http://192.0.2.10/pixel.gif\">",
-    "<script src=\"http://198.51.100.20/track.js\"></script>",
-    "<link rel=\"stylesheet\" href=\"http://203.0.113.30/style.css\">",
-    "</body></html>",
-);
-
-/// A loopback HTTP server standing in for a scanned website, plus the
-/// scan-target host the test suite tells `scan.rs` to open. The host is a
-/// plain, dotted, non-IP string under `.invalid` so it passes every check
-/// `admission::vet_host` and `scan::Target` construction would apply to a
-/// real one; it is never resolved, because the connector below recognises it
-/// as a string and dials the loopback listener directly.
-struct Site {
-    host: String,
-    origin_port: u16,
-}
-
-impl Site {
-    fn target(&self) -> Target {
-        Target {
-            url: format!("http://{}/", self.host),
-            host: self.host.clone(),
-            origins: vec![self.host.clone()],
-        }
-    }
-
-    /// The one seam `run_pipeline` allows a test to substitute. Recognises
-    /// exactly `(self.host, 80)` — the only pair `admission::decide` will
-    /// ever admit for this scan's origins — and dials the loopback fixture
-    /// listener directly, performing no name resolution at all. Anything
-    /// else reaching this connector would mean `admission::decide` admitted
-    /// a host this scan never should have, so it is refused rather than
-    /// guessed at.
-    fn connector(&self) -> proxy::Connector {
-        let host = self.host.clone();
-        let origin_port = self.origin_port;
-        Arc::new(move |h: String, p: u16| {
-            let dial = (h == host && p == 80).then_some(origin_port);
-            Box::pin(async move {
-                match dial {
-                    Some(port) => TcpStream::connect(("127.0.0.1", port)).await,
-                    None => Err(std::io::Error::other(
-                        "test connector: admitted a host the fixture does not recognise",
-                    )),
-                }
-            }) as proxy::BoxFuture<'static, std::io::Result<TcpStream>>
-        })
-    }
-}
-
-/// Starts the loopback fixture server and returns the `Site` describing it.
-/// A fresh listener and a fresh, port-derived host per call, so concurrent
-/// tests never share one scan's admitted origin with another's.
-async fn fixture_site() -> Site {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind loopback fixture listener");
-    let addr: SocketAddr = listener.local_addr().expect("fixture listener address");
-    tokio::spawn(async move {
-        loop {
-            let Ok((stream, _peer)) = listener.accept().await else {
-                break;
-            };
-            tokio::spawn(serve_fixture_page(stream));
-        }
-    });
-    Site {
-        host: format!("scan-fixture-{}.invalid", addr.port()),
-        origin_port: addr.port(),
-    }
-}
-
-/// Answers one plain-HTTP request with `FIXTURE_HTML`.
-///
-/// Reads to EOF rather than one `read()` call, because `proxy.rs`'s
-/// plain-HTTP forwarding always shuts its write half immediately after
-/// sending the request head (there is no body to follow — see `proxy.rs`'s
-/// `Mode::Forward` arm) before reading the response. That is a normal
-/// TCP half-close, not an abort, and an HTTP/1.1 origin server is expected to
-/// keep reading and then respond; reading to EOF here is what makes this
-/// fixture that kind of server rather than one that answers before the whole
-/// request has arrived. Carried risk (a) from the task brief — whether a
-/// *real* origin server would instead treat the early FIN as an abort — is
-/// a property of servers this suite does not control and remains open.
-async fn serve_fixture_page(mut stream: TcpStream) {
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 1024];
-    loop {
-        match stream.read(&mut chunk).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => buf.extend_from_slice(&chunk[..n]),
-        }
-    }
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        FIXTURE_HTML.len(),
-        FIXTURE_HTML,
-    );
-    let _ = stream.write_all(response.as_bytes()).await;
-    let _ = stream.shutdown().await;
-}
+use common::{fixture_site, Site};
 
 // ---------------------------------------------------------------------------
 // Scan-pipeline helpers

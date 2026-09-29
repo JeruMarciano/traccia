@@ -84,7 +84,7 @@ pub struct ScanOutput {
     pub storage_keys: Vec<cdp::StorageKey>,
     /// When the cookie jar was captured — `SystemTime::now()` taken as close
     /// as this module can get to the moment `cdp::observe` actually sent
-    /// `Network.getAllCookies`, deliberately not `profile_dir_path()` time,
+    /// `Storage.getCookies`, deliberately not `profile_dir_path()` time,
     /// which is tens of seconds earlier for a multi-page scan. A backwards
     /// system clock must not panic a scan, hence `unwrap_or(0)` rather than
     /// `.unwrap()`.
@@ -433,7 +433,7 @@ async fn run_pipeline(
 
     let observed = cdp::observe(&launched, &target.url, MAX_PAGES, cancel_token).await;
     // As close as this module can get to the moment `observe` actually sent
-    // `Network.getAllCookies` — the call already happened, at the end of
+    // `Storage.getCookies` — the call already happened, at the end of
     // `observe`'s own await, tens of seconds after `profile_dir_path()` on a
     // multi-page scan. `unwrap_or(0)` rather than `.unwrap()`: a backwards
     // system clock must not panic a scan.
