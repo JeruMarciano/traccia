@@ -81,3 +81,6 @@ Sites 00, 21, 30, 49: all four scanned (fixed by Task 1, confirmed here).
 appear in the reference only *after* its accept click; 12 were present before consent. Without a
 click — which Task 6 adds — the reachable ceiling is 366 of 595 (61.5%); the scanner has 354 of
 those 366 (96.7%). The gate is unreachable at R1 by construction: it belongs where the click exists.
+
+Decided with the user (2026-09-29): the end-cookie gate moves from R1 to R2, after the click. The
+other four R1 gates pass, so batch 2 continues.
