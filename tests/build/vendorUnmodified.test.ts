@@ -10,7 +10,7 @@ const SOURCE = readFileSync(join(DIR, 'SOURCE.md'), 'utf8')
 
 describe('the vendored autoconsent', () => {
   it('matches the sha256 SOURCE.md records for the engine and the rules', () => {
-    for (const file of ['autoconsent.playwright.js', 'compact-rules.json']) {
+    for (const file of ['autoconsent.playwright.js', 'rules.json']) {
       const row = SOURCE.split('\n').find((l) => l.startsWith(`| \`${file}\``))
       const recorded = row?.match(/`([0-9a-f]{64})`/)?.[1]
       const actual = createHash('sha256').update(readFileSync(join(DIR, file))).digest('hex')

@@ -120,9 +120,9 @@ notice's wording says "on the home page, before consent".
 ### 5.2 Running autoconsent
 
 Bundle `dist/autoconsent.playwright.js` (143 KB, 35 KB gz) and the rules
-(`rules/compact-rules.json`, 277 KB / 56 KB gz). The plan's first autoconsent task checks that
-the playwright engine accepts the compact format through its `init` message. If it does not,
-ship `rules/rules.json` (720 KB / 75 KB gz) instead. Both are unmodified.
+(`rules/rules.json`, 720 KB / 75 KB gz), both unmodified. The compact format
+(`rules/compact-rules.json`, 277 KB) was shipped first and dropped: it carries no opt-in steps,
+so the engine answers `optIn` with success having clicked nothing (Task 6).
 
 The engine runs in an **isolated world** (`Page.createIsolatedWorld`). It shares the DOM, but the
 page cannot patch the engine's globals. It talks to Rust through one `Runtime.addBinding`. Rust
