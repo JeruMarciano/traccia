@@ -57,7 +57,8 @@ pub struct ObservedHost {
 ///
 /// Serialises to `ScanResult["cookies"][n]` in `src/core/types.ts`, field for
 /// field with `RawScanCookie`: `name`, `domain`, `session`,
-/// `expiresEpochSeconds`, `phase`. `f64` rather than an integer because CDP hands back
+/// `expiresEpochSeconds`, `phase`. `phase` is omitted when it is not known —
+/// see [`Driver::finish`]. `f64` rather than an integer because CDP hands back
 /// `expires` as a float and core receives a JSON number either way.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,7 +67,8 @@ pub struct ScanCookie {
     pub domain: String,
     pub session: bool,
     pub expires_epoch_seconds: f64,
-    pub phase: Phase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<Phase>,
 }
 
 /// One form field found on one visited page — never its value, see
@@ -215,7 +217,7 @@ fn sanitise_cookies(raw: &[serde_json::Value]) -> (Vec<ScanCookie>, bool) {
             session,
             expires_epoch_seconds: expires.clamp(-1.0, 4e9),
             // Provisional: [`Driver::finish`] sets the real phase.
-            phase: Phase::Before,
+            phase: None,
         });
     }
     (cookies, gap)
@@ -1200,8 +1202,9 @@ struct Driver<T: CdpTransport> {
     #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
     attempt_known: Option<HashSet<String>>,
     /// `(name, domain)` of every cookie at the first snapshot, taken on the
-    /// home page before any click.
-    before_cookies: HashSet<(String, String)>,
+    /// home page before any click. `None` when that snapshot never ran, failed,
+    /// or came back with a gap: then which cookies came first is not known.
+    before_cookies: Option<HashSet<(String, String)>>,
 }
 
 impl<T: CdpTransport> Driver<T> {
@@ -1218,15 +1221,18 @@ impl<T: CdpTransport> Driver<T> {
             storage_keys: Vec::new(),
             phase: Phase::Before,
             attempt_known: None,
-            before_cookies: HashSet::new(),
+            before_cookies: None,
         }
     }
 
     /// A consent click is about to happen: everything first seen from now on
-    /// is `After`.
+    /// is `After`. A second call while one attempt is open keeps the first
+    /// attempt's hosts, so an abandon gives back everything since the first.
     #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
     fn begin_consent_attempt(&mut self) {
-        self.attempt_known = Some(self.acc.known());
+        if self.attempt_known.is_none() {
+            self.attempt_known = Some(self.acc.known());
+        }
         self.phase = Phase::After;
     }
 
@@ -1931,16 +1937,18 @@ impl<T: CdpTransport> Driver<T> {
         let (cookies, gap) = self.fetch_cookies().await?;
         if gap {
             self.gaps.note("cookies:gap");
+            return Ok(());
         }
-        self.before_cookies = cookies.into_iter().map(|c| (c.name, c.domain)).collect();
+        self.before_cookies = Some(cookies.into_iter().map(|c| (c.name, c.domain)).collect());
         Ok(())
     }
 
     /// The one place that builds the [`Observation`] a completed, cancelled,
     /// or budget-exhausted `run()` actually returns: folds in the cookie
     /// jar at snapshot 2, rather than in [`Driver::observation`] itself. A
-    /// cookie not in snapshot 1 takes the current phase, so with no click
-    /// everything stays `Before`.
+    /// cookie in snapshot 1 is `Before`; with no successful click every cookie
+    /// is `Before`; otherwise a cookie not in snapshot 1 is `After` — or has no
+    /// phase at all when snapshot 1 is unknown, because a blank beats a guess.
     async fn finish(
         &mut self,
         pages_visited: u32,
@@ -1952,10 +1960,11 @@ impl<T: CdpTransport> Driver<T> {
         }
         for c in &mut cookies {
             let pair = (c.name.clone(), c.domain.clone());
-            c.phase = if self.before_cookies.contains(&pair) {
-                Phase::Before
-            } else {
-                self.phase
+            c.phase = match (&self.before_cookies, self.phase) {
+                (_, Phase::Before) => Some(Phase::Before),
+                (Some(before), _) if before.contains(&pair) => Some(Phase::Before),
+                (Some(_), phase) => Some(phase),
+                (None, _) => None,
             };
         }
         let mut observation = self.observation(pages_visited, stopped_early);
@@ -3219,9 +3228,49 @@ mod tests {
         d.begin_consent_attempt();
         let observation = d.finish(1, false).await.unwrap();
         let phase = |n: &str| observation.cookies.iter().find(|c| c.name == n).unwrap().phase;
-        assert_eq!(phase("A"), Phase::Before);
-        assert_eq!(phase("B"), Phase::After);
+        assert_eq!(phase("A"), Some(Phase::Before));
+        assert_eq!(phase("B"), Some(Phase::After));
         assert_eq!(d.transport.methods_for(None), ["Storage.getCookies", "Storage.getCookies"]);
+    }
+
+    /// Snapshot 1 refused, snapshot 2 answered with one cookie.
+    async fn after_a_refused_first_snapshot(attempt: bool) -> Option<Phase> {
+        let mut t = FakeTransport::new();
+        t.refuse_on("Storage.getCookies", None);
+        t.results.insert(
+            "Storage.getCookies".into(),
+            json!({ "cookies": [{ "name": "A", "domain": ".site.example", "session": true, "expires": -1.0 }] }),
+        );
+        let mut d = Driver::new(t);
+        d.snapshot_before_cookies().await.unwrap();
+        d.transport.refuse.clear();
+        if attempt {
+            d.begin_consent_attempt();
+        }
+        let observation = d.finish(1, false).await.unwrap();
+        observation.cookies[0].phase
+    }
+
+    #[tokio::test]
+    async fn a_missing_first_snapshot_leaves_a_cookie_after_a_click_without_a_phase() {
+        assert_eq!(after_a_refused_first_snapshot(true).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_missing_first_snapshot_without_a_click_is_still_before() {
+        assert_eq!(after_a_refused_first_snapshot(false).await, Some(Phase::Before));
+    }
+
+    #[test]
+    fn a_second_begin_keeps_the_first_attempts_known_hosts() {
+        let mut d = Driver::new(FakeTransport::new());
+        d.acc.record("https://pre.example/", d.phase);
+        d.begin_consent_attempt();
+        d.acc.record("https://first-try.example/", d.phase);
+        d.begin_consent_attempt();
+        d.abandon_consent_attempt();
+        let hosts = std::mem::take(&mut d.acc).finish();
+        assert!(hosts.iter().all(|h| h.phase == Phase::Before));
     }
 
     #[test]
@@ -3303,7 +3352,7 @@ mod tests {
             domain: "google.com".into(),
             session: false,
             expires_epoch_seconds: 2.0e9,
-            phase: Phase::After,
+            phase: Some(Phase::After),
         })
         .unwrap();
         assert!(json.contains("\"phase\":\"after\""));

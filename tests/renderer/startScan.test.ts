@@ -69,6 +69,17 @@ describe('startScan', () => {
     await expect(startScan('https://rossi-editore.it')).rejects.toThrow()
   })
 
+  it('rejects a cookie whose phase is neither before nor after', async () => {
+    const { startScan } = await import('../../src/renderer/bridge')
+    invoke.mockResolvedValueOnce(
+      JSON.stringify({
+        ...validPayload(),
+        cookies: [{ name: '_ga', domain: 'rossi-editore.it', session: true, expiresEpochSeconds: -1, phase: 'during' }],
+      }),
+    )
+    await expect(startScan('https://rossi-editore.it')).rejects.toThrow()
+  })
+
   it('rejects a payload whose cookie element has the wrong shape', async () => {
     const { startScan } = await import('../../src/renderer/bridge')
     invoke.mockResolvedValueOnce(

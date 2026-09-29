@@ -80,7 +80,7 @@ console.log(`consent: ref detected ${ok.filter((r) => r.cmpRef).length}, scanner
 console.log(`cookies: ref pre ${sum('cookiesPre')} (3rd-party ${sum('cookies3Pre')}), ref final ${sum('cookiesFinal')}, scanner ${sum('cookiesScan')}`);
 console.log(`cookies matched at end ${sum('cookiesFinalMatched')}/${sum('cookiesFinal')}, before consent ${sum('cookiesPreMatched')}/${sum('cookiesPre')}`);
 console.log(`scanner third parties by phase: before ${sum('scanPre3')}, after ${sum('scanAfter3')}; ref pre-consent hosts not tagged before: ${sum('scanMissPreByPhase')}`);
-console.log(`scan p90 ${p90('scanMs')} ms`);
+console.log(`scan p90 ${p90('scanMs') ?? 'n/a'}${p90('scanMs') == null ? '' : ' ms'}`);
 console.log(`form fields: scanner ${sum('fieldsScan')}, ref home ${sum('fieldsHome')}, ref key pages ${sum('fieldsPages')}; sites with forms only off-home: ${ok.filter((r) => !r.fieldsHome && r.fieldsPages).length}`);
 console.log(`embeds: ${ok.filter((r) => r.embeds.length).length} sites`);
 console.log('top unnamed orgs:', [...unnamed].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => `${k}(${v})`).join(' '));
