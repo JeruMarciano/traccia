@@ -70,3 +70,45 @@ async fn a_page_cannot_forge_a_consent_message() {
     let out = scan_home(include_str!("fixtures/pages/forged-binding.html")).await;
     assert_eq!(out.consent.cmp, None, "{:?}", out.consent);
 }
+
+// --- Task 7: the text click ---
+
+#[tokio::test]
+async fn a_weak_label_outside_a_consent_container_is_never_clicked() {
+    let out = scan_home(include_str!("fixtures/pages/blog-continua.html")).await;
+    assert!(!out.consent.clicked, "{:?}", out.consent);
+    assert_eq!(out.consent.reason, Some("no-banner"));
+}
+
+#[tokio::test]
+async fn a_label_inside_a_cookie_notice_is_clicked_and_recorded() {
+    let out = scan_home(include_str!("fixtures/pages/text-banner.html")).await;
+    let consent = serde_json::to_value(&out.consent).expect("json");
+    assert_eq!(consent["clicked"], true, "{consent}");
+    assert_eq!(consent["rule"], "text", "{consent}");
+    assert_eq!(consent["matchedText"], "ho capito", "{consent}");
+    assert_eq!(consent["clickNavigated"], false, "{consent}");
+    let cookie = out.cookies.iter().find(|c| c.name == "ok");
+    assert_eq!(cookie.and_then(|c| c.phase), Some(Phase::After), "{:?}", out.cookies);
+}
+
+#[tokio::test]
+async fn a_click_that_navigates_is_flagged_and_the_walk_goes_on_from_home() {
+    let site = common::fixture_site_serving(vec![
+        ("/", include_str!("fixtures/pages/text-banner-link.html").into()),
+        ("/grazie", "<!doctype html><p>Grazie</p>".into()),
+        (
+            "/a",
+            "<!doctype html><script>document.cookie='seen_a=1; max-age=3600; path=/'</script>"
+                .into(),
+        ),
+    ])
+    .await;
+    let out = common::scan(&site).await;
+    let consent = serde_json::to_value(&out.consent).expect("json");
+    assert_eq!(consent["clicked"], true, "{consent}");
+    assert_eq!(consent["matchedText"], "accetta tutti", "{consent}");
+    assert_eq!(consent["clickNavigated"], true, "{consent}");
+    // `/a` is linked only from the home page, not from `/grazie`.
+    assert!(out.cookies.iter().any(|c| c.name == "seen_a"), "{:?}", out.cookies);
+}

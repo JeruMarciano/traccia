@@ -108,12 +108,13 @@ pub fn parse_engine_msg(payload: &str) -> Option<EngineMsg> {
     })
 }
 
-/// Some(name) only when it matches [A-Za-z0-9 ._-]{1,64} and `"name"` appears literally in ENGINE or RULES.
+/// Some(name) only when it matches [A-Za-z0-9 ._+-]{1,64} and `"name"` appears literally in ENGINE
+/// or RULES. `+` because generated rules are named like `auto_AU_acetool.com_n0w_+1`.
 pub fn known_cmp(name: &str) -> Option<String> {
     let shaped = (1..=64).contains(&name.len())
         && name
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b' ' | b'.' | b'_' | b'-'));
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b' ' | b'.' | b'_' | b'+' | b'-'));
     let quoted = format!("\"{name}\"");
     (shaped && (ENGINE.contains(&quoted) || RULES.contains(&quoted))).then(|| name.to_string())
 }
@@ -160,6 +161,64 @@ pub fn opt_in_clicks(cmp: &str) -> bool {
                     .collect()
             })
             .contains(cmp)
+}
+
+/// Whole visible labels a text click may press inside any consent container (spec §5.1 (2)).
+pub const STRONG_LABELS: [&str; 10] = [
+    "accetta tutti", "accetta tutto", "accetta", "accetto", "acconsento", "consenti",
+    "consenti tutti", "accept all", "accept", "allow all",
+];
+/// Labels too common to trust alone: pressed only in a container that links a cookie or privacy
+/// policy — on a school site "CONTINUA" was a blog's "read more".
+pub const WEAK_LABELS: [&str; 5] = ["ok", "continua", "ho capito", "chiudi", "got it"];
+
+/// Runs in the isolated world; clicks at most once. `__STRONG__`/`__WEAK__` are filled from the
+/// consts above by [`text_click_expr`].
+const TEXT_CLICK: &str = r#"(() => {
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 64);
+  const STRONG = new Set(__STRONG__), WEAK = new Set(__WEAK__);
+  const word = /(^|[^a-z])(cookie|consent|gdpr|privacy|cmp|banner)([^a-z]|$)/i;
+  const isContainer = (el) => {
+    if (word.test((el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : ''))) return true;
+    const cs = getComputedStyle(el);
+    if (cs.position !== 'fixed' && cs.position !== 'sticky') return false;
+    const r = el.getBoundingClientRect();
+    return r.top <= 0 || r.bottom >= innerHeight - 1 || r.left <= 0 || r.right >= innerWidth - 1;
+  };
+  const containerOf = (el) => { for (let e = el; e && e !== document.body; e = e.parentElement) if (isContainer(e)) return e; return null; };
+  const hasPolicyLink = (c) => [...c.querySelectorAll('a[href]')].some((a) => /cookie|privacy/i.test(a.getAttribute('href') + ' ' + a.textContent));
+  const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+  const cands = [...document.querySelectorAll('button, a, [role=button], input[type=button], input[type=submit]')].slice(0, 2000);
+  for (const pass of ['strong', 'weak']) for (const el of cands) {
+    const label = norm(el.innerText || el.value);
+    if (!(pass === 'strong' ? STRONG : WEAK).has(label) || !visible(el)) continue;
+    const c = containerOf(el);
+    if (!c || (pass === 'weak' && !hasPolicyLink(c))) continue;
+    el.click();
+    return { clicked: true, label };
+  }
+  return { clicked: false, label: '' };
+})()"#;
+
+/// The text click's expression, built only from consts.
+pub fn text_click_expr() -> String {
+    let list = |l: &[&str]| serde_json::to_string(l).unwrap_or_default();
+    TEXT_CLICK
+        .replace("__STRONG__", &list(&STRONG_LABELS))
+        .replace("__WEAK__", &list(&WEAK_LABELS))
+}
+
+/// Some(label) only when the page says `clicked: true` and the label, lowercased with its
+/// whitespace collapsed, is a whole entry of [`STRONG_LABELS`] or [`WEAK_LABELS`] — so it is
+/// ≤ 64 chars by construction, and anything else the page returns is dropped.
+pub fn sanitise_text_click(raw: &serde_json::Value) -> Option<String> {
+    if raw.get("clicked")?.as_bool()? {
+        let label = raw.get("label")?.as_str()?;
+        let label = label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+        let known = STRONG_LABELS.contains(&label.as_str()) || WEAK_LABELS.contains(&label.as_str());
+        return known.then_some(label);
+    }
+    None
 }
 
 /// autoconsentReceiveMessage({type:'initResp', config: CONFIG, rules: RULES}) — built from consts
@@ -216,6 +275,27 @@ mod tests {
         assert_eq!(known_cmp("Cybotcookiebot").as_deref(), Some("Cybotcookiebot"));
         assert!(known_cmp("Evil Corp CMP").is_none());
         assert!(known_cmp("iubenda\"<script>").is_none());
+    }
+
+    #[test]
+    fn a_generated_rule_name_with_a_plus_is_a_cmp() {
+        assert_eq!(
+            known_cmp("auto_AU_acetool.com_n0w_+1").as_deref(),
+            Some("auto_AU_acetool.com_n0w_+1")
+        );
+    }
+
+    #[test]
+    fn a_text_click_counts_only_for_a_whole_label_in_the_vocabulary() {
+        let click = |v: serde_json::Value| sanitise_text_click(&v);
+        assert_eq!(
+            click(serde_json::json!({"clicked": true, "label": "Accetta  tutti"})).as_deref(),
+            Some("accetta tutti")
+        );
+        assert_eq!(click(serde_json::json!({"clicked": true, "label": "Leggi di più"})), None);
+        assert_eq!(click(serde_json::json!({"clicked": "yes", "label": "ok"})), None);
+        assert_eq!(click(serde_json::json!({"clicked": true, "label": "a".repeat(65)})), None);
+        assert_eq!(click(serde_json::json!({"clicked": false, "label": "ok"})), None);
     }
 
     #[test]

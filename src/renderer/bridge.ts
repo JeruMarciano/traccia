@@ -78,7 +78,7 @@ function isRawFormField(v: unknown): boolean {
 }
 
 /** A CMP rule name as Rust's `known_cmp` admits it. */
-const RULE_NAME = /^[A-Za-z0-9 ._-]{0,64}$/
+const RULE_NAME = /^[A-Za-z0-9 ._+-]{0,64}$/
 /** The longest button label a text click may record (Task 7 caps it in Rust too). */
 const MAX_MATCHED_TEXT = 128
 
