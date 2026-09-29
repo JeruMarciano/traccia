@@ -59,3 +59,25 @@ Any single target that never answers an arming command still fails the whole sca
 because a timeout is treated as the browser having stopped talking. The four fixture failures no
 longer hit it. If R1 shows a `SCAN_FAILED` at `observe` again, this is the first place to look; it
 now has its stage in the local log.
+
+## R1 (after Task 4, 2026-09-29)
+
+Data dir `scanner-upgrade-R1-2026-09-29`, reference pass reused from v2 (as the plan allows for
+R1–R3). Scanner built at 72757e0; the Task 4 fix round (224c0e2) only changes the cookie phase when
+snapshot 1 fails *and* a consent attempt succeeded, which cannot happen before Task 6 clicks.
+
+| Gate (plan R1) | Target | Result | |
+|---|---|---|---|
+| Cookies matched at end | ≥ 80% of 595 | 354 (59.5%) | **miss** |
+| Cookies matched before consent | ≥ 80% of 317 | 302 (95.3%) | pass |
+| Pre-consent hosts missed | ≤ 60 | 21 (baseline 305) | pass |
+| `SCAN_FAILED` without a named stage | 0 | 0 (scan errors 0 of 55) | pass |
+| Scan p90 | ≤ 120,000 ms | 53,655 ms | pass |
+| `recallAll` (reported) | expected ≥ 0.6 | 0.77 | — |
+
+Sites 00, 21, 30, 49: all four scanned (fixed by Task 1, confirmed here).
+
+**Why the end-cookie gate misses.** Of the 241 reference end cookies the scanner did not see, 229
+appear in the reference only *after* its accept click; 12 were present before consent. Without a
+click — which Task 6 adds — the reachable ceiling is 366 of 595 (61.5%); the scanner has 354 of
+those 366 (96.7%). The gate is unreachable at R1 by construction: it belongs where the click exists.
