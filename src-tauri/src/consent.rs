@@ -173,13 +173,15 @@ pub const STRONG_LABELS: [&str; 10] = [
 pub const WEAK_LABELS: [&str; 5] = ["ok", "continua", "ho capito", "chiudi", "got it"];
 
 /// Runs in the isolated world; clicks at most once. `__STRONG__`/`__WEAK__` are filled from the
-/// consts above by [`text_click_expr`].
+/// consts above by [`text_click_expr`]. Container words match at a word start once camelCase is
+/// split, so Cookiebot's centred `#CybotCookiebotDialog` qualifies.
 const TEXT_CLICK: &str = r#"(() => {
   const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 64);
   const STRONG = new Set(__STRONG__), WEAK = new Set(__WEAK__);
-  const word = /(^|[^a-z])(cookie|consent|gdpr|privacy|cmp|banner)([^a-z]|$)/i;
+  const word = /(^|[^a-z])(cookie|consent|gdpr|privacy|cmp|banner)/i;
   const isContainer = (el) => {
-    if (word.test((el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : ''))) return true;
+    const names = (el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : '');
+    if (word.test(names.replace(/([a-z])([A-Z])/g, '$1 $2'))) return true;
     const cs = getComputedStyle(el);
     if (cs.position !== 'fixed' && cs.position !== 'sticky') return false;
     const r = el.getBoundingClientRect();
@@ -208,12 +210,12 @@ pub fn text_click_expr() -> String {
         .replace("__WEAK__", &list(&WEAK_LABELS))
 }
 
-/// Some(label) only when the page says `clicked: true` and the label, lowercased with its
-/// whitespace collapsed, is a whole entry of [`STRONG_LABELS`] or [`WEAK_LABELS`] — so it is
-/// ≤ 64 chars by construction, and anything else the page returns is dropped.
+/// Some(label) only when the page says `clicked: true` and the label, at most 64 chars as the page
+/// cuts it, lowercased with its whitespace collapsed, is a whole entry of [`STRONG_LABELS`] or
+/// [`WEAK_LABELS`]; anything else the page returns is dropped.
 pub fn sanitise_text_click(raw: &serde_json::Value) -> Option<String> {
     if raw.get("clicked")?.as_bool()? {
-        let label = raw.get("label")?.as_str()?;
+        let label = raw.get("label")?.as_str().filter(|l| l.chars().count() <= 64)?;
         let label = label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
         let known = STRONG_LABELS.contains(&label.as_str()) || WEAK_LABELS.contains(&label.as_str());
         return known.then_some(label);
@@ -294,7 +296,8 @@ mod tests {
         );
         assert_eq!(click(serde_json::json!({"clicked": true, "label": "Leggi di più"})), None);
         assert_eq!(click(serde_json::json!({"clicked": "yes", "label": "ok"})), None);
-        assert_eq!(click(serde_json::json!({"clicked": true, "label": "a".repeat(65)})), None);
+        // A vocabulary word, padded: only the 64-char cap rejects it.
+        assert_eq!(click(serde_json::json!({"clicked": true, "label": format!("ok{}", " ".repeat(63))})), None);
         assert_eq!(click(serde_json::json!({"clicked": false, "label": "ok"})), None);
     }
 

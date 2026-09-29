@@ -93,7 +93,8 @@ pub async fn fixture_site() -> Site {
 
 /// Starts the loopback fixture server and returns the `Site` describing it.
 /// Each `(path, html)` pair is served on an exact path match (`/` = home);
-/// any other path is a 404. A fresh listener and a fresh, port-derived host
+/// any other path is a 404; an `html` of `"302 <location>"` is that redirect.
+/// A fresh listener and a fresh, port-derived host
 /// per call, so concurrent tests never share one scan's admitted origin with
 /// another's.
 pub async fn fixture_site_serving(pages: Vec<(&'static str, String)>) -> Site {
@@ -156,6 +157,11 @@ async fn serve_fixture_page(mut stream: TcpStream, pages: Arc<Vec<(&'static str,
     }
     let path = request_path(&String::from_utf8_lossy(&buf));
     let response = match pages.iter().find(|(p, _)| *p == path) {
+        // A page registered as "302 <location>" is a redirect.
+        Some((_, html)) if html.starts_with("302 ") => format!(
+            "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            &html[4..],
+        ),
         Some((_, html)) => format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             html.len(),

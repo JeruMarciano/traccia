@@ -112,3 +112,27 @@ async fn a_click_that_navigates_is_flagged_and_the_walk_goes_on_from_home() {
     // `/a` is linked only from the home page, not from `/grazie`.
     assert!(out.cookies.iter().any(|c| c.name == "seen_a"), "{:?}", out.cookies);
 }
+
+// --- Task 7 fix round ---
+
+#[tokio::test]
+async fn a_home_that_redirects_before_the_click_is_not_a_navigation() {
+    let site = common::fixture_site_serving(vec![
+        ("/", "302 /it/".into()),
+        ("/it/", include_str!("fixtures/pages/text-banner.html").into()),
+    ])
+    .await;
+    let out = common::scan(&site).await;
+    let consent = serde_json::to_value(&out.consent).expect("json");
+    assert_eq!(consent["clicked"], true, "{consent}");
+    assert_eq!(consent["clickNavigated"], false, "{consent}");
+}
+
+#[tokio::test]
+async fn a_centred_camel_case_cookiebot_dialog_is_a_consent_container() {
+    let out = scan_home(include_str!("fixtures/pages/cookiebot-modal.html")).await;
+    let consent = serde_json::to_value(&out.consent).expect("json");
+    assert_eq!(consent["clicked"], true, "{consent}");
+    assert_eq!(consent["rule"], "text", "{consent}");
+    assert_eq!(consent["matchedText"], "allow all", "{consent}");
+}
