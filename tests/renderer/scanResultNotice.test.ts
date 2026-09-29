@@ -224,6 +224,20 @@ describe('scanResultNotice', () => {
       expect(notice).toBe(`${STRINGS.scanStopped(1)} ${STRINGS.consentBannerDetected('OneTrust')}`)
     })
 
+    it('reads the CMP from consent.cmp, in the same words', () => {
+      const consent = { cmp: 'iubenda', clicked: true, rule: 'cmp' as const, ruleName: 'iubenda', matchedText: '', clickNavigated: false }
+      const notice = scanResultNotice(result({ consentMarkers: undefined, consent }))
+      expect(notice).toBe(STRINGS.consentBannerDetected('iubenda'))
+    })
+
+    // A blank beats a guess: with no reason, detection never ran to its end, so no absence is claimed.
+    it('claims no absence when consent carries no reason', () => {
+      const blank = { cmp: null, clicked: false, rule: null, ruleName: '', matchedText: '', clickNavigated: false }
+      expect(scanResultNotice(result({ consentMarkers: undefined, consent: blank }))).toBe('')
+      const ran = { ...blank, reason: 'no-banner' as const }
+      expect(scanResultNotice(result({ consentMarkers: undefined, consent: ran }))).toBe(STRINGS.consentBannerNotDetected)
+    })
+
     it('still reports absence when a completed scan found no marker', () => {
       const notice = scanResultNotice(result({ stoppedEarly: false, consentMarkers: [] }))
       expect(notice).toBe(STRINGS.consentBannerNotDetected)

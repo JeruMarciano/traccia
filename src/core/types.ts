@@ -258,6 +258,20 @@ export interface DoorPath {
   subjectIds: string[]
 }
 
+/** What the scan did about consent, as Rust reports it. */
+export interface ScanConsent {
+  /** The CMP whose rules detected it, by rule name, e.g. "iubenda". */
+  cmp: string | null
+  clicked: boolean
+  /** What the click went by: the CMP's rule, or a button's text. */
+  rule: 'cmp' | 'text' | null
+  ruleName: string
+  matchedText: string
+  clickNavigated: boolean
+  /** Why nothing was clicked. Absent when detection did not run to its end, or a click happened. */
+  reason?: 'no-banner' | 'no-button' | 'click-failed'
+}
+
 export interface RawStorageKey {
   scope: 'local' | 'session'
   key: string
@@ -283,8 +297,9 @@ export interface ScanResult {
   cookies: RawScanCookie[]
   formFields: RawFormField[]
   storageKeys: RawStorageKey[]
-  /** Fixed marker names of consent managers detected, e.g. "OneTrust". Empty = none detected. */
-  consentMarkers: string[]
+  /** v0.3 payloads only: fixed marker names of consent managers detected. Never persisted. */
+  consentMarkers?: string[]
+  consent?: ScanConsent
   /** When the scan captured, seconds since epoch. Rust supplies it; core never asks the clock. */
   capturedAtEpochSeconds: number
 }

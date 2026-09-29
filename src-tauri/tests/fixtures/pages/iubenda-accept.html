@@ -1,0 +1,27 @@
+<!doctype html>
+<html><body>
+<p>Home</p>
+<div id="iubenda-cs-banner" style="position:fixed;bottom:0;left:0;right:0;padding:16px;background:#fff">
+  <p>We use cookies.</p>
+  <button class="iubenda-cs-accept-btn" onclick="accept()">Accept</button>
+  <button class="iubenda-cs-reject-btn">Reject</button>
+</div>
+<script>
+// Tags that wait for consent load from after-{p}.invalid, {p} being this fixture's own port
+// (the page is served as scan-fixture-{p}.invalid). Once consent is stored, they load on every visit.
+function loadAfter() {
+  var s = document.createElement('script');
+  s.src = 'http://' + location.hostname.replace('scan-fixture-', 'after-') + '/a.js';
+  document.head.appendChild(s);
+}
+function accept() {
+  document.cookie = 'traccia_consent=1; max-age=3600; path=/';
+  document.getElementById('iubenda-cs-banner').remove();
+  loadAfter();
+}
+if (document.cookie.indexOf('traccia_consent=1') !== -1) {
+  document.getElementById('iubenda-cs-banner').remove();
+  loadAfter();
+}
+</script>
+</body></html>

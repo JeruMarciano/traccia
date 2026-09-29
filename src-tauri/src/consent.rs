@@ -21,14 +21,51 @@ pub const CONFIG: &str = r#"{"enabled":true,"autoAction":null,"disabledCmps":[],
 /// The longest eval `code` relayed to the page's main world.
 const MAX_CODE: usize = 8192;
 
-/// What the scan did about consent. Task 6 adds the click.
+/// What an automatic click went by: the CMP's own rule, or (Task 7) a button's text.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConsentRule {
+    Cmp,
+    Text,
+}
+
+/// What the scan did about consent.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Consent {
     pub cmp: Option<String>,
     pub clicked: bool,
-    /// "no-banner" | "no-button"; `None` when detection did not run to its end.
+    pub rule: Option<ConsentRule>,
+    /// The CMP rule that clicked; empty when nothing was clicked by rule.
+    pub rule_name: String,
+    /// The button label a text click matched (Task 7); empty otherwise.
+    pub matched_text: String,
+    /// A page load fired while the click was being made.
+    pub click_navigated: bool,
+    /// "no-banner" | "no-button" | "click-failed" when nothing was clicked; absent when detection
+    /// did not run to its end, or a click happened.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'static str>,
+}
+
+/// Rust's half of the opt-in exchange: an `optInResult` counts only as the answer to an `optIn`
+/// Rust itself sent, and only once.
+#[derive(Default)]
+pub struct Bridge {
+    opt_in_pending: bool,
+}
+
+impl Bridge {
+    /// Marks an `optIn` as sent and returns the fixed expression that sends it.
+    pub fn request_opt_in(&mut self) -> &'static str {
+        self.opt_in_pending = true;
+        "autoconsentReceiveMessage({type:'optIn'})"
+    }
+
+    /// `Some(result)` only when an `optIn` is pending; clears it.
+    pub fn on_opt_in_result(&mut self, result: bool) -> Option<bool> {
+        std::mem::take(&mut self.opt_in_pending).then_some(result)
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -173,6 +210,15 @@ mod tests {
         assert_eq!(known_cmp("Cybotcookiebot").as_deref(), Some("Cybotcookiebot"));
         assert!(known_cmp("Evil Corp CMP").is_none());
         assert!(known_cmp("iubenda\"<script>").is_none());
+    }
+
+    #[test]
+    fn an_opt_in_result_without_a_pending_request_is_ignored() {
+        let mut b = Bridge::default();
+        assert_eq!(b.on_opt_in_result(true), None);
+        b.request_opt_in();
+        assert_eq!(b.on_opt_in_result(true), Some(true));
+        assert_eq!(b.on_opt_in_result(true), None); // one answer per request
     }
 
     #[test]

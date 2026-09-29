@@ -70,10 +70,6 @@ pub struct ScanOutput {
     pub possible_gaps: u32,
     pub stopped_early: bool,
     pub cookies: Vec<cdp::ScanCookie>,
-    /// The v0.3 shape the renderer still reads: the CMP in [`Self::consent`],
-    /// if any, as its one entry. Empty means autoconsent's rules detected none,
-    /// not that no consent banner exists.
-    pub consent_markers: Vec<String>,
     /// What the scan did about consent — see `cdp::Observation::consent`.
     pub consent: crate::consent::Consent,
     /// Form fields found across every visited page — see
@@ -502,8 +498,6 @@ async fn run_pipeline(
             possible_gaps: observation.possible_gaps,
             stopped_early: observation.stopped_early,
             cookies: observation.cookies,
-            // Task 6 moves the renderer to `consent`; until then the notice reads this.
-            consent_markers: observation.consent.cmp.clone().into_iter().collect(),
             consent: observation.consent,
             form_fields: observation.form_fields,
             storage_keys: observation.storage_keys,
@@ -810,8 +804,13 @@ mod tests {
                 expires_epoch_seconds: 2.0e9,
                 phase: Some(cdp::Phase::Before),
             }],
-            consent_markers: vec!["OneTrust".into()],
-            consent: crate::consent::Consent::default(),
+            consent: crate::consent::Consent {
+                cmp: Some("iubenda".into()),
+                clicked: true,
+                rule: Some(crate::consent::ConsentRule::Cmp),
+                rule_name: "iubenda".into(),
+                ..Default::default()
+            },
             form_fields: vec![cdp::FormField {
                 page: "https://rossi-editore.it/contatti".into(),
                 name: "email".into(),
@@ -834,7 +833,11 @@ mod tests {
         assert!(json.contains("\"stoppedEarly\""));
         assert!(json.contains("\"cookies\""));
         assert!(json.contains("\"expiresEpochSeconds\""));
-        assert!(json.contains("\"consentMarkers\""));
+        assert!(json.contains("\"consent\""));
+        assert!(!json.contains("\"consentMarkers\""));
+        assert!(json.contains("\"ruleName\":\"iubenda\""));
+        assert!(json.contains("\"rule\":\"cmp\""));
+        assert!(json.contains("\"clickNavigated\""));
         assert!(json.contains("\"formFields\""));
         assert!(json.contains("\"autocomplete\""));
         assert!(json.contains("\"storageKeys\""));
