@@ -84,3 +84,43 @@ those 366 (96.7%). The gate is unreachable at R1 by construction: it belongs whe
 
 Decided with the user (2026-09-29): the end-cookie gate moves from R1 to R2, after the click. The
 other four R1 gates pass, so batch 2 continues.
+
+## R2 (after Task 7, 2026-09-30)
+
+Reference pass reused from v2. First run (`scanner-upgrade-R2-2026-09-29`, built at 5818f56) missed
+the accept gate: 30 of the 45 sites the reference accepted. Twelve were Cookiebot. The engine's
+built-in Cookiebot `optIn` clicks two legacy button ids and reports success whether or not they
+exist, so the `opt_in_clicks` guard (Task 6) correctly refuses it; the text fallback then missed the
+dialog, because `#CybotCookiebotDialog` is camelCase and a centred modal. Fixed in Task 7 (94dd93f):
+the container word test splits camelCase and matches at a word start. Site 14 failed once at
+`observe` (`Timeout("Network.enable")`, the limit stated above); it scanned cleanly on three re-runs.
+
+Second run (`scanner-upgrade-R2b-2026-09-30`, built at 94dd93f):
+
+| Gate (plan R2) | Target | Result | |
+|---|---|---|---|
+| Cookies matched at end (moved from R1) | ≥ 80% of 595 | 555 (93.3%) | pass |
+| CMP detected on the reference's CMP sites | ≥ 27 of 29 | 33 of 33 | pass |
+| No Iubenda from the badge (02, 14, 32) | none | 02 and 32 none; 14 shows a real `ckies` banner the reference also accepted | pass |
+| Accept clicked | ≥ 38 of 41 | 42 of 45 (93.3%) | pass |
+| Wrong clicks, hand-checked sites | 0 | 0 | pass |
+| Median `recallAll` | ≥ 0.80 | 0.94 | pass |
+
+Also: scan errors 0 of 55; scan p90 64,629 ms; pre-consent hosts missed 17.
+
+The five hand-checked sites could not be identified with certainty from the earlier session, so all
+seven candidates were checked (02, 10, 14, 17, 32, 35, 39), plus the two clicks the reference did
+not make (44, 53):
+- 10 clicks "Accetta" in the Moove cookie bar; 39 clicks "Accept" in the cookie-law-info bar — the
+  blog "CONTINUA" link is no longer touched.
+- 02, 32: no CMP, no click. 17: no click.
+- 35: a real cookie bar (fixed, bottom) whose only control is "Ok" and which has no policy link, so
+  the weak-label rule does not click it. Correct by the rule, but its reason `no-banner` overstates:
+  Task 12's copy must say "no consent banner recognised", not "no banner".
+- 44: a real `ct-ultimate-gdpr` popup with "OK"; the reference missed it. 53: "Accetta tutti" inside
+  the cookie-policy wrapper; the click reloads the page, recorded as `clickNavigated`.
+- All 19 text clicks matched a strong label ("accept", "accetta tutti", …); none used a weak one.
+
+Not clicked: 20 (the reference's button was outside the banner — correct refusal), 35 (above), 46
+(CookieYes "Accetta tutti i cookies": the label is outside the vocabulary and the rule is refused
+by the guard).
