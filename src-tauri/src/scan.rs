@@ -804,7 +804,7 @@ mod tests {
                 domain: "rossi-editore.it".into(),
                 session: false,
                 expires_epoch_seconds: 2.0e9,
-                phase: cdp::Phase::Before,
+                phase: Some(cdp::Phase::Before),
             }],
             consent_markers: vec!["OneTrust".into()],
             form_fields: vec![cdp::FormField {
