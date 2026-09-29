@@ -351,11 +351,14 @@ const PROFILE_REMOVE_RETRY_DELAY: Duration = Duration::from_millis(100);
 ///
 /// **Status for the Task 13 handover:** the residual four hosts
 /// (`www.gstatic.com`, `accounts.google.com`, `www.google.com`,
-/// `android.clients.google.com`) are *attempted and denied* — distinct from
-/// *unverified* — every one of them reaches the proxy and is refused by the
-/// same admission decision as anything else that is not the scan target, so
-/// nothing leaves the machine. What remains unsuppressed, after two
-/// genuine, evidence-based search rounds, is the *attempt itself*.
+/// `android.clients.google.com`) are *attempted* — distinct from
+/// *unverified*. Since spec §13 they are admitted on 80/443 during a scan like
+/// any host a visitor's browser reaches, so in the product they may reach the
+/// network (only ever at an address `proxy::is_permitted_upstream` permits);
+/// in tests the connector refuses to dial them. They never become a host the
+/// site contacted: `ScanOutput.hosts` comes from the pages' own CDP events.
+/// What remains unsuppressed, after two genuine, evidence-based search
+/// rounds, is the *attempt itself*.
 /// `tests/egress.rs`'s `KNOWN_DENIED_BROWSER_SERVICE_HOSTS` carries the
 /// same four hosts with the same per-host reasoning, asserted as the
 /// exhaustive documented-exception list rather than silently tolerated.

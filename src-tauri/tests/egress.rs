@@ -337,8 +337,9 @@ const KNOWN_DENIED_BROWSER_SERVICE_HOSTS: [(&str, &str); 5] = [
          locally verified 151, which never attempts it) on first navigation; no \
          --disable-features name or switch verified present for it, and the \
          historical --safebrowsing-* switches were already found absent from \
-         Chrome 151 in the Task 6 audit. Denied by the proxy like every host in \
-         this list; nothing leaves the machine",
+         Chrome 151 in the Task 6 audit. Admitted on 443 like every host in this \
+         list, so in the product it may reach the network; the test connector \
+         refuses to dial it",
     ),
     (
         "www.gstatic.com",

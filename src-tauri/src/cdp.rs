@@ -2,9 +2,9 @@
 //! Protocol.
 //!
 //! **This module observes. It does not enforce.** By the time a request
-//! reaches CDP the proxy has already made the admission decision — anything
-//! outside the scan origins was refused before this module ever saw it
-//! (`proxy.rs`, and `docs/decisions/2026-08-01-plain-http-audit.md`). What CDP
+//! reaches CDP the proxy has already made the admission decision — during a
+//! scan it admits any named host on 80/443, as a visitor's browser would reach
+//! it, and refuses the rest (`admission.rs`, `proxy.rs`). What CDP
 //! adds is *attribution*: which host, how many requests. Nothing here is a
 //! guard, and nothing here should ever be read as one. The CDP spike measured
 //! this view missing 15 of 37 hosts the proxy saw, which is why the proxy's

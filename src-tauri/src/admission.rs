@@ -3,8 +3,8 @@
 //! During a scan the proxy admits what a visitor's browser would fetch: any well-formed host on
 //! 80 or 443, third parties included. A scanner that saw only the first-party layer would miss the
 //! vendors a data-flow map exists to show, because each tag a page loads goes on to load the next.
-//! What stays denied, whoever asks: IP literals, every other port, a malformed authority, and
-//! everything when no scan is running.
+//! What stays denied, whoever asks: IP literals, single-label names, every other port, a malformed
+//! authority, and everything when no scan is running.
 //!
 //! This decision is therefore no longer the network guard. It reads an authority string; it cannot
 //! know where a name resolves, and any third party's DNS can point at the user's router or the
@@ -128,6 +128,12 @@ pub fn decide(host: &str, port: u16, scan_origins: &[String]) -> Decision {
         // only at dial time; refusing it here keeps the ledger a list of names.
         return Decision::Deny { reason: DenyReason::IpLiteral };
     }
+    if !h.contains('.') {
+        // A single label — `localhost`, `router`, an intranet short name — is no web page's third
+        // party, and a resolver may complete it with the machine's search domain. The same rule
+        // `usable_origin` applies to a scan origin.
+        return Decision::Deny { reason: DenyReason::MalformedAuthority };
+    }
     if !ALLOWED_PORTS.contains(&port) {
         return Decision::Deny { reason: DenyReason::PortNotAllowed };
     }
@@ -214,6 +220,19 @@ mod tests {
     }
 
     #[test]
+    fn a_single_label_host_is_denied_before_any_lookup() {
+        // A resolver may complete `router` or `jira` with the machine's search domain and answer
+        // with an intranet address; no web page's third party is a single label.
+        for h in ["localhost", "router", "jira", "localhost."] {
+            assert_eq!(
+                denied(&decide(h, 443, &origins(&["rossi-editore.it"]))),
+                &DenyReason::MalformedAuthority,
+                "{h}"
+            );
+        }
+    }
+
+    #[test]
     fn a_third_party_on_another_port_is_still_denied() {
         assert_eq!(
             denied(&decide("cdn.example", 8443, &origins(&["rossi-editore.it"]))),
@@ -277,11 +296,11 @@ mod tests {
         for h in hostile {
             for port in [0u16, 80, 443, 8080, 65535] {
                 let d = decide(h, port, &origins(&["rossi-editore.it", "", "it"]));
-                // `-.-` and `xn--` pass `vet_host`'s character allowlist, so on a web port they are
-                // admitted like any other third-party name: no resolver will answer them, and one
-                // that did would still face `proxy::is_permitted_upstream`.
-                let admissible = matches!(h, "-.-" | "xn--") && (port == 80 || port == 443);
-                assert_eq!(matches!(d, Decision::Allow { .. }), admissible, "{h:?}:{port}");
+                // `-.-` passes `vet_host`'s character allowlist; what it gets is left unpinned, and
+                // only the absence of a panic is asserted for it.
+                if h != "-.-" {
+                    assert!(matches!(d, Decision::Deny { .. }), "expected deny for {h:?}:{port}");
+                }
             }
         }
     }
