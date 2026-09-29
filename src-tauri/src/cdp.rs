@@ -1693,7 +1693,8 @@ impl<T: CdpTransport> Driver<T> {
     /// cannot call it, and [`Driver::on_event`] only queues a call from the
     /// context recorded here. The engine's `eval` requests are the one
     /// expression not built from Rust consts: they run in the page's main
-    /// world under the fixed contract, and only a boolean goes back.
+    /// world under the fixed contract, wrapped by [`consent::eval_request`]
+    /// so only a boolean comes back.
     ///
     /// Any step failing is one gap, `consent:bridge`, and no detection — never
     /// a scan failure, except `BrowserGone`.
@@ -1744,7 +1745,8 @@ impl<T: CdpTransport> Driver<T> {
                         }
                     }
                     EngineMsg::Eval { id, code } => {
-                        let answer = self.bridge_eval(session, code, None).await?;
+                        let answer =
+                            self.bridge_eval(session, consent::eval_request(&code), None).await?;
                         let b = answer
                             .and_then(|r| r.get("result")?.get("value")?.as_bool())
                             .unwrap_or(false);
@@ -1854,6 +1856,8 @@ impl<T: CdpTransport> Driver<T> {
             _ => return Ok(consent_found(detection, cancel.is_cancelled())),
         };
         if !consent::opt_in_clicks(&cmp) {
+            // Task 7: the text attempt goes here too — a rule that cannot
+            // prove its click is where most refused CMPs land.
             return Ok(Consent {
                 cmp: Some(cmp),
                 reason: Some("click-failed"),
@@ -1862,6 +1866,10 @@ impl<T: CdpTransport> Driver<T> {
         }
         self.begin_consent_attempt();
         self.load_fired = false;
+        // Whatever the engine said before it was asked is not the answer.
+        // Queued evals stay: the engine still waits for them.
+        self.consent_inbox
+            .retain(|m| !matches!(m, EngineMsg::OptInResult(_)));
         let opt_in = self.consent_bridge.request_opt_in().to_string();
         let mut clicked = false;
         if self.consent_reply(session, opt_in).await? {
@@ -1878,7 +1886,10 @@ impl<T: CdpTransport> Driver<T> {
             rule_name: if clicked { cmp } else { String::new() },
             matched_text: String::new(),
             click_navigated: self.load_fired,
-            reason: (!clicked && !cancel.is_cancelled()).then_some("click-failed"),
+            // A cancel, or a bridge that died (gap noted), is a blank: the
+            // engine never answered, and a click may even have happened.
+            reason: (!clicked && !cancel.is_cancelled() && self.consent_context.is_some())
+                .then_some("click-failed"),
         })
     }
 
@@ -1903,8 +1914,11 @@ impl<T: CdpTransport> Driver<T> {
     /// the `consent:bridge` gap noted and the world no longer read, when it
     /// did not run.
     async fn consent_reply(&mut self, session: &SessionId, reply: String) -> Result<bool, CdpError> {
-        let context = self.consent_context;
-        let ran = self.bridge_eval(session, reply, context).await?.is_some();
+        // No world, no reply: never fall back to the page's main world.
+        let Some(context) = self.consent_context else {
+            return Ok(false);
+        };
+        let ran = self.bridge_eval(session, reply, Some(context)).await?.is_some();
         if !ran {
             // The bridge is gone: stop reading its world.
             self.consent_context = None;
@@ -4073,10 +4087,24 @@ mod tests {
     /// optIn); then the consent step runs, and a request to `after.example`
     /// plus `answer` arrive while Rust's optIn is in flight.
     async fn accept_with(before: &[&str], answer: &[&str]) -> (Driver<FakeTransport>, Consent) {
+        accept_on(primed(), before, answer).await
+    }
+
+    /// A driver whose engine world is context 7 on SESSION-A, with the home
+    /// page's host already seen.
+    fn primed() -> Driver<FakeTransport> {
         let mut driver = Driver::new(FakeTransport::new());
-        let session = SessionId::from("SESSION-A".to_string());
         driver.consent_context = Some(7);
         driver.acc.record("https://home.example/", driver.phase);
+        driver
+    }
+
+    async fn accept_on(
+        mut driver: Driver<FakeTransport>,
+        before: &[&str],
+        answer: &[&str],
+    ) -> (Driver<FakeTransport>, Consent) {
+        let session = SessionId::from("SESSION-A".to_string());
         for payload in before {
             driver.on_event(engine_says(payload));
         }
@@ -4139,5 +4167,70 @@ mod tests {
         assert!(driver.transport.methods_for(None).is_empty());
         assert_eq!(phase(&driver, "after.example"), Some(Phase::After));
         assert_eq!(phase(&driver, "home.example"), Some(Phase::Before));
+    }
+
+    // --- Task 6 fix round ---
+
+    const POPUP: &str = r#"{"type":"popupFound","cmp":"iubenda"}"#;
+    const CLAIM: &str = r#"{"type":"optInResult","cmp":"iubenda","result":true}"#;
+
+    #[tokio::test]
+    async fn a_bridge_that_dies_during_the_opt_in_is_a_blank_not_a_failed_click() {
+        let mut driver = primed();
+        driver.transport.refuse_on(EvaluateParams::IDENTIFIER, Some("SESSION-A"));
+        let (mut driver, consent) = accept_on(driver, &[POPUP], &[]).await;
+        assert!(!consent.clicked, "{consent:?}");
+        assert_eq!(consent.reason, None);
+        assert_eq!(driver.observation(1, false).possible_gaps, 1);
+    }
+
+    #[tokio::test]
+    async fn a_cmp_with_no_popup_is_no_button_and_no_opt_in_is_sent() {
+        let (driver, consent) = accept_with(
+            &[r#"{"type":"cmpDetected","cmp":"iubenda"}"#, r#"{"type":"autoconsentDone"}"#],
+            &[],
+        )
+        .await;
+        assert_eq!(consent.cmp.as_deref(), Some("iubenda"));
+        assert!(!consent.clicked);
+        assert_eq!(consent.reason, Some("no-button"));
+        assert!(driver.transport.sent.is_empty(), "{:?}", driver.transport.sent);
+    }
+
+    #[tokio::test]
+    async fn an_opt_in_result_queued_before_rusts_opt_in_is_not_its_answer() {
+        let (_, consent) = accept_with(&[POPUP, CLAIM], &[r#"{"type":"autoconsentError"}"#]).await;
+        assert!(!consent.clicked, "{consent:?}");
+    }
+
+    #[tokio::test]
+    async fn an_engine_eval_runs_wrapped_so_only_true_comes_back() {
+        let mut driver = primed();
+        driver.on_event(engine_says(r#"{"type":"eval","id":"e1","code":"(function(){return 1})()"}"#));
+        driver.on_event(engine_says(r#"{"type":"autoconsentDone"}"#));
+        let session = SessionId::from("SESSION-A".to_string());
+        driver
+            .relay(&session, &CancellationToken::new(), far_future(), Detection::default())
+            .await
+            .expect("relay");
+        let (_, s, p) = &driver.transport.sent[0];
+        assert_eq!(s.as_deref(), Some("SESSION-A"));
+        assert_eq!(
+            p["expression"].as_str(),
+            Some("(()=>{const r=(function(){return 1})();return r===true})()")
+        );
+        assert!(p.get("contextId").is_none(), "{p}");
+    }
+
+    #[tokio::test]
+    async fn a_reply_with_no_engine_world_is_not_sent() {
+        let mut driver = Driver::new(FakeTransport::new());
+        let session = SessionId::from("SESSION-A".to_string());
+        let sent = driver
+            .consent_reply(&session, consent::init_reply())
+            .await
+            .expect("no world is not an error");
+        assert!(!sent);
+        assert!(driver.transport.sent.is_empty(), "{:?}", driver.transport.sent);
     }
 }

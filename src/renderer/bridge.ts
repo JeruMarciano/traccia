@@ -77,15 +77,22 @@ function isRawFormField(v: unknown): boolean {
   )
 }
 
+/** A CMP rule name as Rust's `known_cmp` admits it. */
+const RULE_NAME = /^[A-Za-z0-9 ._-]{0,64}$/
+/** The longest button label a text click may record (Task 7 caps it in Rust too). */
+const MAX_MATCHED_TEXT = 128
+
 function isScanConsent(v: unknown): boolean {
   if (typeof v !== 'object' || v === null) return false
   const c = v as Record<string, unknown>
   return (
-    (c.cmp === null || typeof c.cmp === 'string') &&
+    (c.cmp === null || (typeof c.cmp === 'string' && RULE_NAME.test(c.cmp))) &&
     typeof c.clicked === 'boolean' &&
     (c.rule === null || c.rule === 'cmp' || c.rule === 'text') &&
     typeof c.ruleName === 'string' &&
+    RULE_NAME.test(c.ruleName) &&
     typeof c.matchedText === 'string' &&
+    c.matchedText.length <= MAX_MATCHED_TEXT &&
     typeof c.clickNavigated === 'boolean' &&
     (c.reason === undefined || c.reason === 'no-banner' || c.reason === 'no-button' || c.reason === 'click-failed')
   )

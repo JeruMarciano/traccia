@@ -8,20 +8,17 @@
 </div>
 <script>
 // Tags that wait for consent load from after-{p}.invalid, {p} being this fixture's own port
-// (the page is served as scan-fixture-{p}.invalid). Once consent is stored, they load on every visit.
-function loadAfter() {
-  var s = document.createElement('script');
-  s.src = 'http://' + location.hostname.replace('scan-fixture-', 'after-') + '/a.js';
-  document.head.appendChild(s);
-}
+// (the page is served as scan-fixture-{p}.invalid) -- only on a visit where consent is already
+// stored, so the host is seen only if the scanner loads the page again after the click.
 function accept() {
   document.cookie = 'traccia_consent=1; max-age=3600; path=/';
   document.getElementById('iubenda-cs-banner').remove();
-  loadAfter();
 }
 if (document.cookie.indexOf('traccia_consent=1') !== -1) {
   document.getElementById('iubenda-cs-banner').remove();
-  loadAfter();
+  var s = document.createElement('script');
+  s.src = 'http://' + location.hostname.replace('scan-fixture-', 'after-') + '/a.js';
+  document.head.appendChild(s);
 }
 </script>
 </body></html>
