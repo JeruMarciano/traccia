@@ -36,6 +36,10 @@ pub fn run() {
         .manage(Arc::new(scan::ScanState::default()))
         .setup(|app| {
             install_panic_hook(app.handle().clone());
+            if let Ok(dir) = tauri::Manager::path(app.handle()).app_log_dir() {
+                let _ = std::fs::create_dir_all(&dir);
+                scan::set_log_dir(dir);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

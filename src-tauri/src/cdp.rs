@@ -978,6 +978,31 @@ fn auto_attach_params() -> Result<serde_json::Value, CdpError> {
     to_params(&params)
 }
 
+/// [`auto_attach_params`] for a child session, minus service workers.
+///
+/// A service worker is a browser-level target the browser session already
+/// attaches. Attached a second time here, it stays paused until *both* sessions
+/// resume it, and the one-in-flight driver deadlocks on `Network.enable` until
+/// the 30 s timeout fails the scan (docs/decisions/2026-09-29-scanner-failures.md).
+fn session_auto_attach_params() -> Result<serde_json::Value, CdpError> {
+    use chromiumoxide::cdp::browser_protocol::target::{FilterEntry, TargetFilter};
+
+    let mut params = SetAutoAttachParams::new(true, true);
+    params.flatten = Some(true);
+    params.filter = Some(TargetFilter::new(vec![
+        FilterEntry {
+            exclude: Some(true),
+            r#type: Some("service_worker".to_string()),
+        },
+        // An empty entry matches every other type; without it the filter matches nothing.
+        FilterEntry {
+            exclude: None,
+            r#type: None,
+        },
+    ]));
+    to_params(&params)
+}
+
 /// What a failed arming step means. **Do not collapse these two into one
 /// tolerant path.** They exist because "tolerate every error" hides a real
 /// gap, and "fail the scan on any error" breaks on target types that
@@ -1016,7 +1041,9 @@ enum OnFailure {
 ///    this module drives no `setDiscoverTargets` and relies on nothing but
 ///    this line. A failure here does not blind this target, but it blinds
 ///    every frame *inside* it — the same kind of silent absence, so it is
-///    counted the same way.
+///    counted the same way. Service workers are excluded here: the browser
+///    session attaches them, and a second attach deadlocks arming
+///    ([`session_auto_attach_params`]).
 /// 4. `Runtime.runIfWaitingForDebugger` — **[`OnFailure::Expected`]**, and
 ///    only now does the target run. Sent last, and only when the target
 ///    actually said it was waiting. A failure to resume is not an observation
@@ -1044,7 +1071,7 @@ fn arming_sequence(
         ),
         (
             MethodId::from(SetAutoAttachParams::IDENTIFIER),
-            auto_attach_params()?,
+            session_auto_attach_params()?,
             OnFailure::LosesObservation,
         ),
     ];
@@ -2337,6 +2364,43 @@ mod tests {
                 .and_then(|p| p.get("flatten")),
             Some(&json!(true))
         );
+    }
+
+    #[tokio::test]
+    async fn a_service_worker_is_attached_by_the_browser_session_only() {
+        // Sites 00, 21, 30, 49 (docs/decisions/2026-09-29-scanner-failures.md): a worker attached
+        // by both the browser and a page session stays paused until both resume it, and the
+        // one-in-flight driver deadlocks on `Network.enable`. The page session must exclude it;
+        // the browser session must keep it, or the worker is not observed at all.
+        let mut transport = FakeTransport::new();
+        transport
+            .results
+            .insert("Target.createTarget".to_string(), json!({"targetId": "T-1"}));
+        transport.inject_on(
+            "Target.createTarget",
+            None,
+            attached_event("SESSION-A", "T-1", "page", true),
+        );
+        let mut driver = Driver::new(transport);
+        driver
+            .run("https://rossi-editore.it/", 0, &CancellationToken::new())
+            .await
+            .expect("run");
+
+        let session = driver
+            .transport
+            .params_for("Target.setAutoAttach", Some("SESSION-A"))
+            .expect("session-level setAutoAttach");
+        assert_eq!(
+            session["filter"],
+            json!([{"type": "service_worker", "exclude": true}, {}])
+        );
+        assert_eq!(session["flatten"], json!(true));
+        let browser = driver
+            .transport
+            .params_for("Target.setAutoAttach", None)
+            .expect("browser-level setAutoAttach");
+        assert!(browser.get("filter").is_none(), "{browser}");
     }
 
     #[tokio::test]
