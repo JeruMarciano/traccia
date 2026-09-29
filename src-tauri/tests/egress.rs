@@ -14,22 +14,27 @@
 //! by the very check that makes the proxy safe. `run_pipeline`'s doc comment
 //! in `scan.rs` says the same thing; this file is the reason it says it.
 //!
-//! No test performs name resolution. The scan target's hostname lives under
-//! `.invalid` (RFC 2606: guaranteed never to resolve, by anyone, ever) and is
-//! never looked up — the injected connector recognises it as a plain string
-//! and dials the loopback fixture server directly. The fixture's own page
-//! links three "off-site" hosts by IP literal, which `admission::decide`
-//! denies before any connector is ever asked about them.
+//! No test performs name resolution. The scan target's hostname and the
+//! fixture's named third party both live under `.invalid` (RFC 2606:
+//! guaranteed never to resolve, by anyone, ever) and are never looked up — the
+//! injected connector recognises them as plain strings and dials the loopback
+//! fixture listeners directly. The fixture's own page also links three
+//! "off-site" hosts by IP literal, which `admission::decide` denies before any
+//! connector is ever asked about them.
 //!
-//! **`the_browsers_own_background_traffic_is_silenced` takes an
-//! allowlist-with-documented-exceptions form, not a bare denylist.** The
-//! promise this whole suite exists to check is enforced by the proxy: every
-//! attempt in a scan's denied set was refused, so nothing actually left the
-//! machine regardless of what the browser tried. That test asserts two
-//! separate things, both required to make the assertion mean something: (a)
-//! nothing was *allowed* except the scan target itself, and (b) no
-//! *undocumented* attempt occurred — every denied host is either one of the
-//! fixture's own three off-site IP literals or a member of
+//! During a scan `admission::decide` admits any named host on 80/443, as a
+//! visitor's browser would reach it; in the product the guard on those is
+//! `proxy::is_permitted_upstream` on every resolved address. Here the guard is
+//! the test connector: it dials only the two fixture names and refuses every
+//! other admitted host, so nothing a test scan admits leaves the machine.
+//!
+//! **`the_browsers_own_background_traffic_never_becomes_a_site_host` takes an
+//! allowlist-with-documented-exceptions form, not a bare denylist.** It
+//! asserts two separate things, both required to make the assertion mean
+//! something: (a) no browser service host is reported as a host the *site*
+//! contacted, and (b) no *undocumented* attempt occurred — every host the
+//! proxy saw, admitted or denied, is the scan target, the fixture's third
+//! party, one of its three off-site IP literals, or a member of
 //! `KNOWN_DENIED_BROWSER_SERVICE_HOSTS`, a short, named, commented list of
 //! browser background subsystems (GAIA account listing, GCM device checkin,
 //! search preconnect remnants) for which a bounded, evidence-based search
@@ -57,6 +62,7 @@
 
 mod common;
 
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -64,10 +70,11 @@ use std::time::Duration;
 
 use tokio::net::UdpSocket;
 
+use traccia_lib::admission::DenyReason;
 use traccia_lib::proxy::Ledger;
-use traccia_lib::scan::{self, ScanState};
+use traccia_lib::scan::{self, ScanOutput, ScanState};
 
-use common::{fixture_site, Site};
+use common::{fixture_site, Site, THIRD_PARTY_HOST};
 
 // ---------------------------------------------------------------------------
 // Scan-pipeline helpers
@@ -85,6 +92,17 @@ async fn run_scan_against(site: &Site) -> Result<Arc<Ledger>, String> {
         Ok(_) => Ok(run.ledger),
         Err(e) => Err(e),
     }
+}
+
+/// Like `run_scan_against`, but also hands back what the renderer would
+/// receive, so a test can compare what the proxy admitted with what the scan
+/// reports as the site's hosts.
+async fn run_scan_with_output(site: &Site) -> (Arc<Ledger>, ScanOutput) {
+    let state = Arc::new(ScanState::default());
+    let run = scan::run_scan_for_test(state, site.target(), site.connector())
+        .await
+        .expect("scan should start");
+    (run.ledger, run.result.expect("scan should complete"))
 }
 
 /// Runs the real pipeline against `site`, poisoning this scan's ledger after
@@ -235,16 +253,34 @@ async fn dns_observer() -> DnsObserver {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_scan_contacts_the_target_and_nothing_else() {
-    // A fixture site served from loopback, which links out to three hosts that
-    // must never be contacted. No name resolution anywhere.
+async fn a_scan_reaches_a_named_third_party_but_never_an_ip_literal() {
+    // A fixture site served from loopback, which loads one named third party
+    // (admitted, as a visitor's browser would reach it) and links three IP
+    // literals (never admitted). No name resolution anywhere.
     let site = fixture_site().await;
-    let ledger = run_scan_against(&site).await.expect("scan should complete");
+    let (ledger, output) = run_scan_with_output(&site).await;
 
-    for (host, _port) in ledger.allowed() {
-        assert_eq!(host, site.host, "contacted a host outside the scan target");
+    let allowed = ledger.allowed();
+    assert!(
+        allowed.iter().any(|(h, _)| h == THIRD_PARTY_HOST),
+        "the named third party was not admitted: {allowed:?}"
+    );
+    assert!(
+        output.hosts.iter().any(|h| h.host == THIRD_PARTY_HOST),
+        "the named third party is missing from the site's hosts: {:?}",
+        output.hosts
+    );
+    let denied = ledger.denied();
+    for literal in FIXTURE_IP_LITERALS {
+        assert!(
+            denied.iter().any(|(h, _, r)| h == literal && *r == DenyReason::IpLiteral),
+            "{literal} was not denied as an IP literal: {denied:?}"
+        );
     }
-    assert!(!ledger.denied().is_empty(), "the fixture's third parties were never attempted — the test is not testing anything");
+    assert!(
+        !allowed.iter().any(|(h, _)| h.parse::<IpAddr>().is_ok()),
+        "an IP literal was admitted: {allowed:?}"
+    );
 }
 
 #[tokio::test]
@@ -286,12 +322,13 @@ const FIXTURE_IP_LITERALS: [&str; 3] = ["192.0.2.10", "198.51.100.20", "203.0.11
 /// evidence, and the "bounded final suppression attempt" note at the end of this
 /// list for the round that closed this residual set out).
 ///
-/// This is an **allowlist of known, documented, already-denied exceptions** — every
-/// one of these attempts is refused by the proxy (nothing leaves the machine; see
-/// this file's doc comment for what "the proxy is the enforcement point" means) —
-/// not a claim that any of it is acceptable to leave unsuppressed forever. A host
-/// appearing in a scan's denied set that is **not** in this list is the finding this
-/// test exists to catch.
+/// This is an **allowlist of known, documented exceptions** — not a claim that any
+/// of it is acceptable to leave unsuppressed forever. The name predates spec §13:
+/// these were denied by admission while it admitted only the scan target. They are
+/// now admitted like any named host on 80/443, which in the product means they
+/// reach the network (only ever at a permitted address), and in this suite means
+/// the test connector refuses them. A host the proxy sees during a scan that is
+/// **not** in this list is the finding this test exists to catch.
 const KNOWN_DENIED_BROWSER_SERVICE_HOSTS: [(&str, &str); 5] = [
     (
         "safebrowsingohttpgateway.googleapis.com",
@@ -340,7 +377,7 @@ const KNOWN_DENIED_BROWSER_SERVICE_HOSTS: [(&str, &str); 5] = [
 ];
 
 #[tokio::test]
-async fn the_browsers_own_background_traffic_is_silenced() {
+async fn the_browsers_own_background_traffic_never_becomes_a_site_host() {
     // A component extension made requests even in a fresh profile during the
     // spike, until --disable-background-networking was passed. This test asserts
     // an allowlist-with-documented-exceptions, not a bare denylist: it is not
@@ -348,9 +385,10 @@ async fn the_browsers_own_background_traffic_is_silenced() {
     // asserted actually attempted, and any host outside the documented set fails
     // loudly by name.
     let site = fixture_site().await;
-    let ledger = run_scan_against(&site).await.expect("scan should complete");
+    let (ledger, output) = run_scan_with_output(&site).await;
 
     let denied = ledger.denied();
+    let allowed = ledger.allowed();
 
     for literal in FIXTURE_IP_LITERALS {
         assert!(
@@ -359,12 +397,32 @@ async fn the_browsers_own_background_traffic_is_silenced() {
              the sensor check above is vacuous"
         );
     }
+    assert!(
+        allowed.iter().any(|(h, _)| h == &site.host),
+        "the scan target itself was never contacted"
+    );
 
-    let allowed = ledger.allowed();
-    assert!(!allowed.is_empty(), "the scan target itself was never contacted");
-    for (host, _port) in &allowed {
-        assert_eq!(host, &site.host, "contacted a host outside the scan target");
+    let known_hosts: Vec<&str> = KNOWN_DENIED_BROWSER_SERVICE_HOSTS
+        .iter()
+        .map(|(h, _)| *h)
+        .collect();
+
+    // Chrome's own requests may be admitted by the proxy now, but they are not
+    // the site's: hosts come from the pages' own `Network.requestWillBeSent`
+    // events, never from the ledger.
+    for h in &output.hosts {
+        assert!(
+            !known_hosts.contains(&h.host.as_str()),
+            "the browser's own service host {} was reported as a host the site contacted",
+            h.host
+        );
     }
+
+    let attempted: Vec<&str> = allowed
+        .iter()
+        .map(|(h, _)| h.as_str())
+        .chain(denied.iter().map(|(h, _, _)| h.as_str()))
+        .collect();
 
     // These three stay forbidden absolutely, distinct from the documented residual
     // set above: gvt1.com (Google's component-update/Widevine CDN, closed by
@@ -376,24 +434,23 @@ async fn the_browsers_own_background_traffic_is_silenced() {
     // is `NetworkTimeTracker`'s target (see browser.rs's launch_flags doc comment),
     // present in the denied set before `NetworkTimeServiceQuerying` was added to
     // --disable-features and confirmed absent in every instrumented run since. If
-    // any of these three ever reappears, the flag that was verified to close it has
-    // regressed or a new caller of the same host has appeared.
+    // any of these three ever reappears, admitted or denied, the flag that was
+    // verified to close it has regressed or a new caller of the same host has
+    // appeared.
     for forbidden in ["gvt1.com", "mtalk.google.com", "clients2.google.com"] {
         assert!(
-            !denied.iter().any(|(h, _, _)| h == forbidden),
-            "{forbidden} appeared in the denied set — a flag verified to silence this \
-             host has regressed"
+            !attempted.contains(&forbidden),
+            "{forbidden} was attempted — a flag verified to silence this host has regressed"
         );
     }
 
-    let known_hosts: Vec<&str> = KNOWN_DENIED_BROWSER_SERVICE_HOSTS
-        .iter()
-        .map(|(h, _)| *h)
-        .collect();
-    let undocumented: Vec<_> = denied
-        .iter()
-        .filter(|(h, _, _)| {
-            !FIXTURE_IP_LITERALS.contains(&h.as_str()) && !known_hosts.contains(&h.as_str())
+    let undocumented: Vec<&str> = attempted
+        .into_iter()
+        .filter(|h| {
+            *h != site.host
+                && *h != THIRD_PARTY_HOST
+                && !FIXTURE_IP_LITERALS.contains(h)
+                && !known_hosts.contains(h)
         })
         .collect();
     assert!(

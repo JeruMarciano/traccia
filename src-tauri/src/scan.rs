@@ -201,10 +201,11 @@ fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 /// proxy.
 ///
 /// It re-runs `admission::decide` rather than testing set membership, because
-/// membership is the wrong rule: `decide` admits a subdomain of a scan origin
-/// on a label boundary, so a scan of `rossi-editore.it` that loaded
-/// `www.rossi-editore.it` has a perfectly correct ledger that a
-/// `origins.contains(&host)` test would call a failure.
+/// membership is the wrong rule: `decide` admits a visitor's third parties on
+/// 80/443, so a scan of `rossi-editore.it` that loaded `fonts.googleapis.com`
+/// has a perfectly correct ledger that an `origins.contains(&host)` test would
+/// call a failure. What it still catches is an entry `decide` never admits: an
+/// IP literal, or a port other than 80/443.
 ///
 /// With `RunningGuard` in place the `decide` re-run cannot currently fail on a
 /// live scan: the origins `Arc` is written once at the top of `run` and after
@@ -845,9 +846,18 @@ mod tests {
     }
 
     #[test]
-    fn a_ledger_holding_a_host_that_is_not_the_scan_target_fails_the_scan() {
+    fn a_ledger_holding_a_visitors_third_party_is_consistent() {
         let origins = vec!["rossi-editore.it".to_string()];
-        let allowed = vec![("notrossi-editore.it".to_string(), 443)];
+        let allowed = vec![("fonts.googleapis.com".to_string(), 443)];
+        assert!(ledger_is_consistent(true, 0, &allowed, &origins));
+    }
+
+    #[test]
+    fn a_ledger_holding_an_ip_literal_fails_the_scan() {
+        // The proxy never admits an address, so a ledger that holds one disagrees with the rule
+        // it was recorded under.
+        let origins = vec!["rossi-editore.it".to_string()];
+        let allowed = vec![("192.0.2.10".to_string(), 443)];
         assert!(!ledger_is_consistent(true, 0, &allowed, &origins));
     }
 
