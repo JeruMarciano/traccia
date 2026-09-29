@@ -10,7 +10,7 @@ sites after each change and put the new figures next to these.
 e-commerce, restaurants, professional firms, manufacturing, gyms, schools, real estate,
 associations, beauty, other), chosen by search, not by the user — a selection bias stated here.
 The list and every raw result live outside the repo (`~/Documents/Claude/traccia-fixtures/
-scanner-baseline-2026-09-29/`) because they name real organisations.
+scanner-baseline-2026-09-29-v2/`) because they name real organisations.
 
 Each site gets two passes, both in a fresh headless Chrome profile:
 
@@ -22,24 +22,24 @@ Each site gets two passes, both in a fresh headless Chrome profile:
    page's links. It records every request host from every frame, cookies (name/domain/expiry,
    never a value), visible form fields and iframes.
 
-The reference is an automated heuristic, not a hand check. Its accept click can hit the wrong
-button ("Ok", "Continua" on 4 sites) or miss the banner (10 sites). Treat its figures as a floor on
-what a visitor triggers, not as ground truth.
+The reference is an automated heuristic. Five sites were then checked by hand (below) and the
+reference fixed where it was wrong; the figures here are from the fixed reference (`-v2` data).
+Treat them as a floor on what a visitor triggers, not as ground truth.
 
-49 of 55 sites completed both passes. The scanner failed outright on 4 (`SCAN_FAILED`, cause not
-reported by a release build); the reference crashed on 2.
+50 of 55 sites completed both passes. The scanner failed outright on 4 (`SCAN_FAILED`, cause not
+reported by a release build); the reference crashed on 1.
 
 ## What the scanner finds
 
 | Measure | Scanner | Reference | Note |
 |---|---|---|---|
-| Third-party hosts, all sites | 274 | 764 | median site: scanner sees **35%** |
-| — of which before any consent | — | 523 | scanner missed 300 of these |
-| — only after accept / on key pages | — | 241 | on 40 of 49 sites |
-| Cookies | **0** | 256 before consent, 475 at end | on 40 sites before consent |
-| Consent manager recognised | 13 sites | 31 sites (+ an accept button on 39) | |
-| Key pages with a form, excluding home | 65 reached | 137 | **72 missed**, on 20 sites; 14 are contact pages |
-| Third-party organisations with a name | — | 311 of 466 (67%) | 57 get a purpose hint, 98 nothing |
+| Third-party hosts, all sites | 281 | 783 | median site: scanner sees **35%** |
+| — of which before any consent | — | 535 | scanner missed 305 of these |
+| — only after accept / on key pages | — | 248 | |
+| Cookies | **0** | 271 before consent, 503 at end | |
+| Consent manager recognised | 14 sites | 29 sites (+ an accept button on 41) | |
+| Key pages with a form, excluding home | 62 reached | 136 | **74 missed**, on 21 sites; 17 are contact pages |
+| Third-party organisations with a name | — | 323 of 479 (67%) | 57 get a purpose hint, 99 nothing |
 | Scan failed | 4 of 55 | — | 7% |
 
 Recall does not depend much on the sector: 0.28–0.46 by category.
@@ -69,6 +69,25 @@ Recall does not depend much on the sector: 0.28–0.46 by category.
    (`iol.it`, `italiaonline.it`, `paginegialle.it`, 8 each), Duda (`cdn-website.com`,
    `multiscreensite.com`, 8), Brevo (`sibautomation.com`), Trustindex, Elfsight, Simplebooking,
    Mapbox, Jimdo, Wix.
+
+## Hand check (5 sites, playwright, 2026-09-29)
+
+The reference's host and form capture matched a manual session on all five. Its *labelling* was
+wrong in three ways, all fixed before the figures above were taken:
+
+- **Wrong accept click.** On one school site "CONTINUA" was a blog "read more" link, not the banner
+  button ("Accept"). Bare "Ok"/"Continua"/"Ho capito" now count only inside a consent container;
+  a click that navigates is recorded.
+- **Off-site key pages.** `/facebook` matched "book" and redirected to facebook.com, inflating one
+  hotel's after-consent hosts from 24 to 31. Page keywords now need a word boundary, off-site
+  redirects are dropped, PDFs and print views skipped.
+- **False CMP.** Iubenda's privacy-policy badge defines `window._iub` without any banner. Iubenda
+  now needs `_iub.csConfiguration` or the banner element. The scanner's own `CONSENT_PROBE`
+  has the same false positive.
+
+Two things the hand check found that neither pass records: sign-up and booking that leave the site
+(a gym's registration on another domain, a hotel's booking engine on simplebooking.it). The site's
+own pages show only the link.
 
 ## What this does not measure
 
