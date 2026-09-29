@@ -1903,7 +1903,7 @@ impl<T: CdpTransport> Driver<T> {
     /// clicked. A world that is gone, or a cancel, is left as it was: the
     /// expression runs only in that world, never in the page's own.
     ///
-    /// A click that loads a page, or leaves the entry URL, is kept but
+    /// A click that loads a page, or leaves the URL the page had, is kept but
     /// flagged `click_navigated`; the caller's reload brings the scan home.
     async fn text_click(
         &mut self,
@@ -1915,6 +1915,9 @@ impl<T: CdpTransport> Driver<T> {
         let Some(context) = self.consent_context.filter(|_| !cancel.is_cancelled()) else {
             return Ok(unclicked);
         };
+        // Where the page is now, not the URL asked for: a home that
+        // redirected on load has not been navigated by the click.
+        let before = self.current_url(session).await?;
         self.begin_consent_attempt();
         self.load_fired = false;
         let answer = self
@@ -1935,8 +1938,9 @@ impl<T: CdpTransport> Driver<T> {
         };
         self.settle(SETTLE_AFTER_LOAD, cancel, Instant::now() + ARM_DRAIN_BUDGET)
             .await?;
+        let before = before.as_deref().unwrap_or(entry_url);
         let moved = self.current_url(session).await?.is_some_and(|url| {
-            origin(&url) != origin(entry_url) || canonical(&url) != canonical(entry_url)
+            origin(&url) != origin(before) || canonical(&url) != canonical(before)
         });
         Ok(Consent {
             cmp: unclicked.cmp,
@@ -4291,9 +4295,9 @@ mod tests {
         assert_eq!(consent.cmp.as_deref(), Some("cookieyes"));
         assert_eq!(consent.rule, Some(consent::ConsentRule::Text));
         assert_eq!(consent.matched_text, "accetta");
-        let (_, s, p) = &driver.transport.sent[0];
-        assert_eq!((s.as_deref(), p["contextId"].as_i64()), (Some("SESSION-A"), Some(7)));
-        assert_eq!(p["expression"].as_str(), Some(consent::text_click_expr().as_str()));
+        let expr = consent::text_click_expr();
+        let sent = driver.transport.sent.iter().find(|(_, _, p)| p["expression"].as_str() == Some(expr.as_str()));
+        assert_eq!(sent.map(|(_, s, p)| (s.as_deref(), p["contextId"].as_i64())), Some((Some("SESSION-A"), Some(7))));
         assert_eq!(
             driver.acc.counts.get("after.example").map(|(_, phase)| *phase),
             Some(Phase::After)
