@@ -9,7 +9,7 @@
 //! rules carry it as a quoted string literal.
 
 pub const ENGINE: &str = include_str!("../vendor/autoconsent/autoconsent.playwright.js");
-pub const RULES: &str = include_str!("../vendor/autoconsent/compact-rules.json");
+pub const RULES: &str = include_str!("../vendor/autoconsent/rules.json");
 pub const WORLD: &str = "traccia-consent";
 pub const BINDING: &str = "tracciaConsent";
 /// Installed before ENGINE in the isolated world. A CDP binding takes exactly one string.
@@ -81,9 +81,54 @@ pub fn known_cmp(name: &str) -> Option<String> {
     (shaped && (ENGINE.contains(&quoted) || RULES.contains(&quoted))).then(|| name.to_string())
 }
 
-/// autoconsentReceiveMessage({type:'initResp', config: CONFIG, rules: {compact: RULES}}) — built from consts only.
+/// The engine's built-in CMPs whose `optIn()` is true only when a button was clicked. Left out:
+/// `Cybotcookiebot` answers true whether or not its buttons exist, `consentmanager.net` may
+/// accept through the CMP's API, and `HEURISTIC` is disabled by [`CONFIG`].
+const CLICKING_CLASSES: [&str; 9] = [
+    "TrustArc-top", "Sourcepoint-frame", "Evidon", "Onetrust", "Klaro", "Uniconsent",
+    "Conversant", "tiktok.com", "Admiral",
+];
+
+/// True when `cmp`'s opt-in can only report success by clicking, so its `optInResult: true`
+/// means a click happened. The engine cannot say so itself: an empty `optIn` (hundreds of
+/// generated rules), all-optional clicks, an `if` with no `else`, or a `hide` all answer true
+/// with no click. A rule qualifies when one of its top-level steps is a required, non-negated
+/// `click`/`waitForThenClick`, or an `if` whose `then` and `else` both qualify.
+pub fn opt_in_clicks(cmp: &str) -> bool {
+    static CLICKING: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    fn clicks(steps: Option<&serde_json::Value>) -> bool {
+        steps.and_then(|s| s.as_array()).is_some_and(|steps| {
+            steps.iter().any(|s| {
+                let flag = |k: &str| s.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+                !flag("optional")
+                    && !flag("negated")
+                    && (s.get("click").is_some()
+                        || s.get("waitForThenClick").is_some()
+                        || (s.get("if").is_some() && clicks(s.get("then")) && clicks(s.get("else"))))
+            })
+        })
+    }
+    CLICKING_CLASSES.contains(&cmp)
+        || CLICKING
+            .get_or_init(|| {
+                let rules: serde_json::Value = serde_json::from_str(RULES).unwrap_or_default();
+                rules
+                    .get("autoconsent")
+                    .and_then(|r| r.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter(|r| clicks(r.get("optIn")))
+                    .filter_map(|r| r.get("name")?.as_str().map(str::to_string))
+                    .collect()
+            })
+            .contains(cmp)
+}
+
+/// autoconsentReceiveMessage({type:'initResp', config: CONFIG, rules: RULES}) — built from consts
+/// only. RULES is already the `{"autoconsent": [...]}` object the engine takes.
 pub fn init_reply() -> String {
-    format!("autoconsentReceiveMessage({{type:'initResp', config: {CONFIG}, rules: {{compact: {RULES}}}}})")
+    format!("autoconsentReceiveMessage({{type:'initResp', config: {CONFIG}, rules: {RULES}}})")
 }
 
 /// `id` already validated by [`parse_engine_msg`].
@@ -128,5 +173,24 @@ mod tests {
         assert_eq!(known_cmp("Cybotcookiebot").as_deref(), Some("Cybotcookiebot"));
         assert!(known_cmp("Evil Corp CMP").is_none());
         assert!(known_cmp("iubenda\"<script>").is_none());
+    }
+
+    #[test]
+    fn only_a_rule_whose_opt_in_must_click_can_claim_a_click() {
+        for name in ["iubenda", "bbc.com", "Onetrust", "Klaro"] {
+            assert!(opt_in_clicks(name), "{name}");
+        }
+        for name in [
+            "auto_GB_arte.tv_0",  // `optIn: []`: the engine answers true having done nothing
+            "Complianz notice",   // every click optional
+            "cookieyes",          // an `if` with no `else`: true when the condition fails
+            "samsung.com",        // hides the banner, no click
+            "usercentrics-api",   // the CMP's own API, no click
+            "Cybotcookiebot",     // answers true whether or not a button was there
+            "consentmanager.net", // may accept through the API
+            "Evil Corp CMP",
+        ] {
+            assert!(!opt_in_clicks(name), "{name}");
+        }
     }
 }

@@ -10,5 +10,5 @@
 | File | From the tarball | sha256 |
 | --- | --- | --- |
 | `autoconsent.playwright.js` | `package/dist/autoconsent.playwright.js` | `67fcab16c5e7bf81f51cd39c8398438ab7c00e9be527c93ef8b9376d2cabddb5` |
-| `compact-rules.json` | `package/rules/compact-rules.json` | `d8de32cdbfabfa6e0b4de93c9025a8bac50b23fb00775609ddff8ac4267f744a` |
+| `rules.json` | `package/rules/rules.json` | `0b03adbbfa838c4fd8d6c17357729f9e21ce285c0f8518f9ab476fc6d332edc9` |
 | `LICENSE` | `package/LICENSE` | `fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85` |
