@@ -369,16 +369,17 @@ async fn run_pipeline(
     let origins = Arc::new(Mutex::new(target.origins.clone()));
     let _origins_guard = OriginsGuard(Arc::clone(&origins));
 
-    // Test-support only: a generic SCAN_FAILED is right for the renderer, but on a CI platform
-    // nobody can attach a debugger to it hides which stage died. This names the stage on stderr
-    // in test builds and compiles to an empty function without the feature — the renderer never
-    // sees any of it, and no error Display gets any closer to production output than before.
-    #[cfg(feature = "test-support")]
-    fn scan_trace(stage: &str, detail: &dyn std::fmt::Debug) {
+    // A generic SCAN_FAILED is right for the renderer, but it hides which stage died. Every
+    // build writes the stage name — only the name — to the local log. Test-support builds also
+    // print the detail on stderr; without the feature the detail is dropped, so no error Display
+    // gets any closer to production output than before.
+    fn scan_trace(stage: &'static str, detail: &dyn std::fmt::Debug) {
+        log_failure(stage);
+        #[cfg(feature = "test-support")]
         eprintln!("egress-trace: {stage} failed: {detail:?}");
+        #[cfg(not(feature = "test-support"))]
+        let _ = detail;
     }
-    #[cfg(not(feature = "test-support"))]
-    fn scan_trace(_stage: &str, _detail: &dyn std::fmt::Debug) {}
 
     // Armed here, before a browser exists to make a request.
     //
@@ -513,13 +514,45 @@ async fn run_pipeline(
     })
 }
 
+/// Where a failing stage is written; set once at app start. Unset in tests and the harness, so
+/// nothing is written there.
+static LOG_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+pub fn set_log_dir(dir: PathBuf) {
+    let _ = LOG_DIR.set(dir);
+}
+
+/// The renderer only ever gets a bare `SCAN_FAILED`; the stage goes to the local log so a failed
+/// scan can be diagnosed without a debugger. `&'static str` so no page data can reach it.
+fn failure_line(stage: &'static str) -> String {
+    format!("scan failed at {stage}")
+}
+
+fn log_failure_to(dir: &Path, stage: &'static str, stamp: &str) {
+    crate::log::write_crash_line(dir, &failure_line(stage), stamp);
+}
+
+fn log_failure(stage: &'static str) {
+    if let Some(dir) = LOG_DIR.get() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_default();
+        log_failure_to(dir, stage, &stamp);
+    }
+}
+
 /// Run one scan and return its result as JSON.
 pub async fn run(state: Arc<ScanState>, url: String) -> Result<String, String> {
     let target = parse_target(&url).map_err(str::to_string)?;
     let cancel_token = CancellationToken::new();
     let run = run_pipeline(state, target, proxy::real_connector(), cancel_token, None, false).await?;
-    run.result
-        .and_then(|output| serde_json::to_string(&output).map_err(|_| SCAN_FAILED.to_string()))
+    run.result.and_then(|output| {
+        serde_json::to_string(&output).map_err(|_| {
+            log_failure("serialise");
+            SCAN_FAILED.to_string()
+        })
+    })
 }
 
 /// Test-support entry point for `tests/egress.rs` (spec §9.3's executable promise). Runs exactly
@@ -647,6 +680,19 @@ fn profile_dir_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failure_line_names_the_stage_and_nothing_else() {
+        assert_eq!(failure_line("ledger assertion"), "scan failed at ledger assertion");
+    }
+
+    #[test]
+    fn a_failed_stage_is_written_to_the_local_log() {
+        let dir = tempfile::tempdir().unwrap();
+        log_failure_to(dir.path(), "observe", "1700000000");
+        let text = std::fs::read_to_string(dir.path().join("traccia.log")).unwrap();
+        assert_eq!(text.trim_end(), "1700000000 scan failed at observe");
+    }
 
     #[test]
     fn accepts_a_plain_https_url_and_extracts_its_host() {

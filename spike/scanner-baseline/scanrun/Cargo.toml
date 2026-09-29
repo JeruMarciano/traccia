@@ -3,6 +3,6 @@ name = "scanrun"
 version = "0.0.0"
 edition = "2021"
 [dependencies]
-traccia = { path = "../../../src-tauri" }
+traccia = { path = "../../../src-tauri", features = ["test-support"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 [workspace]

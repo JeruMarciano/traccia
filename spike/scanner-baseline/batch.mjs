@@ -15,17 +15,20 @@ async function worker() {
     const i = next++;
     const [cat, url] = sites[i];
     const base = `${D}runs/${String(i).padStart(2, '0')}`;
+    let scanMs;
     if (!fs.existsSync(base + '.scan.json')) {
+      const t0 = Date.now();
       try {
         const { stdout } = await run(HERE + 'scanrun/target/release/scanrun', [url], { timeout: 300000, maxBuffer: 1 << 24 });
         fs.writeFileSync(base + '.scan.json', stdout);
-      } catch (e) { fs.writeFileSync(base + '.scan.json', JSON.stringify({ error: String(e.stderr || e.message).slice(0, 300) })); }
+      } catch (e) { fs.writeFileSync(base + '.scan.json', JSON.stringify({ error: String(e.stderr || e.message).slice(0, 2000) })); }
+      scanMs = Date.now() - t0;
     }
     if (!fs.existsSync(base + '.ref.json')) {
       try { await run('node', [HERE + 'reference.mjs', url, base + '.ref.json'], { timeout: 400000 }); }
       catch (e) { fs.writeFileSync(base + '.ref.json', JSON.stringify({ url, error: String(e.message).slice(0, 300) })); }
     }
-    fs.writeFileSync(base + '.meta.json', JSON.stringify({ cat, url }));
+    fs.writeFileSync(base + '.meta.json', JSON.stringify({ cat, url, scanMs }));
     console.log(i, cat, url, 'done');
   }
 }
