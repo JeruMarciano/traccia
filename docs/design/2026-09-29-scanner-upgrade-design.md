@@ -329,6 +329,12 @@ can block either.
 - The user's IP address is visible to the third parties, which is the stated trade-off, and
   §9's line says it.
 
+**Accepted risk (security gate, Task 3).** During a scan, Chrome also contacts Google services
+the way any Chrome visitor's browser would: Safe Browsing through its privacy gateway (OHTTP), a
+device check-in, and `accounts.google.com` / `www.google.com`. From these Google may learn, in
+hashed form, that a Chrome instance visited the scanned site. It never receives the map or
+anything the scan found. These hosts never appear in the scan's list of hosts the site contacted.
+
 ## 14. Units
 
 | Unit | Where | Does one thing |

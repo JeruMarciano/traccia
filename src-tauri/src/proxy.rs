@@ -30,7 +30,7 @@
 
 use crate::admission::{decide, Decision, DenyReason};
 use std::future::Future;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -258,11 +258,21 @@ fn is_permitted_upstream(ip: IpAddr) -> bool {
                 return is_permitted_upstream(IpAddr::V4(v4));
             }
             let s = a.segments();
+            // NAT64 (RFC 6052): 64:ff9b::/96 carries its IPv4 target in the last four bytes, and a
+            // NAT64 gateway on the user's network will deliver it there — so it is that address.
+            if s[0] == 0x64 && s[1] == 0xff9b && s[2..6] == [0; 4] {
+                let o = a.octets();
+                return is_permitted_upstream(IpAddr::V4(Ipv4Addr::new(o[12], o[13], o[14], o[15])));
+            }
+            if s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1 {
+                return false; // 64:ff9b:1::/48, local-use NAT64
+            }
             !(a.is_loopback()
                 || a.is_unspecified()
                 || a.is_multicast()
                 || (s[0] & 0xfe00) == 0xfc00   // fc00::/7 unique local
-                || (s[0] & 0xffc0) == 0xfe80)  // fe80::/10 link-local unicast
+                || (s[0] & 0xffc0) == 0xfe80   // fe80::/10 link-local unicast
+                || (s[0] & 0xffc0) == 0xfec0)  // fec0::/10 deprecated site-local
         }
     }
 }
@@ -314,9 +324,16 @@ async fn connect_to_permitted(
 pub type Resolver =
     Arc<dyn Fn(String, u16) -> BoxFuture<'static, std::io::Result<Vec<SocketAddr>>> + Send + Sync>;
 
+/// The absolute form of `host`. Without the trailing dot a resolver may append the machine's
+/// search domains, turning a third party's name into an intranet one; `decide` has already
+/// stripped any trailing dot, so this adds exactly one.
+fn lookup_name(host: &str) -> String {
+    format!("{host}.")
+}
+
 fn system_resolver() -> Resolver {
     Arc::new(|host: String, port: u16| {
-        Box::pin(async move { Ok(tokio::net::lookup_host((host.as_str(), port)).await?.collect()) })
+        Box::pin(async move { Ok(tokio::net::lookup_host((lookup_name(&host), port)).await?.collect()) })
             as BoxFuture<'static, std::io::Result<Vec<SocketAddr>>>
     })
 }
@@ -1309,7 +1326,9 @@ mod tests {
             "198.18.0.1", "198.19.255.255",
             "224.0.0.1", "239.255.255.255", "240.0.0.1", "255.255.255.255",
             "::1", "::", "ff02::1",
-            "fc00::1", "fd12:3456::1", "fe80::1",
+            "fc00::1", "fd12:3456::1", "fe80::1", "fec0::1",
+            // NAT64 (RFC 6052) carries an IPv4 target the same way, and 64:ff9b:1::/48 is local-use
+            "64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe", "64:ff9b::a00:5", "64:ff9b:1::1",
             // an IPv4 address wearing an IPv6 hat is still that IPv4 address
             "::ffff:127.0.0.1", "::ffff:169.254.169.254", "::127.0.0.1",
         ];
@@ -1353,6 +1372,13 @@ mod tests {
         assert!(any_address_refused(&[]), "an empty resolution is a refusal, not a success");
     }
 
+    #[test]
+    fn the_system_resolver_looks_up_the_absolute_name() {
+        // Without the trailing dot a resolver may append the machine's search domains, and a
+        // third party's name could come back as an intranet host's address.
+        assert_eq!(lookup_name("fonts.googleapis.com"), "fonts.googleapis.com.");
+    }
+
     /// A resolver that answers every name with `ip`, so the real connector's code path can be
     /// exercised against a hostile DNS answer without the suite resolving anything.
     fn resolver_to(ip: &'static str) -> Resolver {
@@ -1366,7 +1392,7 @@ mod tests {
         // With any well-formed host admitted during a scan, this is the guard: a third party's
         // DNS can point anywhere, and `decide` never sees the answer. Loopback comes first so a
         // build that has lost the check fails here, on this machine, before it ever tries the LAN.
-        for ip in ["127.0.0.1", "::1", "10.0.0.5", "192.168.1.1", "169.254.169.254", "100.64.0.1", "fe80::1", "::ffff:10.0.0.5"] {
+        for ip in ["127.0.0.1", "::1", "64:ff9b::7f00:1", "64:ff9b::a00:5", "10.0.0.5", "192.168.1.1", "169.254.169.254", "100.64.0.1", "fe80::1", "::ffff:10.0.0.5"] {
             let err = connector_with(resolver_to(ip))("internal.example".into(), 443).await.unwrap_err();
             assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied, "{ip}");
         }
