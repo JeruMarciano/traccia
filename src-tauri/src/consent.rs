@@ -168,6 +168,12 @@ pub fn init_reply() -> String {
     format!("autoconsentReceiveMessage({{type:'initResp', config: {CONFIG}, rules: {RULES}}})")
 }
 
+/// An engine eval request as sent to the page's main world: the result is compared with `true`
+/// in the page, so only a boolean crosses back, whatever the page made the code return.
+pub fn eval_request(code: &str) -> String {
+    format!("(()=>{{const r={code};return r===true}})()")
+}
+
 /// `id` already validated by [`parse_engine_msg`].
 pub fn eval_reply(id: &str, result: bool) -> String {
     format!("autoconsentReceiveMessage({{type:'evalResp', id:'{id}', result:{result}}})")

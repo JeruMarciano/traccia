@@ -127,6 +127,23 @@ describe('startScan', () => {
     await expect(startScan('https://rossi-editore.it')).rejects.toThrow()
   })
 
+  it('rejects a consent whose names fall outside the rule-name shape, or whose matched text is over 128', async () => {
+    const { startScan } = await import('../../src/renderer/bridge')
+    for (const bad of [
+      { cmp: 'iubenda<script>' },
+      { ruleName: 'x'.repeat(65) },
+      { ruleName: 'a\u202eb' },
+      { matchedText: 'x'.repeat(129) },
+    ]) {
+      invoke.mockResolvedValueOnce(JSON.stringify({ ...validPayload(), consent: { ...consent, ...bad } }))
+      await expect(startScan('https://rossi-editore.it'), JSON.stringify(bad)).rejects.toThrow()
+    }
+    invoke.mockResolvedValueOnce(
+      JSON.stringify({ ...validPayload(), consent: { ...consent, cmp: null, matchedText: 'x'.repeat(128) } }),
+    )
+    await expect(startScan('https://rossi-editore.it')).resolves.toBeDefined()
+  })
+
   it('rejects a payload whose storage key element has the wrong shape', async () => {
     const { startScan } = await import('../../src/renderer/bridge')
     invoke.mockResolvedValueOnce(
