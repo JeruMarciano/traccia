@@ -161,7 +161,7 @@ fn tame(raw: &str, max_chars: usize) -> String {
 }
 
 /// Reads exactly four named keys from each raw cookie object handed back by
-/// `Network.getAllCookies` — `name`, `domain`, `session`, `expires` — and
+/// `Storage.getCookies` — `name`, `domain`, `session`, `expires` — and
 /// nothing else. The cookie's own `value` is never read, never copied, never
 /// logged; there is no `#[serde(flatten)]` and no deserialising into a struct
 /// that carries it.
@@ -404,7 +404,7 @@ pub struct Observation {
     /// completes — never by [`Driver::observation`] itself, which stays a
     /// pure fold over what the driver already collected and is exercised
     /// directly by most of this module's own tests without a transport that
-    /// answers `Network.getAllCookies` at all.
+    /// answers `Storage.getCookies` at all.
     pub cookies: Vec<ScanCookie>,
     /// Consent-manager names the entry page's `CONSENT_PROBE` matched against
     /// [`CONSENT_MARKERS`], in the order the probe found them, deduplicated.
@@ -1821,7 +1821,7 @@ impl<T: CdpTransport> Driver<T> {
         }
     }
 
-    /// Sends `Network.getAllCookies` on the browser-level session — a fixed
+    /// Sends `Storage.getCookies` on the browser-level session — a fixed
     /// method string, no parameters built from anything the page said — and
     /// folds the result through [`sanitise_cookies`].
     ///
@@ -1834,7 +1834,7 @@ impl<T: CdpTransport> Driver<T> {
         match self
             .call(
                 None,
-                MethodId::from("Network.getAllCookies"),
+                MethodId::from("Storage.getCookies"),
                 serde_json::json!({}),
             )
             .await
@@ -3055,6 +3055,33 @@ mod tests {
     }
 
     // --- Task 5: the cookie jar ---
+
+    #[tokio::test]
+    async fn cookies_are_read_with_storage_get_cookies_on_the_browser_session() {
+        // Current Chrome answers `Network.getAllCookies` with "wasn't found";
+        // FakeTransport answers by method, so a reverted string gets `{}` here.
+        let mut t = FakeTransport::new();
+        t.results.insert(
+            "Storage.getCookies".into(),
+            json!({ "cookies": [{ "name": "_ga", "domain": ".example.it", "session": false, "expires": 1.9e9 }] }),
+        );
+        let mut d = Driver::new(t);
+        let (cookies, gap) = d.fetch_cookies().await.unwrap();
+        assert_eq!((cookies.len(), gap), (1, false));
+        assert!(d.transport.methods_for(None).contains(&"Storage.getCookies"));
+    }
+
+    #[tokio::test]
+    async fn a_refused_cookie_read_is_a_gap_never_a_silent_zero() {
+        let mut t = FakeTransport::new();
+        t.refuse_on("Storage.getCookies", None);
+        let mut d = Driver::new(t);
+        let (cookies, gap) = d.fetch_cookies().await.unwrap();
+        assert!(cookies.is_empty() && gap);
+        // The gap must come from the refusal, not from `{}` answering some
+        // other method string (a missing `cookies` array is a gap too).
+        assert_eq!(d.transport.methods_for(None), ["Storage.getCookies"]);
+    }
 
     #[test]
     fn a_thousand_minted_cookies_cap_at_max_and_record_a_gap() {
