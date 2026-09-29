@@ -1843,26 +1843,30 @@ impl<T: CdpTransport> Driver<T> {
     /// back to `Before` if no click came of it.
     ///
     /// A rule that can report success without clicking is never asked —
-    /// see [`consent::opt_in_clicks`].
+    /// see [`consent::opt_in_clicks`]. Where the engine did not click (no
+    /// popup, or a refused rule) the text click is tried instead.
     async fn consent_step(
         &mut self,
         session: &SessionId,
         cancel: &CancellationToken,
+        entry_url: &str,
         detection: Detection,
     ) -> Result<Consent, CdpError> {
         let cmp = match &detection.cmp {
             Some(cmp) if detection.popup && !cancel.is_cancelled() => cmp.clone(),
-            // Task 7: with no CMP popup to accept, the text attempt goes here.
-            _ => return Ok(consent_found(detection, cancel.is_cancelled())),
+            _ => {
+                let found = consent_found(detection, cancel.is_cancelled());
+                return self.text_click(session, cancel, entry_url, found).await;
+            }
         };
         if !consent::opt_in_clicks(&cmp) {
-            // Task 7: the text attempt goes here too — a rule that cannot
-            // prove its click is where most refused CMPs land.
-            return Ok(Consent {
+            // A rule that cannot prove its click is where most refused CMPs land.
+            let refused = Consent {
                 cmp: Some(cmp),
                 reason: Some("click-failed"),
                 ..Consent::default()
-            });
+            };
+            return self.text_click(session, cancel, entry_url, refused).await;
         }
         self.begin_consent_attempt();
         self.load_fired = false;
@@ -1891,6 +1895,79 @@ impl<T: CdpTransport> Driver<T> {
             reason: (!clicked && !cancel.is_cancelled() && self.consent_context.is_some())
                 .then_some("click-failed"),
         })
+    }
+
+    /// Spec §5.1 (2)–(3): one click on a whole label from the fixed
+    /// vocabulary, inside a consent container, evaluated in the engine's
+    /// isolated world. `unclicked` is what the scan reports if nothing is
+    /// clicked. A world that is gone, or a cancel, is left as it was: the
+    /// expression runs only in that world, never in the page's own.
+    ///
+    /// A click that loads a page, or leaves the entry URL, is kept but
+    /// flagged `click_navigated`; the caller's reload brings the scan home.
+    async fn text_click(
+        &mut self,
+        session: &SessionId,
+        cancel: &CancellationToken,
+        entry_url: &str,
+        unclicked: Consent,
+    ) -> Result<Consent, CdpError> {
+        let Some(context) = self.consent_context.filter(|_| !cancel.is_cancelled()) else {
+            return Ok(unclicked);
+        };
+        self.begin_consent_attempt();
+        self.load_fired = false;
+        let answer = self
+            .bridge_eval(session, consent::text_click_expr(), Some(context))
+            .await?;
+        let label = answer
+            .as_ref()
+            .and_then(|r| r.get("result")?.get("value"))
+            .and_then(consent::sanitise_text_click);
+        let Some(label) = label else {
+            self.abandon_consent_attempt();
+            if answer.is_none() {
+                // No answer: whether it clicked is not known — a blank.
+                self.gaps.note("consent:bridge");
+                return Ok(Consent { reason: None, ..unclicked });
+            }
+            return Ok(unclicked);
+        };
+        self.settle(SETTLE_AFTER_LOAD, cancel, Instant::now() + ARM_DRAIN_BUDGET)
+            .await?;
+        let moved = self.current_url(session).await?.is_some_and(|url| {
+            origin(&url) != origin(entry_url) || canonical(&url) != canonical(entry_url)
+        });
+        Ok(Consent {
+            cmp: unclicked.cmp,
+            clicked: true,
+            rule: Some(ConsentRule::Text),
+            rule_name: String::new(),
+            matched_text: label,
+            click_navigated: self.load_fired || moved,
+            reason: None,
+        })
+    }
+
+    /// The page's current URL, `entries[currentIndex].url` of
+    /// `Page.getNavigationHistory`; `None` when it cannot be read.
+    async fn current_url(&mut self, session: &SessionId) -> Result<Option<String>, CdpError> {
+        let history = match self
+            .call(
+                Some(session.clone()),
+                MethodId::from("Page.getNavigationHistory"),
+                serde_json::json!({}),
+            )
+            .await
+        {
+            Ok(history) => history,
+            Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
+            Err(_) => return Ok(None),
+        };
+        let index = history.get("currentIndex").and_then(|i| i.as_u64());
+        Ok(index
+            .and_then(|i| history.get("entries")?.get(i as usize)?.get("url")?.as_str())
+            .map(str::to_string))
     }
 
     /// The consent step is over: the engine's world is no longer read, so
@@ -2095,7 +2172,7 @@ impl<T: CdpTransport> Driver<T> {
             // site-level fact, not a per-page one.
             if !cancel.is_cancelled() {
                 let detection = self.detect_consent(&session, cancel).await?;
-                self.consent = self.consent_step(&session, cancel, detection).await?;
+                self.consent = self.consent_step(&session, cancel, entry_url, detection).await?;
                 self.end_consent(&session).await?;
                 // Reloaded so the tags that wait for consent load. Not a new
                 // page: not counted, not probed again.
@@ -4129,7 +4206,7 @@ mod tests {
             .await
             .expect("detection");
         let consent = driver
-            .consent_step(&session, &cancel, detection)
+            .consent_step(&session, &cancel, "https://home.example/", detection)
             .await
             .expect("consent step");
         (driver, consent)
@@ -4194,7 +4271,33 @@ mod tests {
         assert_eq!(consent.cmp.as_deref(), Some("iubenda"));
         assert!(!consent.clicked);
         assert_eq!(consent.reason, Some("no-button"));
-        assert!(driver.transport.sent.is_empty(), "{:?}", driver.transport.sent);
+        let opt_in = driver.transport.sent.iter().any(|(_, _, p)| {
+            p["expression"].as_str() == Some("autoconsentReceiveMessage({type:'optIn'})")
+        });
+        assert!(!opt_in, "{:?}", driver.transport.sent);
+    }
+
+    #[tokio::test]
+    async fn a_refused_rule_falls_back_to_the_text_click_in_the_engine_world() {
+        let mut driver = primed();
+        driver.transport.hang_when_empty = true; // the settle after the click reads until its end
+        driver.transport.results.insert(
+            EvaluateParams::IDENTIFIER.to_string(),
+            json!({"result": {"value": {"clicked": true, "label": "Accetta"}}}),
+        );
+        let (driver, consent) =
+            accept_on(driver, &[r#"{"type":"popupFound","cmp":"cookieyes"}"#], &[]).await;
+        assert!(consent.clicked, "{consent:?}");
+        assert_eq!(consent.cmp.as_deref(), Some("cookieyes"));
+        assert_eq!(consent.rule, Some(consent::ConsentRule::Text));
+        assert_eq!(consent.matched_text, "accetta");
+        let (_, s, p) = &driver.transport.sent[0];
+        assert_eq!((s.as_deref(), p["contextId"].as_i64()), (Some("SESSION-A"), Some(7)));
+        assert_eq!(p["expression"].as_str(), Some(consent::text_click_expr().as_str()));
+        assert_eq!(
+            driver.acc.counts.get("after.example").map(|(_, phase)| *phase),
+            Some(Phase::After)
+        );
     }
 
     #[tokio::test]

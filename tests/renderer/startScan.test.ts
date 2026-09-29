@@ -144,6 +144,15 @@ describe('startScan', () => {
     await expect(startScan('https://rossi-editore.it')).resolves.toBeDefined()
   })
 
+  it('accepts a generated rule name with a +, as rules.json ships it', async () => {
+    const { startScan } = await import('../../src/renderer/bridge')
+    const name = 'auto_AU_acetool.com_n0w_+1'
+    invoke.mockResolvedValueOnce(
+      JSON.stringify({ ...validPayload(), consent: { ...consent, cmp: name, ruleName: name } }),
+    )
+    expect((await startScan('https://rossi-editore.it')).consent?.cmp).toBe(name)
+  })
+
   it('rejects a payload whose storage key element has the wrong shape', async () => {
     const { startScan } = await import('../../src/renderer/bridge')
     invoke.mockResolvedValueOnce(
