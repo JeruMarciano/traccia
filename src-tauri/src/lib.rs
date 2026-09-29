@@ -10,6 +10,7 @@ pub mod admission;
 pub mod browser;
 pub mod cdp;
 pub mod commands;
+pub mod consent;
 // `pub` for the same reason `admission` is: v0.2 Task 1's `extract_text` is only an interface if
 // it is reachable from the crate root. `commands` is the only caller in this crate.
 pub mod extract;

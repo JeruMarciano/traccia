@@ -70,10 +70,12 @@ pub struct ScanOutput {
     pub possible_gaps: u32,
     pub stopped_early: bool,
     pub cookies: Vec<cdp::ScanCookie>,
-    /// Consent-manager names found on the entry page, from the fixed set in
-    /// `cdp::CONSENT_MARKERS`. Empty means none of those four were found, not
-    /// that no consent banner exists.
+    /// The v0.3 shape the renderer still reads: the CMP in [`Self::consent`],
+    /// if any, as its one entry. Empty means autoconsent's rules detected none,
+    /// not that no consent banner exists.
     pub consent_markers: Vec<String>,
+    /// What the scan did about consent — see `cdp::Observation::consent`.
+    pub consent: crate::consent::Consent,
     /// Form fields found across every visited page — see
     /// `cdp::Observation::form_fields`. Never a value, only the field's own
     /// shape.
@@ -500,7 +502,9 @@ async fn run_pipeline(
             possible_gaps: observation.possible_gaps,
             stopped_early: observation.stopped_early,
             cookies: observation.cookies,
-            consent_markers: observation.consent_markers,
+            // Task 6 moves the renderer to `consent`; until then the notice reads this.
+            consent_markers: observation.consent.cmp.clone().into_iter().collect(),
+            consent: observation.consent,
             form_fields: observation.form_fields,
             storage_keys: observation.storage_keys,
             captured_at_epoch_seconds,
@@ -807,6 +811,7 @@ mod tests {
                 phase: Some(cdp::Phase::Before),
             }],
             consent_markers: vec!["OneTrust".into()],
+            consent: crate::consent::Consent::default(),
             form_fields: vec![cdp::FormField {
                 page: "https://rossi-editore.it/contatti".into(),
                 name: "email".into(),

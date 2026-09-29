@@ -28,6 +28,7 @@ use chromiumoxide::types::{CallId, CdpJsonEventMessage, Message, MethodId};
 use futures_core::Stream;
 
 use crate::browser::Launched;
+use crate::consent::{self, Consent, EngineMsg};
 
 /// Whether something was first seen before any consent was given, or after a
 /// consent attempt began. The first phase wins: a tracker that fires before
@@ -422,13 +423,9 @@ pub struct Observation {
     /// directly by most of this module's own tests without a transport that
     /// answers `Storage.getCookies` at all.
     pub cookies: Vec<ScanCookie>,
-    /// Consent-manager names the entry page's `CONSENT_PROBE` matched against
-    /// [`CONSENT_MARKERS`], in the order the probe found them, deduplicated.
-    /// Evaluated once, on the entry page only — the banner is a site-level
-    /// fact, not a per-page one. Empty means the probe found none of the four
-    /// known markers, not that no consent banner exists at all: a page using
-    /// a fifth product is indistinguishable from a page using none.
-    pub consent_markers: Vec<String>,
+    /// The CMP autoconsent's rules detected on the entry page — see
+    /// [`Driver::detect_consent`]. Default (no reason) when detection never ran.
+    pub consent: Consent,
     /// Form fields found across every visited page, capped scan-wide at
     /// [`MAX_FORM_FIELDS`] — never a value, only the field's own shape. A
     /// page whose navigation was refused (`Driver::visit` returned `false`)
@@ -482,31 +479,11 @@ impl GapLedger {
     }
 }
 
-/// A fixed expression, evaluated once on the entry page: checks a handful of
-/// known consent-management-platform window globals and DOM ids and returns
-/// an array of the names it found. Nothing from the page is ever interpolated
-/// into this string — it is a `const`, sent byte for byte — and the *result*
-/// is only trusted after [`sanitise_consent_markers`] filters it back against
-/// [`CONSENT_MARKERS`], so a page that returns an arbitrary array (a poisoned
-/// `Array.prototype.push`, or simply a page that fabricates the return value)
-/// cannot inject a name this module did not already know.
-const CONSENT_PROBE: &str = r#"(() => {
-  const found = [];
-  try { if (window.OneTrust || document.getElementById('onetrust-banner-sdk')) found.push('OneTrust'); } catch (e) { }
-  try { if (window.Cookiebot || document.getElementById('CybotCookiebotDialog')) found.push('Cookiebot'); } catch (e) { }
-  try { if (window._iub || document.querySelector('[id^="iubenda"]')) found.push('Iubenda'); } catch (e) { }
-  try { if (window.UC_UI || document.querySelector('[id^="usercentrics"]')) found.push('Usercentrics'); } catch (e) { }
-  return found;
-})()"#;
-
-/// The only marker names [`sanitise_consent_markers`] will ever pass through.
-const CONSENT_MARKERS: [&str; 4] = ["OneTrust", "Cookiebot", "Iubenda", "Usercentrics"];
-
 /// A fixed expression, evaluated once per visited page: reads `name`, `type`,
 /// `autocomplete` and a best-effort `label` off every `input`/`select`/
 /// `textarea` element — never `value` (spec §5.3, "Never values — nothing is
 /// ever typed"). Nothing from the page is interpolated into this string; it
-/// is a `const`, sent byte for byte, the same discipline as [`CONSENT_PROBE`].
+/// is a `const`, sent byte for byte, the same discipline as every probe here.
 ///
 /// **[B1]** Every string is sliced *inside the page*, at [`MAX_FIELD_TEXT`] —
 /// the same number [`sanitise_form_fields`] uses on the Rust side — before
@@ -538,7 +515,7 @@ const FORM_PROBE: &str = r#"(() => {
 /// and value sizes of `window.localStorage` and `window.sessionStorage` —
 /// never a value itself (spec §5.3, "Never values"). Nothing from the page
 /// is interpolated into this string; it is a `const`, sent byte for byte,
-/// the same discipline as [`CONSENT_PROBE`]/[`FORM_PROBE`].
+/// the same discipline as [`FORM_PROBE`].
 ///
 /// **[B1]** The key is sliced *inside the page*, at [`MAX_KEY_LEN`] (128) —
 /// the same number [`sanitise_storage_keys`] uses on the Rust side — before
@@ -566,27 +543,6 @@ const STORAGE_PROBE: &str = r#"(() => {
   read(window.sessionStorage, 'session');
   return out;
 })()"#;
-
-/// Filters a raw `Runtime.evaluate` result against [`CONSENT_MARKERS`]: order
-/// preserved, duplicates dropped, anything not in the fixed set dropped. A
-/// non-array result — including a string, a number, `null`, or an object —
-/// yields no markers rather than an error: the probe's own return value is
-/// hostile-page-controlled and must never be trusted past this filter.
-fn sanitise_consent_markers(raw: &serde_json::Value) -> Vec<String> {
-    let Some(array) = raw.as_array() else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for item in array {
-        let Some(name) = item.as_str() else {
-            continue;
-        };
-        if CONSENT_MARKERS.contains(&name) && !out.iter().any(|seen| seen == name) {
-            out.push(name.to_string());
-        }
-    }
-    out
-}
 
 /// The longest a host may be before it is refused: RFC 1035's limit on a
 /// fully-qualified domain name. Every real host is under it.
@@ -1170,6 +1126,23 @@ const MAX_TRACKED_SESSIONS: usize = 512;
 /// a loop — so this is what keeps a scan bounded, and cancellation is checked
 /// between targets for the same reason.
 const ARM_DRAIN_BUDGET: Duration = Duration::from_secs(20);
+/// How long the engine gets to detect a CMP and its popup on the entry page.
+/// A page with no CMP spends all of it: the engine reports "nothing found"
+/// only in a `report`, which the bridge does not read.
+const DETECT_BUDGET: Duration = Duration::from_secs(12);
+/// Parsed engine messages held between reads. The engine sends a handful per
+/// scan; the bound is for an engine a crafted DOM keeps busy.
+const MAX_CONSENT_INBOX: usize = 256;
+
+/// What [`Driver::detect_consent`] found.
+#[derive(Debug, Default)]
+struct Detection {
+    cmp: Option<String>,
+    #[allow(dead_code)] // Task 6 reads it: a popup is what gets clicked.
+    popup: bool,
+    #[allow(dead_code)] // Tasks 6–7 evaluate in this context.
+    context: Option<i64>,
+}
 
 struct Driver<T: CdpTransport> {
     transport: T,
@@ -1183,10 +1156,13 @@ struct Driver<T: CdpTransport> {
     /// Distinct places the map may be incomplete. See [`GapLedger`] and
     /// [`Observation::possible_gaps`].
     gaps: GapLedger,
-    /// Set once, by [`Driver::probe_consent`], right after the entry page's
-    /// own visit — never touched again afterwards, including on any
-    /// subsequent page in the walk.
-    consent_markers: Vec<String>,
+    /// Set once, from [`Driver::detect_consent`], on the entry page.
+    consent: Consent,
+    /// The isolated world's execution context: the only one whose
+    /// `Runtime.bindingCalled` is read.
+    consent_context: Option<i64>,
+    /// Engine messages already parsed, bounded at [`MAX_CONSENT_INBOX`].
+    consent_inbox: VecDeque<EngineMsg>,
     /// Form fields accumulated across every page [`Driver::visit`] actually
     /// loaded, via [`Driver::probe_form_fields`] — see
     /// [`Observation::form_fields`].
@@ -1216,7 +1192,9 @@ impl<T: CdpTransport> Driver<T> {
             attached: Vec::new(),
             load_fired: false,
             gaps: GapLedger::default(),
-            consent_markers: Vec::new(),
+            consent: Consent::default(),
+            consent_context: None,
+            consent_inbox: VecDeque::new(),
             form_fields: Vec::new(),
             storage_keys: Vec::new(),
             phase: Phase::Before,
@@ -1343,6 +1321,23 @@ impl<T: CdpTransport> Driver<T> {
             }
         } else if method == EventLoadEventFired::IDENTIFIER {
             self.load_fired = true;
+        } else if method == "Runtime.bindingCalled" {
+            // Only our binding, only from the isolated world detect_consent
+            // created. Parsed here so the engine's frequent `report`s never
+            // take a place in the bounded inbox.
+            let p = &event.params;
+            let ours = self.consent_context.is_some()
+                && p.get("name").and_then(|n| n.as_str()) == Some(consent::BINDING)
+                && p.get("executionContextId").and_then(|c| c.as_i64()) == self.consent_context;
+            if ours && self.consent_inbox.len() < MAX_CONSENT_INBOX {
+                if let Some(msg) = p
+                    .get("payload")
+                    .and_then(|m| m.as_str())
+                    .and_then(consent::parse_engine_msg)
+                {
+                    self.consent_inbox.push_back(msg);
+                }
+            }
         }
     }
 
@@ -1636,53 +1631,176 @@ impl<T: CdpTransport> Driver<T> {
         Ok(serde_json::from_str::<Vec<String>>(json).unwrap_or_default())
     }
 
-    /// Evaluates the fixed [`CONSENT_PROBE`] once, on the entry page's own
-    /// session, and filters the result through [`sanitise_consent_markers`].
-    ///
-    /// [B2]: the same call contract as [`Driver::links`] — `return_by_value`,
-    /// `silent`, `await_promise: false`, an explicit 2000 ms timeout.
-    /// `exceptionDetails` present, or any `CdpError` other than
-    /// [`CdpError::BrowserGone`], is zero markers plus one counted gap;
-    /// `result.value` is simply not read in that case. `BrowserGone` still
-    /// fails the scan, the one error this module never swallows.
-    async fn probe_consent(&mut self, session: &SessionId) -> Result<Vec<String>, CdpError> {
-        let mut params = EvaluateParams::new(CONSENT_PROBE.to_string());
+    /// Evaluates `expression` on `session` under the fixed [B2] contract —
+    /// `return_by_value`, `silent`, `await_promise: false`, 2000 ms — in the
+    /// isolated world `context`, or in the page's main world when `None`.
+    /// `None` back for anything but an answer: a refused or timed-out call, or
+    /// `exceptionDetails`. `BrowserGone` still fails the scan.
+    async fn bridge_eval(
+        &mut self,
+        session: &SessionId,
+        expression: String,
+        context: Option<i64>,
+    ) -> Result<Option<serde_json::Value>, CdpError> {
+        let mut params = EvaluateParams::new(expression);
         params.return_by_value = Some(true);
         params.silent = Some(true);
         params.await_promise = Some(false);
         params.timeout = Some(chromiumoxide::cdp::js_protocol::runtime::TimeDelta::new(
             2000.0,
         ));
-        let result = match self
+        let mut params = to_params(&params)?;
+        if let Some(context) = context {
+            params["contextId"] = serde_json::json!(context);
+        }
+        match self
             .call(
                 Some(session.clone()),
                 MethodId::from(EvaluateParams::IDENTIFIER),
-                to_params(&params)?,
+                params,
             )
             .await
         {
-            Ok(result) => result,
-            Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
-            Err(_) => {
-                self.gaps.note("consent:probe-failed");
-                return Ok(Vec::new());
-            }
-        };
-        if result.get("exceptionDetails").is_some() {
-            self.gaps.note("consent:probe-exception");
-            return Ok(Vec::new());
+            Ok(result) if result.get("exceptionDetails").is_none() => Ok(Some(result)),
+            Ok(_) => Ok(None),
+            Err(CdpError::BrowserGone) => Err(CdpError::BrowserGone),
+            Err(_) => Ok(None),
         }
-        let Some(value) = result.get("result").and_then(|r| r.get("value")) else {
-            return Ok(Vec::new());
+    }
+
+    /// Runs the vendored autoconsent engine, unmodified, in an isolated world
+    /// on the entry page and reports which CMP its rules detected (spec §5.2).
+    ///
+    /// The binding exists only in worlds named [`consent::WORLD`], so the page
+    /// cannot call it, and [`Driver::on_event`] only queues a call from the
+    /// context recorded here. The engine's `eval` requests are the one
+    /// expression not built from Rust consts: they run in the page's main
+    /// world under the fixed contract, and only a boolean goes back.
+    ///
+    /// Any step failing is one gap, `consent:bridge`, and no detection — never
+    /// a scan failure, except `BrowserGone`.
+    async fn detect_consent(
+        &mut self,
+        session: &SessionId,
+        cancel: &CancellationToken,
+    ) -> Result<Detection, CdpError> {
+        match self.start_engine(session).await {
+            Ok(Some(_)) => {}
+            Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
+            Ok(None) | Err(_) => {
+                self.consent_context = None;
+                self.gaps.note("consent:bridge");
+                return Ok(Detection::default());
+            }
+        }
+        let deadline = Instant::now() + DETECT_BUDGET;
+        let mut detection = Detection {
+            context: self.consent_context,
+            ..Detection::default()
         };
-        Ok(sanitise_consent_markers(value))
+        loop {
+            while let Some(msg) = self.consent_inbox.pop_front() {
+                match msg {
+                    EngineMsg::Init => {
+                        if !self.consent_reply(session, consent::init_reply()).await? {
+                            return Ok(Detection::default());
+                        }
+                    }
+                    EngineMsg::Eval { id, code } => {
+                        let answer = self.bridge_eval(session, code, None).await?;
+                        let b = answer
+                            .and_then(|r| r.get("result")?.get("value")?.as_bool())
+                            .unwrap_or(false);
+                        if !self.consent_reply(session, consent::eval_reply(&id, b)).await? {
+                            return Ok(Detection::default());
+                        }
+                    }
+                    EngineMsg::CmpDetected(name) => detection.cmp = consent::known_cmp(&name),
+                    EngineMsg::PopupFound(name) => {
+                        detection.popup = consent::known_cmp(&name).is_some();
+                        return Ok(detection);
+                    }
+                    EngineMsg::Done | EngineMsg::Error => return Ok(detection),
+                    EngineMsg::OptInResult(_) => {}
+                }
+            }
+            if cancel.is_cancelled() || Instant::now() >= deadline {
+                return Ok(detection);
+            }
+            self.settle(CANCEL_POLL, cancel, Instant::now() + ARM_DRAIN_BUDGET)
+                .await?;
+        }
+    }
+
+    /// Steps 1–5 of [`Driver::detect_consent`]: `Some(context)` once the shim
+    /// and the engine run in the isolated world.
+    async fn start_engine(&mut self, session: &SessionId) -> Result<Option<i64>, CdpError> {
+        let page = Some(session.clone());
+        self.call(page.clone(), MethodId::from("Runtime.enable"), serde_json::json!({}))
+            .await?;
+        let tree = self
+            .call(page.clone(), MethodId::from("Page.getFrameTree"), serde_json::json!({}))
+            .await?;
+        let Some(frame_id) = tree
+            .get("frameTree")
+            .and_then(|t| t.get("frame"))
+            .and_then(|f| f.get("id"))
+            .and_then(|i| i.as_str())
+            .map(|i| tame(i, 128))
+            .filter(|i| !i.is_empty())
+        else {
+            return Ok(None);
+        };
+        self.call(
+            page.clone(),
+            MethodId::from("Runtime.addBinding"),
+            serde_json::json!({ "name": consent::BINDING, "executionContextName": consent::WORLD }),
+        )
+        .await?;
+        let world = self
+            .call(
+                page,
+                MethodId::from("Page.createIsolatedWorld"),
+                serde_json::json!({
+                    "frameId": frame_id,
+                    "worldName": consent::WORLD,
+                    "grantUniveralAccess": false,
+                }),
+            )
+            .await?;
+        let Some(context) = world.get("executionContextId").and_then(|c| c.as_i64()) else {
+            return Ok(None);
+        };
+        // Recorded before the engine runs: it sends `init` while it loads.
+        self.consent_context = Some(context);
+        for script in [consent::SHIM, consent::ENGINE] {
+            if self
+                .bridge_eval(session, script.to_string(), Some(context))
+                .await?
+                .is_none()
+            {
+                return Ok(None);
+            }
+        }
+        Ok(Some(context))
+    }
+
+    /// Evaluates a reply to the engine in its isolated world. `false`, with
+    /// the `consent:bridge` gap noted, when it did not run.
+    async fn consent_reply(&mut self, session: &SessionId, reply: String) -> Result<bool, CdpError> {
+        let context = self.consent_context;
+        let ran = self.bridge_eval(session, reply, context).await?.is_some();
+        if !ran {
+            self.gaps.note("consent:bridge");
+        }
+        Ok(ran)
     }
 
     /// Evaluates the fixed [`FORM_PROBE`] on `session` and folds the result
     /// through [`sanitise_form_fields`], attributing every retained field to
     /// `page_url`.
     ///
-    /// [B2]: the same call contract as [`Driver::links`]/[`Driver::probe_consent`]
+    /// [B2]: the same call contract as [`Driver::links`]
     /// — `return_by_value`, `silent`, `await_promise: false`, an explicit
     /// 2000 ms timeout. `exceptionDetails` present, or any `CdpError` other
     /// than [`CdpError::BrowserGone`], is zero fields plus one counted gap.
@@ -1737,7 +1855,7 @@ impl<T: CdpTransport> Driver<T> {
     /// result through [`sanitise_storage_keys`], deduplicating against every
     /// key this scan has already retained.
     ///
-    /// [B2]: the same call contract as [`Driver::links`]/[`Driver::probe_consent`]/
+    /// [B2]: the same call contract as [`Driver::links`]/
     /// [`Driver::probe_form_fields`] — `return_by_value`, `silent`,
     /// `await_promise: false`, an explicit 2000 ms timeout. `exceptionDetails`
     /// present, or any `CdpError` other than [`CdpError::BrowserGone`], is
@@ -1823,12 +1941,6 @@ impl<T: CdpTransport> Driver<T> {
         }
         if self.visit(&session, entry_url, HOME_WAIT, cancel).await? {
             pages_visited += 1;
-            // Once, on the entry page's own session — the banner is a
-            // site-level fact, not a per-page one, so no later page in the
-            // walk ever repeats this call.
-            if !cancel.is_cancelled() {
-                self.consent_markers = self.probe_consent(&session).await?;
-            }
             // [B4] Only for a page this walk actually loaded, only on the
             // page's own top-level session, and attributed to `entry_url` as
             // the walk itself knows it — never to anything the page's own
@@ -1846,6 +1958,17 @@ impl<T: CdpTransport> Driver<T> {
             }
             if !cancel.is_cancelled() {
                 self.snapshot_before_cookies().await?;
+            }
+            // Once, on the entry page's own session — the banner is a
+            // site-level fact, not a per-page one.
+            if !cancel.is_cancelled() {
+                let cmp = self.detect_consent(&session, cancel).await?.cmp;
+                let reason = if cmp.is_some() { "no-button" } else { "no-banner" };
+                self.consent = Consent {
+                    cmp,
+                    clicked: false,
+                    reason: Some(reason),
+                };
             }
         }
 
@@ -1890,7 +2013,7 @@ impl<T: CdpTransport> Driver<T> {
             stopped_early,
             // Never fetched here — see the field's own doc comment.
             cookies: Vec::new(),
-            consent_markers: std::mem::take(&mut self.consent_markers),
+            consent: std::mem::take(&mut self.consent),
             form_fields: std::mem::take(&mut self.form_fields),
             storage_keys: std::mem::take(&mut self.storage_keys),
         }
@@ -2168,28 +2291,6 @@ mod tests {
             same_origin_links("https://rossi-editore.it/", &refs, 10).len(),
             10
         );
-    }
-
-    #[test]
-    fn the_probe_expression_is_a_constant_and_never_interpolated() {
-        // The guarantee is structural: the probe is `const`, and the send site is asserted
-        // by the existing params_for harness to carry exactly this string.
-        assert!(CONSENT_PROBE.contains("OneTrust"));
-        assert!(!CONSENT_PROBE.contains("{}"), "no format holes in a fixed expression");
-    }
-
-    #[test]
-    fn a_page_claiming_a_marker_not_in_the_fixed_set_is_ignored() {
-        let raw = serde_json::json!(["OneTrust", "EvilCMP<script>", "Iubenda"]);
-        assert_eq!(
-            sanitise_consent_markers(&raw),
-            vec!["OneTrust".to_string(), "Iubenda".to_string()]
-        );
-    }
-
-    #[test]
-    fn a_non_array_result_is_no_markers_not_an_error() {
-        assert!(sanitise_consent_markers(&serde_json::json!("OneTrust")).is_empty());
     }
 
     #[test]
@@ -3140,7 +3241,7 @@ mod tests {
             possible_gaps: 0,
             stopped_early: false,
             cookies: Vec::new(),
-            consent_markers: Vec::new(),
+            consent: Consent::default(),
             form_fields: Vec::new(),
             storage_keys: Vec::new(),
         };
@@ -3152,7 +3253,7 @@ mod tests {
                 "possibleGaps": 0,
                 "stoppedEarly": false,
                 "cookies": [],
-                "consentMarkers": [],
+                "consent": {"cmp": null, "clicked": false, "reason": null},
                 "formFields": [],
                 "storageKeys": []
             })
@@ -3506,7 +3607,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_transport_that_refuses_the_form_probe_yields_a_gap_not_an_error() {
-        // [B2], same call contract as links()/probe_consent().
+        // [B2], same call contract as links().
         let mut transport = FakeTransport::new();
         transport.refuse_on("Runtime.evaluate", Some("SESSION-A"));
         let mut driver = Driver::new(transport);
@@ -3748,7 +3849,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_transport_that_refuses_the_storage_probe_yields_a_gap_not_an_error() {
-        // [B2], same call contract as links()/probe_consent()/probe_form_fields().
+        // [B2], same call contract as links()/probe_form_fields().
         let mut transport = FakeTransport::new();
         transport.refuse_on("Runtime.evaluate", Some("SESSION-A"));
         let mut driver = Driver::new(transport);
