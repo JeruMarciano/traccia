@@ -102,6 +102,31 @@ describe('startScan', () => {
     await expect(startScan('https://rossi-editore.it')).rejects.toThrow()
   })
 
+  // Since Task 6 Rust sends `consent` and no `consentMarkers`; a v0.3 payload has only the latter.
+  const consent = {
+    cmp: 'iubenda',
+    clicked: true,
+    rule: 'cmp',
+    ruleName: 'iubenda',
+    matchedText: '',
+    clickNavigated: false,
+  }
+
+  it('accepts a payload with consent and no consentMarkers, and a v0.3 one with consentMarkers only', async () => {
+    const { startScan } = await import('../../src/renderer/bridge')
+    const { consentMarkers: _, ...current } = validPayload()
+    invoke.mockResolvedValueOnce(JSON.stringify({ ...current, consent }))
+    expect((await startScan('https://rossi-editore.it')).consent?.ruleName).toBe('iubenda')
+    invoke.mockResolvedValueOnce(JSON.stringify({ ...validPayload(), consentMarkers: ['OneTrust'] }))
+    expect((await startScan('https://rossi-editore.it')).consentMarkers).toEqual(['OneTrust'])
+  })
+
+  it('rejects a consent whose rule is neither cmp nor text', async () => {
+    const { startScan } = await import('../../src/renderer/bridge')
+    invoke.mockResolvedValueOnce(JSON.stringify({ ...validPayload(), consent: { ...consent, rule: 'magic' } }))
+    await expect(startScan('https://rossi-editore.it')).rejects.toThrow()
+  })
+
   it('rejects a payload whose storage key element has the wrong shape', async () => {
     const { startScan } = await import('../../src/renderer/bridge')
     invoke.mockResolvedValueOnce(

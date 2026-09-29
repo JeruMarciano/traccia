@@ -28,7 +28,7 @@ use chromiumoxide::types::{CallId, CdpJsonEventMessage, Message, MethodId};
 use futures_core::Stream;
 
 use crate::browser::Launched;
-use crate::consent::{self, Consent, EngineMsg};
+use crate::consent::{self, Bridge, Consent, ConsentRule, EngineMsg};
 
 /// Whether something was first seen before any consent was given, or after a
 /// consent attempt began. The first phase wins: a tracker that fires before
@@ -423,8 +423,9 @@ pub struct Observation {
     /// directly by most of this module's own tests without a transport that
     /// answers `Storage.getCookies` at all.
     pub cookies: Vec<ScanCookie>,
-    /// The CMP autoconsent's rules detected on the entry page — see
-    /// [`Driver::detect_consent`]. Default (no reason) when detection never ran.
+    /// The CMP autoconsent's rules detected on the entry page, and whether
+    /// its rule accepted — see [`Driver::detect_consent`] and
+    /// [`Driver::consent_step`]. Default (no reason) when detection never ran.
     pub consent: Consent,
     /// Form fields found across every visited page, capped scan-wide at
     /// [`MAX_FORM_FIELDS`] — never a value, only the field's own shape. A
@@ -597,13 +598,11 @@ impl HostAccumulator {
     }
 
     /// Every host recorded so far.
-    #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
     fn known(&self) -> HashSet<String> {
         self.counts.keys().cloned().collect()
     }
 
     /// Every host not in `known` goes back to [`Phase::Before`].
-    #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
     fn rewind_to_before(&mut self, known: &HashSet<String>) {
         for (host, (_, phase)) in self.counts.iter_mut() {
             if !known.contains(host) {
@@ -1130,6 +1129,8 @@ const ARM_DRAIN_BUDGET: Duration = Duration::from_secs(20);
 /// A page with no CMP spends all of it: the engine reports "nothing found"
 /// only in a `report`, which the bridge does not read.
 const DETECT_BUDGET: Duration = Duration::from_secs(12);
+/// How long the engine gets to answer Rust's `optIn` with its `optInResult`.
+const OPT_IN_BUDGET: Duration = Duration::from_secs(10);
 /// Parsed engine messages held between reads. The engine sends a handful per
 /// scan; the bound is for an engine a crafted DOM keeps busy.
 const MAX_CONSENT_INBOX: usize = 256;
@@ -1145,8 +1146,8 @@ fn consent_found(detection: Detection, cancelled: bool) -> Consent {
     };
     Consent {
         cmp: detection.cmp,
-        clicked: false,
         reason,
+        ..Consent::default()
     }
 }
 
@@ -1155,9 +1156,10 @@ fn consent_found(detection: Detection, cancelled: bool) -> Consent {
 #[derive(Debug, Default)]
 struct Detection {
     cmp: Option<String>,
-    #[allow(dead_code)] // Task 6 reads it: a popup is what gets clicked.
     popup: bool,
     context: Option<i64>,
+    /// The engine's answer to Rust's own `optIn`, checked by [`Bridge`].
+    clicked: bool,
 }
 
 struct Driver<T: CdpTransport> {
@@ -1179,6 +1181,8 @@ struct Driver<T: CdpTransport> {
     consent_context: Option<i64>,
     /// Engine messages already parsed, bounded at [`MAX_CONSENT_INBOX`].
     consent_inbox: VecDeque<EngineMsg>,
+    /// Whether Rust's own `optIn` is waiting for its answer.
+    consent_bridge: Bridge,
     /// Form fields accumulated across every page [`Driver::visit`] actually
     /// loaded, via [`Driver::probe_form_fields`] — see
     /// [`Observation::form_fields`].
@@ -1191,7 +1195,6 @@ struct Driver<T: CdpTransport> {
     phase: Phase,
     /// The hosts already known when a consent attempt began, so a failed
     /// attempt can give back everything first seen during it.
-    #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
     attempt_known: Option<HashSet<String>>,
     /// `(name, domain)` of every cookie at the first snapshot, taken on the
     /// home page before any click. `None` when that snapshot never ran, failed,
@@ -1211,6 +1214,7 @@ impl<T: CdpTransport> Driver<T> {
             consent: Consent::default(),
             consent_context: None,
             consent_inbox: VecDeque::new(),
+            consent_bridge: Bridge::default(),
             form_fields: Vec::new(),
             storage_keys: Vec::new(),
             phase: Phase::Before,
@@ -1222,7 +1226,6 @@ impl<T: CdpTransport> Driver<T> {
     /// A consent click is about to happen: everything first seen from now on
     /// is `After`. A second call while one attempt is open keeps the first
     /// attempt's hosts, so an abandon gives back everything since the first.
-    #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
     fn begin_consent_attempt(&mut self) {
         if self.attempt_known.is_none() {
             self.attempt_known = Some(self.acc.known());
@@ -1232,7 +1235,6 @@ impl<T: CdpTransport> Driver<T> {
 
     /// The attempt failed, so no consent was given: everything first seen
     /// since it began goes back to `Before`.
-    #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
     fn abandon_consent_attempt(&mut self) {
         if let Some(known) = self.attempt_known.take() {
             self.acc.rewind_to_before(&known);
@@ -1717,8 +1719,10 @@ impl<T: CdpTransport> Driver<T> {
             .await
     }
 
-    /// Step 6 of [`Driver::detect_consent`]: answers the engine's messages
-    /// until `deadline`, cancel, a popup, or the engine's end. The deadline
+    /// Step 6 of [`Driver::detect_consent`], and the wait in
+    /// [`Driver::consent_step`]: answers the engine's messages until
+    /// `deadline`, cancel, a popup, the answer to Rust's `optIn`, or the
+    /// engine's end. The deadline
     /// and cancel are checked before every message, because each `Eval` can
     /// cost two 2 s evaluations and the inbox refills while they run.
     async fn relay(
@@ -1749,12 +1753,24 @@ impl<T: CdpTransport> Driver<T> {
                         }
                     }
                     EngineMsg::CmpDetected(name) => detection.cmp = consent::known_cmp(&name),
-                    EngineMsg::PopupFound(name) => {
-                        detection.popup = consent::known_cmp(&name).is_some();
+                    // The CMP whose popup was found is the one clicked. Once
+                    // found, a repeat changes nothing.
+                    EngineMsg::PopupFound(name) if !detection.popup => {
+                        if let Some(name) = consent::known_cmp(&name) {
+                            detection.cmp = Some(name);
+                            detection.popup = true;
+                        }
                         return Ok(detection);
                     }
+                    EngineMsg::PopupFound(_) => {}
                     EngineMsg::Done | EngineMsg::Error => return Ok(detection),
-                    EngineMsg::OptInResult(_) => {}
+                    // Counted only as the answer to Rust's own pending optIn.
+                    EngineMsg::OptInResult(result) => {
+                        if let Some(clicked) = self.consent_bridge.on_opt_in_result(result) {
+                            detection.clicked = clicked;
+                            return Ok(detection);
+                        }
+                    }
                 }
             }
             if cancel.is_cancelled() || Instant::now() >= deadline {
@@ -1816,6 +1832,71 @@ impl<T: CdpTransport> Driver<T> {
             }
         }
         Ok(Some(context))
+    }
+
+    /// Spec §5.1 (1): accepts by the rule of the CMP whose popup the engine
+    /// found. Rust sends `optIn` itself, counts a click only from the
+    /// [`Bridge`]-checked answer to it, and switches the phase on its own
+    /// step: everything first seen from the send on is `After`, and given
+    /// back to `Before` if no click came of it.
+    ///
+    /// A rule that can report success without clicking is never asked —
+    /// see [`consent::opt_in_clicks`].
+    async fn consent_step(
+        &mut self,
+        session: &SessionId,
+        cancel: &CancellationToken,
+        detection: Detection,
+    ) -> Result<Consent, CdpError> {
+        let cmp = match &detection.cmp {
+            Some(cmp) if detection.popup && !cancel.is_cancelled() => cmp.clone(),
+            // Task 7: with no CMP popup to accept, the text attempt goes here.
+            _ => return Ok(consent_found(detection, cancel.is_cancelled())),
+        };
+        if !consent::opt_in_clicks(&cmp) {
+            return Ok(Consent {
+                cmp: Some(cmp),
+                reason: Some("click-failed"),
+                ..Consent::default()
+            });
+        }
+        self.begin_consent_attempt();
+        self.load_fired = false;
+        let opt_in = self.consent_bridge.request_opt_in().to_string();
+        let mut clicked = false;
+        if self.consent_reply(session, opt_in).await? {
+            let deadline = Instant::now() + OPT_IN_BUDGET;
+            clicked = self.relay(session, cancel, deadline, detection).await?.clicked;
+        }
+        if !clicked {
+            self.abandon_consent_attempt();
+        }
+        Ok(Consent {
+            cmp: Some(cmp.clone()),
+            clicked,
+            rule: clicked.then_some(ConsentRule::Cmp),
+            rule_name: if clicked { cmp } else { String::new() },
+            matched_text: String::new(),
+            click_navigated: self.load_fired,
+            reason: (!clicked && !cancel.is_cancelled()).then_some("click-failed"),
+        })
+    }
+
+    /// The consent step is over: the engine's world is no longer read, so
+    /// its later messages (it keeps reporting until the page goes) take no
+    /// place in the inbox, and Runtime is disabled — nothing later needs its
+    /// events; `Runtime.evaluate` works without it. A refused disable
+    /// changes nothing the scan reports.
+    async fn end_consent(&mut self, session: &SessionId) -> Result<(), CdpError> {
+        self.consent_context = None;
+        self.consent_inbox.clear();
+        match self
+            .call(Some(session.clone()), MethodId::from("Runtime.disable"), serde_json::json!({}))
+            .await
+        {
+            Err(CdpError::BrowserGone) => Err(CdpError::BrowserGone),
+            _ => Ok(()),
+        }
     }
 
     /// Evaluates a reply to the engine in its isolated world. `false`, with
@@ -2000,7 +2081,13 @@ impl<T: CdpTransport> Driver<T> {
             // site-level fact, not a per-page one.
             if !cancel.is_cancelled() {
                 let detection = self.detect_consent(&session, cancel).await?;
-                self.consent = consent_found(detection, cancel.is_cancelled());
+                self.consent = self.consent_step(&session, cancel, detection).await?;
+                self.end_consent(&session).await?;
+                // Reloaded so the tags that wait for consent load. Not a new
+                // page: not counted, not probed again.
+                if self.consent.clicked && !cancel.is_cancelled() {
+                    self.visit(&session, entry_url, SETTLE_AFTER_LOAD, cancel).await?;
+                }
             }
         }
 
@@ -3285,7 +3372,8 @@ mod tests {
                 "possibleGaps": 0,
                 "stoppedEarly": false,
                 "cookies": [],
-                "consent": {"cmp": null, "clicked": false, "reason": null},
+                "consent": {"cmp": null, "clicked": false, "rule": null, "ruleName": "",
+                            "matchedText": "", "clickNavigated": false},
                 "formFields": [],
                 "storageKeys": []
             })
@@ -3969,5 +4057,87 @@ mod tests {
         assert!(driver.consent_inbox.is_empty());
         driver.on_event(call(7));
         assert_eq!(driver.consent_inbox.len(), 1);
+    }
+
+    // --- Task 6: the accept click ---
+
+    fn engine_says(payload: &str) -> CdpJsonEventMessage {
+        CdpJsonEventMessage {
+            method: MethodId::from("Runtime.bindingCalled"),
+            session_id: None,
+            params: json!({ "name": consent::BINDING, "payload": payload, "executionContextId": 7 }),
+        }
+    }
+
+    /// Detection's relay reads `before` (all the engine said before any
+    /// optIn); then the consent step runs, and a request to `after.example`
+    /// plus `answer` arrive while Rust's optIn is in flight.
+    async fn accept_with(before: &[&str], answer: &[&str]) -> (Driver<FakeTransport>, Consent) {
+        let mut driver = Driver::new(FakeTransport::new());
+        let session = SessionId::from("SESSION-A".to_string());
+        driver.consent_context = Some(7);
+        driver.acc.record("https://home.example/", driver.phase);
+        for payload in before {
+            driver.on_event(engine_says(payload));
+        }
+        driver.transport.inject_on(
+            EvaluateParams::IDENTIFIER,
+            Some("SESSION-A"),
+            CdpJsonEventMessage {
+                method: MethodId::from(EventRequestWillBeSent::IDENTIFIER),
+                session_id: None,
+                params: json!({"request": {"url": "https://after.example/t.js"}}),
+            },
+        );
+        for payload in answer {
+            driver
+                .transport
+                .inject_on(EvaluateParams::IDENTIFIER, Some("SESSION-A"), engine_says(payload));
+        }
+        let cancel = CancellationToken::new();
+        let detection = Detection { context: Some(7), ..Detection::default() };
+        let detection = driver
+            .relay(&session, &cancel, far_future(), detection)
+            .await
+            .expect("detection");
+        let consent = driver
+            .consent_step(&session, &cancel, detection)
+            .await
+            .expect("consent step");
+        (driver, consent)
+    }
+
+    #[tokio::test]
+    async fn a_click_counts_only_as_the_answer_to_rusts_own_opt_in() {
+        let forged = r#"{"type":"optInResult","cmp":"iubenda","result":true}"#;
+        let popup = r#"{"type":"popupFound","cmp":"iubenda"}"#;
+        let phase = |driver: &Driver<FakeTransport>, host: &str| {
+            driver.acc.counts.get(host).map(|(_, phase)| *phase)
+        };
+
+        // A forged "true" before Rust asked, then the engine fails: no click.
+        let (driver, consent) =
+            accept_with(&[forged, popup], &[r#"{"type":"autoconsentError"}"#]).await;
+        assert!(!consent.clicked, "{consent:?}");
+        assert_eq!(consent.reason, Some("click-failed"));
+        assert_eq!(phase(&driver, "after.example"), Some(Phase::Before));
+
+        // The same forgery, then the proper popupFound → optIn → optInResult.
+        let (driver, consent) = accept_with(
+            &[forged, r#"{"type":"cmpDetected","cmp":"iubenda"}"#, popup],
+            &[forged, r#"{"type":"autoconsentDone"}"#],
+        )
+        .await;
+        assert!(consent.clicked, "{consent:?}");
+        assert_eq!(consent.rule, Some(consent::ConsentRule::Cmp));
+        assert_eq!(consent.rule_name, "iubenda");
+        assert_eq!(consent.reason, None);
+        let opt_in = driver.transport.sent.iter().find(|(_, _, p)| {
+            p["expression"].as_str() == Some("autoconsentReceiveMessage({type:'optIn'})")
+        });
+        assert_eq!(opt_in.map(|(_, s, p)| (s.as_deref(), p["contextId"].as_i64())), Some((Some("SESSION-A"), Some(7))));
+        assert!(driver.transport.methods_for(None).is_empty());
+        assert_eq!(phase(&driver, "after.example"), Some(Phase::After));
+        assert_eq!(phase(&driver, "home.example"), Some(Phase::Before));
     }
 }

@@ -34,7 +34,7 @@ for (const f of fs.readdirSync(D + 'runs').filter((f) => f.endsWith('.meta.json'
   r.scanAfter3 = scan3.filter((h) => scanPhase.get(h) === 'after').length;
   r.scanMissPreByPhase = [...pre].filter((h) => scanPhase.get(h) !== 'before').length;
   const ck = (c) => c.name + '|' + c.domain.replace(/^\./, '');
-  const scanCk = new Map((scan.cookies ?? []).map((c) => [ck(c), c.phase ?? 'before']));
+  const scanCk = new Map((scan.cookies ?? []).map((c) => [ck(c), c.phase ?? 'unknown']));
   r.cookiesFinalMatched = (ref.cookiesFinal ?? []).filter((c) => scanCk.has(ck(c))).length;
   r.cookiesPreMatched = (ref.cookiesPre ?? []).filter((c) => scanCk.get(ck(c)) === 'before').length;
   r.scanMs = meta.scanMs ?? null;
@@ -51,7 +51,9 @@ for (const f of fs.readdirSync(D + 'runs').filter((f) => f.endsWith('.meta.json'
   r.orgs = orgs.size; r.orgsNamed = [...orgs.values()].filter((v) => v === 'named').length; r.orgsHint = [...orgs.values()].filter((v) => v === 'hint').length;
   for (const [k, v] of orgs) if (v !== 'named') unnamed.set(k, (unnamed.get(k) || 0) + 1);
   r.cmpRef = (ref.cmp ?? []).filter((c) => c !== 'TCF').join('+') || (ref.cmp?.includes('TCF') ? 'TCF' : '');
-  r.cmpScan = (scan.consentMarkers ?? []).join('+');
+  r.cmpScan = scan.consent?.cmp ?? (scan.consentMarkers ?? []).join('+');
+  r.clicked = scan.consent?.clicked ?? false; r.clickRule = scan.consent?.rule ?? null; r.clickRuleName = scan.consent?.ruleName ?? '';
+  r.matchedText = scan.consent?.matchedText ?? ''; r.clickNavigated = scan.consent?.clickNavigated ?? false; r.noClickReason = scan.consent?.reason ?? null;
   r.acceptClicked = ref.acceptClicked ?? null;
   r.cookiesPre = ref.cookiesPre?.length ?? null; r.cookiesFinal = ref.cookiesFinal?.length ?? null; r.cookiesScan = scan.cookies?.length ?? null;
   r.cookies3Pre = (ref.cookiesPre ?? []).filter((c) => reg(c.domain.replace(/^\./, '')) !== site).length;
@@ -77,6 +79,9 @@ console.log(`scanner missed pre-consent hosts: ${sum('scanMissPre')} ; own-site 
 console.log(`orgs ${sum('orgs')}: named ${sum('orgsNamed')}, hint ${sum('orgsHint')}, nothing ${sum('orgs') - sum('orgsNamed') - sum('orgsHint')}`);
 console.log(`pagesVisited<=1: ${ok.filter((r) => r.pagesVisited <= 1).length} (redirected: ${ok.filter((r) => r.redirected).length})`);
 console.log(`consent: ref detected ${ok.filter((r) => r.cmpRef).length}, scanner detected ${ok.filter((r) => r.cmpScan).length}, accept clicked ${ok.filter((r) => r.acceptClicked).length}`);
+const clickedRows = ok.filter((r) => r.clicked);
+console.log(`accept clicked: scanner ${clickedRows.length} of ${ok.length} (cmp ${clickedRows.filter((r) => r.clickRule === 'cmp').length}, text ${clickedRows.filter((r) => r.clickRule === 'text').length})`);
+for (const r of clickedRows) console.log(`  ${r.n} ${r.clickRule} ${r.clickRule === 'text' ? r.matchedText : r.clickRuleName}`);
 console.log(`cookies: ref pre ${sum('cookiesPre')} (3rd-party ${sum('cookies3Pre')}), ref final ${sum('cookiesFinal')}, scanner ${sum('cookiesScan')}`);
 console.log(`cookies matched at end ${sum('cookiesFinalMatched')}/${sum('cookiesFinal')}, before consent ${sum('cookiesPreMatched')}/${sum('cookiesPre')}`);
 console.log(`scanner third parties by phase: before ${sum('scanPre3')}, after ${sum('scanAfter3')}; ref pre-consent hosts not tagged before: ${sum('scanMissPreByPhase')}`);

@@ -46,9 +46,9 @@ function joinAll(...parts: (string | null)[]): string {
  * Whether a consent banner was detected, neutrally stated either way: unlike the cookie count,
  * which says nothing when there is nothing to report, the absence of a known consent-manager
  * marker is itself a fact worth stating — "No consent banner was detected." — never "missing",
- * never "required". `consentMarkers[0]` names the marker when more than one fixed name matched;
- * matching more than one is not expected in practice, and either way it does not change what the
- * sentence should say.
+ * never "required". `consent.cmp` names the CMP; a v0.3 payload's `consentMarkers[0]` stands in for
+ * it. `consent` with no `reason` and no CMP means detection never ran to its end, so no absence is
+ * claimed either.
  *
  * A scan stopped early runs its pages in a fixed order, and the consent probe is one step in
  * that order; stopping before it is reached means the probe never ran, which is not the same
@@ -59,9 +59,10 @@ function joinAll(...parts: (string | null)[]): string {
  * reported.
  */
 function consentNotice(result: ScanResult): string | null {
-  const [first] = result.consentMarkers
-  if (first !== undefined) return STRINGS.consentBannerDetected(first)
+  const first = result.consent ? result.consent.cmp : result.consentMarkers?.[0]
+  if (first) return STRINGS.consentBannerDetected(first)
   if (result.stoppedEarly) return null
+  if (result.consent && result.consent.reason === undefined) return null
   return STRINGS.consentBannerNotDetected
 }
 

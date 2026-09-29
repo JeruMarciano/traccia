@@ -77,6 +77,20 @@ function isRawFormField(v: unknown): boolean {
   )
 }
 
+function isScanConsent(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const c = v as Record<string, unknown>
+  return (
+    (c.cmp === null || typeof c.cmp === 'string') &&
+    typeof c.clicked === 'boolean' &&
+    (c.rule === null || c.rule === 'cmp' || c.rule === 'text') &&
+    typeof c.ruleName === 'string' &&
+    typeof c.matchedText === 'string' &&
+    typeof c.clickNavigated === 'boolean' &&
+    (c.reason === undefined || c.reason === 'no-banner' || c.reason === 'no-button' || c.reason === 'click-failed')
+  )
+}
+
 function isRawStorageKey(v: unknown): boolean {
   if (typeof v !== 'object' || v === null) return false
   const s = v as Record<string, unknown>
@@ -109,8 +123,10 @@ function isScanResult(v: unknown): v is ScanResult {
     r.formFields.every(isRawFormField) &&
     Array.isArray(r.storageKeys) &&
     r.storageKeys.every(isRawStorageKey) &&
-    Array.isArray(r.consentMarkers) &&
-    r.consentMarkers.every((m: unknown) => typeof m === 'string') &&
+    // `consentMarkers` is the v0.3 shape; since Task 6 Rust sends `consent`.
+    (r.consentMarkers === undefined ||
+      (Array.isArray(r.consentMarkers) && r.consentMarkers.every((m: unknown) => typeof m === 'string'))) &&
+    (r.consent === undefined || isScanConsent(r.consent)) &&
     typeof r.capturedAtEpochSeconds === 'number'
   )
 }
