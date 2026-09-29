@@ -1134,13 +1134,29 @@ const DETECT_BUDGET: Duration = Duration::from_secs(12);
 /// scan; the bound is for an engine a crafted DOM keeps busy.
 const MAX_CONSENT_INBOX: usize = 256;
 
-/// What [`Driver::detect_consent`] found.
+/// The scan's consent result from a detection. "no-banner" only when the
+/// engine ran (`context`) and the detection was not cut short by a cancel:
+/// a bridge that failed or never finished is a blank, not "no banner".
+fn consent_found(detection: Detection, cancelled: bool) -> Consent {
+    let reason = match (&detection.cmp, detection.context) {
+        (Some(_), _) => Some("no-button"),
+        (None, Some(_)) if !cancelled => Some("no-banner"),
+        _ => None,
+    };
+    Consent {
+        cmp: detection.cmp,
+        clicked: false,
+        reason,
+    }
+}
+
+/// What [`Driver::detect_consent`] found. `context` is `None` when the
+/// bridge failed.
 #[derive(Debug, Default)]
 struct Detection {
     cmp: Option<String>,
     #[allow(dead_code)] // Task 6 reads it: a popup is what gets clicked.
     popup: bool,
-    #[allow(dead_code)] // Tasks 6–7 evaluate in this context.
     context: Option<i64>,
 }
 
@@ -1693,13 +1709,30 @@ impl<T: CdpTransport> Driver<T> {
                 return Ok(Detection::default());
             }
         }
-        let deadline = Instant::now() + DETECT_BUDGET;
-        let mut detection = Detection {
+        let detection = Detection {
             context: self.consent_context,
             ..Detection::default()
         };
+        self.relay(session, cancel, Instant::now() + DETECT_BUDGET, detection)
+            .await
+    }
+
+    /// Step 6 of [`Driver::detect_consent`]: answers the engine's messages
+    /// until `deadline`, cancel, a popup, or the engine's end. The deadline
+    /// and cancel are checked before every message, because each `Eval` can
+    /// cost two 2 s evaluations and the inbox refills while they run.
+    async fn relay(
+        &mut self,
+        session: &SessionId,
+        cancel: &CancellationToken,
+        deadline: Instant,
+        mut detection: Detection,
+    ) -> Result<Detection, CdpError> {
         loop {
             while let Some(msg) = self.consent_inbox.pop_front() {
+                if cancel.is_cancelled() || Instant::now() >= deadline {
+                    return Ok(detection);
+                }
                 match msg {
                     EngineMsg::Init => {
                         if !self.consent_reply(session, consent::init_reply()).await? {
@@ -1786,11 +1819,15 @@ impl<T: CdpTransport> Driver<T> {
     }
 
     /// Evaluates a reply to the engine in its isolated world. `false`, with
-    /// the `consent:bridge` gap noted, when it did not run.
+    /// the `consent:bridge` gap noted and the world no longer read, when it
+    /// did not run.
     async fn consent_reply(&mut self, session: &SessionId, reply: String) -> Result<bool, CdpError> {
         let context = self.consent_context;
         let ran = self.bridge_eval(session, reply, context).await?.is_some();
         if !ran {
+            // The bridge is gone: stop reading its world.
+            self.consent_context = None;
+            self.consent_inbox.clear();
             self.gaps.note("consent:bridge");
         }
         Ok(ran)
@@ -1962,13 +1999,8 @@ impl<T: CdpTransport> Driver<T> {
             // Once, on the entry page's own session — the banner is a
             // site-level fact, not a per-page one.
             if !cancel.is_cancelled() {
-                let cmp = self.detect_consent(&session, cancel).await?.cmp;
-                let reason = if cmp.is_some() { "no-button" } else { "no-banner" };
-                self.consent = Consent {
-                    cmp,
-                    clicked: false,
-                    reason: Some(reason),
-                };
+                let detection = self.detect_consent(&session, cancel).await?;
+                self.consent = consent_found(detection, cancel.is_cancelled());
             }
         }
 
@@ -3860,5 +3892,82 @@ mod tests {
             .expect("a refused probe is a gap, not a scan failure");
         assert!(keys.is_empty());
         assert_eq!(driver.observation(1, false).possible_gaps, 1);
+    }
+
+    // --- Task 5: the consent bridge ---
+
+    fn engine_evals(driver: &mut Driver<FakeTransport>, n: usize) {
+        driver.consent_context = Some(7);
+        for i in 0..n {
+            driver.consent_inbox.push_back(EngineMsg::Eval {
+                id: format!("e{i}"),
+                code: "1".into(),
+            });
+        }
+    }
+
+    #[tokio::test]
+    async fn engine_messages_queued_past_the_detect_budget_are_not_answered() {
+        let mut driver = Driver::new(FakeTransport::new());
+        engine_evals(&mut driver, 3);
+        let session = SessionId::from("SESSION-A".to_string());
+        let past = Instant::now();
+        driver
+            .relay(&session, &CancellationToken::new(), past, Detection::default())
+            .await
+            .expect("a spent budget ends detection");
+        assert!(driver.transport.sent.is_empty(), "{:?}", driver.transport.sent);
+    }
+
+    #[tokio::test]
+    async fn engine_messages_queued_after_a_cancel_are_not_answered() {
+        let mut driver = Driver::new(FakeTransport::new());
+        engine_evals(&mut driver, 3);
+        let session = SessionId::from("SESSION-A".to_string());
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let later = Instant::now() + DETECT_BUDGET;
+        driver
+            .relay(&session, &cancel, later, Detection::default())
+            .await
+            .expect("a cancel ends detection");
+        assert!(driver.transport.sent.is_empty(), "{:?}", driver.transport.sent);
+    }
+
+    #[tokio::test]
+    async fn a_bridge_that_never_ran_is_a_blank_not_no_banner() {
+        // FakeTransport answers `Page.getFrameTree` with nothing: no frame, no engine.
+        let mut driver = Driver::new(FakeTransport::new());
+        let session = SessionId::from("SESSION-A".to_string());
+        let detection = driver
+            .detect_consent(&session, &CancellationToken::new())
+            .await
+            .expect("a failed bridge is a gap, not a scan failure");
+        assert_eq!(consent_found(detection, false).reason, None);
+        assert_eq!(driver.observation(1, false).possible_gaps, 1);
+        // The engine ran: then, and only then, nothing found is "no-banner".
+        let ran = Detection { context: Some(7), ..Detection::default() };
+        assert_eq!(consent_found(ran, false).reason, Some("no-banner"));
+        let cut_short = Detection { context: Some(7), ..Detection::default() };
+        assert_eq!(consent_found(cut_short, true).reason, None);
+    }
+
+    #[test]
+    fn a_binding_call_from_another_context_is_not_queued() {
+        let mut driver = Driver::new(FakeTransport::new());
+        driver.consent_context = Some(7);
+        let call = |context: i64| CdpJsonEventMessage {
+            method: MethodId::from("Runtime.bindingCalled"),
+            session_id: None,
+            params: json!({
+                "name": consent::BINDING,
+                "payload": r#"{"type":"cmpDetected","cmp":"iubenda"}"#,
+                "executionContextId": context,
+            }),
+        };
+        driver.on_event(call(8));
+        assert!(driver.consent_inbox.is_empty());
+        driver.on_event(call(7));
+        assert_eq!(driver.consent_inbox.len(), 1);
     }
 }
