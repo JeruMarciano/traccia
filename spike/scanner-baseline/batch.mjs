@@ -1,11 +1,12 @@
 // Runs today's scanner and the reference observer on every site in sites.tsv, 3 at a time.
 // Skips sites already done, so it can be re-run after an interruption.
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { promisify } from 'node:util';
 const run = promisify(execFile);
 const D = process.env.DATA.replace(/\/?$/, '/'); // data dir outside the repo: sites.tsv in, runs/ out
-const HERE = new URL('.', import.meta.url).pathname;
+const HERE = fileURLToPath(new URL('.', import.meta.url));
 fs.mkdirSync(D + 'runs', { recursive: true });
 const sites = fs.readFileSync(D + 'sites.tsv', 'utf8').trim().split('\n').slice(1).map((l) => l.split('\t'));
 let next = 0;

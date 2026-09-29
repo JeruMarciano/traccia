@@ -1,7 +1,8 @@
 // Compares scanner output against the reference observer, per site and in aggregate.
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 const D = process.env.DATA.replace(/\/?$/, '/'); // data dir outside the repo: sites.tsv in, runs/ out
-const HERE = new URL('.', import.meta.url).pathname;
+const HERE = fileURLToPath(new URL('.', import.meta.url));
 const REPO = process.argv[2];
 const { identify, classifyHost } = await import(REPO + '/src/core/vendors.ts');
 const { isSameSite } = await import(REPO + '/src/core/scan.ts').catch(() => ({}));
