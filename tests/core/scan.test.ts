@@ -484,3 +484,23 @@ describe('ingestScan', () => {
     })
   })
 })
+
+describe('ingestScan consent phase', () => {
+  it('marks an observation before consent only when its host was first seen before', () => {
+    const p = ingestScan(emptyProject(), { ...result(), hosts: [
+      { host: 'site.it', requestCount: 3, phase: 'before' },
+      { host: 'pre.example', requestCount: 1, phase: 'before' },
+      { host: 'post.example', requestCount: 1, phase: 'after' },
+    ] }, DICT, { prefix: 's1' })
+    const by = Object.fromEntries(p.observations.map((o) => [o.domain, o.beforeConsent]))
+    expect(by['pre.example']).toBe(true)
+    expect(by['post.example']).toBe(false)
+  })
+
+  it('treats a host without a phase as before consent (a v0.3 payload)', () => {
+    const p = ingestScan(emptyProject(), { ...result(), hosts: [
+      { host: 'old.example', requestCount: 1 },
+    ] }, DICT, { prefix: 's1' })
+    expect(p.observations.find((o) => o.domain === 'old.example')?.beforeConsent).toBe(true)
+  })
+})

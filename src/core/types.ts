@@ -178,6 +178,8 @@ export type Candidate = PlaceCandidate | SubjectGroupCandidate
 export interface ObservedHost {
   host: string
   requestCount: number
+  /** The consent phase the host was first seen in. Absent in a v0.3 payload: read as 'before'. */
+  phase?: 'before' | 'after'
 }
 
 export type CookieLifetime = 'session' | 'under-a-day' | 'under-a-year' | 'a-year-or-more'
@@ -190,6 +192,8 @@ export interface RawScanCookie {
   session: boolean
   /** Seconds since epoch; meaningless when session is true. */
   expiresEpochSeconds: number
+  /** The consent phase the cookie was first seen in. Absent in a v0.3 payload. */
+  phase?: 'before' | 'after'
 }
 
 /** One cookie as the project records it, after core's judgements. */

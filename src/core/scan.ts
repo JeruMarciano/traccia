@@ -187,8 +187,9 @@ export function ingestScan(
   }
 
   // 4. The raw observations, so the map can always be traced back to what was
-  //    seen. beforeConsent is always true: Traccia never clicks anything, so
-  //    nothing it records happened after consent was given.
+  //    seen. beforeConsent is false only for a host first seen after a consent
+  //    click; a host without a phase (a v0.3 payload, from before Traccia ever
+  //    clicked) stays true.
   //
   //    Keyed case-insensitively, the same way place matching is (finding 3),
   //    so "X.com" and "x.com" collapse to one row rather than two — whether
@@ -218,7 +219,7 @@ export function ingestScan(
     fresh.push({
       domain: h.host,
       requestCount: latestCountByKey.get(key) ?? h.requestCount,
-      beforeConsent: true,
+      beforeConsent: h.phase !== 'after',
     })
   }
 

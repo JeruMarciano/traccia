@@ -794,6 +794,7 @@ mod tests {
             hosts: vec![cdp::ObservedHost {
                 host: "doubleclick.net".into(),
                 request_count: 3,
+                phase: cdp::Phase::Before,
             }],
             pages_visited: 4,
             possible_gaps: 2,
@@ -803,6 +804,7 @@ mod tests {
                 domain: "rossi-editore.it".into(),
                 session: false,
                 expires_epoch_seconds: 2.0e9,
+                phase: cdp::Phase::Before,
             }],
             consent_markers: vec!["OneTrust".into()],
             form_fields: vec![cdp::FormField {

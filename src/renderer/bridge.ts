@@ -38,12 +38,18 @@ export async function saveProject(project: Project): Promise<boolean> {
   return invoke<boolean>('save_project', { projectJson: JSON.stringify(result.project, null, 2) })
 }
 
+// Optional so a v0.3 payload still passes; when present, only the two phases Rust ever sends.
+function isPhase(v: unknown): boolean {
+  return v === undefined || v === 'before' || v === 'after'
+}
+
 function isObservedHost(v: unknown): v is ObservedHost {
   return (
     typeof v === 'object' &&
     v !== null &&
     typeof (v as Record<string, unknown>).host === 'string' &&
-    typeof (v as Record<string, unknown>).requestCount === 'number'
+    typeof (v as Record<string, unknown>).requestCount === 'number' &&
+    isPhase((v as Record<string, unknown>).phase)
   )
 }
 
@@ -54,7 +60,8 @@ function isRawScanCookie(v: unknown): boolean {
     typeof c.name === 'string' &&
     typeof c.domain === 'string' &&
     typeof c.session === 'boolean' &&
-    typeof c.expiresEpochSeconds === 'number'
+    typeof c.expiresEpochSeconds === 'number' &&
+    isPhase(c.phase)
   )
 }
 

@@ -29,6 +29,15 @@ for (const f of fs.readdirSync(D + 'runs').filter((f) => f.endsWith('.meta.json'
   const afterOnly = [...all].filter((h) => !pre.has(h));
   const scanHosts = (scan.hosts ?? []).map((h) => h.host);
   const scan3 = scanHosts.filter((h) => !sameSite(h, scan.scannedHost ?? ''));
+  const scanPhase = new Map((scan.hosts ?? []).map((h) => [h.host, h.phase ?? 'before']));
+  r.scanPre3 = scan3.filter((h) => scanPhase.get(h) === 'before').length;
+  r.scanAfter3 = scan3.filter((h) => scanPhase.get(h) === 'after').length;
+  r.scanMissPreByPhase = [...pre].filter((h) => scanPhase.get(h) !== 'before').length;
+  const ck = (c) => c.name + '|' + c.domain.replace(/^\./, '');
+  const scanCk = new Map((scan.cookies ?? []).map((c) => [ck(c), c.phase ?? 'before']));
+  r.cookiesFinalMatched = (ref.cookiesFinal ?? []).filter((c) => scanCk.has(ck(c))).length;
+  r.cookiesPreMatched = (ref.cookiesPre ?? []).filter((c) => scanCk.get(ck(c)) === 'before').length;
+  r.scanMs = meta.scanMs ?? null;
   r.redirected = ref.home?.finalUrl ? new URL(ref.home.finalUrl).hostname !== new URL(meta.url).hostname : null;
   r.pagesVisited = scan.pagesVisited;
   r.scan3 = scan3.length;
@@ -61,6 +70,7 @@ fs.writeFileSync(D + 'compare.json', JSON.stringify({ rows, unnamed: [...unnamed
 const ok = rows.filter((r) => !r.refError && !r.scanError);
 const sum = (k) => ok.reduce((s, r) => s + (r[k] || 0), 0);
 const med = (k) => { const v = ok.map((r) => r[k]).filter((x) => x != null).sort((a, b) => a - b); return v[Math.floor(v.length / 2)]; };
+const p90 = (k) => { const v = ok.map((r) => r[k]).filter((x) => x != null).sort((a, b) => a - b); return v[Math.min(v.length - 1, Math.ceil(v.length * 0.9) - 1)]; };
 console.log(`sites ${rows.length}, both ok ${ok.length}, refErr ${rows.filter((r) => r.refError).length}, scanErr ${rows.filter((r) => r.scanError).length}`);
 console.log(`third-party hosts: scanner ${sum('scan3')}, ref pre ${sum('pre3')}, ref all ${sum('all3')}, after-consent-only ${sum('afterConsentOnly')}; median recall vs all ${med('recallAll')}`);
 console.log(`scanner missed pre-consent hosts: ${sum('scanMissPre')} ; own-site hosts shown as 3rd party: ${sum('scanFalse3')} on ${ok.filter((r) => r.scanFalse3).length} sites`);
@@ -68,6 +78,9 @@ console.log(`orgs ${sum('orgs')}: named ${sum('orgsNamed')}, hint ${sum('orgsHin
 console.log(`pagesVisited<=1: ${ok.filter((r) => r.pagesVisited <= 1).length} (redirected: ${ok.filter((r) => r.redirected).length})`);
 console.log(`consent: ref detected ${ok.filter((r) => r.cmpRef).length}, scanner detected ${ok.filter((r) => r.cmpScan).length}, accept clicked ${ok.filter((r) => r.acceptClicked).length}`);
 console.log(`cookies: ref pre ${sum('cookiesPre')} (3rd-party ${sum('cookies3Pre')}), ref final ${sum('cookiesFinal')}, scanner ${sum('cookiesScan')}`);
+console.log(`cookies matched at end ${sum('cookiesFinalMatched')}/${sum('cookiesFinal')}, before consent ${sum('cookiesPreMatched')}/${sum('cookiesPre')}`);
+console.log(`scanner third parties by phase: before ${sum('scanPre3')}, after ${sum('scanAfter3')}; ref pre-consent hosts not tagged before: ${sum('scanMissPreByPhase')}`);
+console.log(`scan p90 ${p90('scanMs')} ms`);
 console.log(`form fields: scanner ${sum('fieldsScan')}, ref home ${sum('fieldsHome')}, ref key pages ${sum('fieldsPages')}; sites with forms only off-home: ${ok.filter((r) => !r.fieldsHome && r.fieldsPages).length}`);
 console.log(`embeds: ${ok.filter((r) => r.embeds.length).length} sites`);
 console.log('top unnamed orgs:', [...unnamed].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => `${k}(${v})`).join(' '));
