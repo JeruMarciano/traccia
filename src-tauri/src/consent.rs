@@ -27,7 +27,7 @@ const MAX_CODE: usize = 8192;
 pub struct Consent {
     pub cmp: Option<String>,
     pub clicked: bool,
-    /// "no-banner" | "no-button"
+    /// "no-banner" | "no-button"; `None` when detection did not run to its end.
     pub reason: Option<&'static str>,
 }
 
