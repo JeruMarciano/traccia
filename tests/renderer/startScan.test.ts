@@ -58,6 +58,17 @@ describe('startScan', () => {
     }
   }
 
+  it('rejects a host whose phase is neither before nor after', async () => {
+    const { startScan } = await import('../../src/renderer/bridge')
+    invoke.mockResolvedValueOnce(
+      JSON.stringify({
+        ...validPayload(),
+        hosts: [{ host: 'rossi-editore.it', requestCount: 1, phase: 'during' }],
+      }),
+    )
+    await expect(startScan('https://rossi-editore.it')).rejects.toThrow()
+  })
+
   it('rejects a payload whose cookie element has the wrong shape', async () => {
     const { startScan } = await import('../../src/renderer/bridge')
     invoke.mockResolvedValueOnce(

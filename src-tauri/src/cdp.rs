@@ -10,7 +10,7 @@
 //! this view missing 15 of 37 hosts the proxy saw, which is why the proxy's
 //! ledger and not this module is the source of truth for what was contacted.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::future::poll_fn;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,15 +29,26 @@ use futures_core::Stream;
 
 use crate::browser::Launched;
 
+/// Whether something was first seen before any consent was given, or after a
+/// consent attempt began. The first phase wins: a tracker that fires before
+/// the click and again after it stays `Before`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Phase {
+    Before,
+    After,
+}
+
 /// One host the scanned pages contacted, and how many requests went to it.
 ///
 /// Serialises to `ScanResult["hosts"][n]` in `src/core/types.ts`: `host`,
-/// `requestCount`.
+/// `requestCount`, `phase`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObservedHost {
     pub host: String,
     pub request_count: u32,
+    pub phase: Phase,
 }
 
 /// One cookie the browser held when the scan ended, capped and sanitised —
@@ -46,7 +57,7 @@ pub struct ObservedHost {
 ///
 /// Serialises to `ScanResult["cookies"][n]` in `src/core/types.ts`, field for
 /// field with `RawScanCookie`: `name`, `domain`, `session`,
-/// `expiresEpochSeconds`. `f64` rather than an integer because CDP hands back
+/// `expiresEpochSeconds`, `phase`. `f64` rather than an integer because CDP hands back
 /// `expires` as a float and core receives a JSON number either way.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +66,7 @@ pub struct ScanCookie {
     pub domain: String,
     pub session: bool,
     pub expires_epoch_seconds: f64,
+    pub phase: Phase,
 }
 
 /// One form field found on one visited page — never its value, see
@@ -202,6 +214,8 @@ fn sanitise_cookies(raw: &[serde_json::Value]) -> (Vec<ScanCookie>, bool) {
             domain: tame(domain, MAX_COOKIE_DOMAIN),
             session,
             expires_epoch_seconds: expires.clamp(-1.0, 4e9),
+            // Provisional: [`Driver::finish`] sets the real phase.
+            phase: Phase::Before,
         });
     }
     (cookies, gap)
@@ -596,7 +610,7 @@ const MAX_HOSTS: usize = 4096;
 /// something a user can trust.
 #[derive(Debug, Default)]
 pub struct HostAccumulator {
-    counts: BTreeMap<String, u32>,
+    counts: BTreeMap<String, (u32, Phase)>,
     overflowed: bool,
 }
 
@@ -608,7 +622,8 @@ impl HostAccumulator {
     /// Records one request. A URL with no host of interest — `data:`,
     /// `about:`, `blob:`, a relative path, anything unparseable — is dropped
     /// rather than counted under some invented name.
-    pub fn record(&mut self, url: &str) {
+    /// `phase` is kept only the first time a host is seen.
+    pub fn record(&mut self, url: &str, phase: Phase) {
         let Some(host) = http_host(url) else {
             return;
         };
@@ -619,8 +634,24 @@ impl HostAccumulator {
             self.overflowed = true;
             return;
         }
-        let count = self.counts.entry(host).or_insert(0);
+        let (count, _) = self.counts.entry(host).or_insert((0, phase));
         *count = count.saturating_add(1);
+    }
+
+    /// Every host recorded so far.
+    #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
+    fn known(&self) -> HashSet<String> {
+        self.counts.keys().cloned().collect()
+    }
+
+    /// Every host not in `known` goes back to [`Phase::Before`].
+    #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
+    fn rewind_to_before(&mut self, known: &HashSet<String>) {
+        for (host, (_, phase)) in self.counts.iter_mut() {
+            if !known.contains(host) {
+                *phase = Phase::Before;
+            }
+        }
     }
 
     /// True once a request was refused for want of room. The map is then known
@@ -632,9 +663,10 @@ impl HostAccumulator {
     pub fn finish(self) -> Vec<ObservedHost> {
         self.counts
             .into_iter()
-            .map(|(host, request_count)| ObservedHost {
+            .map(|(host, (request_count, phase))| ObservedHost {
                 host,
                 request_count,
+                phase,
             })
             .collect()
     }
@@ -908,6 +940,9 @@ const LOAD_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long to keep reading events after load, for the trackers that fire
 /// late. Under-reporting is the dangerous direction, so this is not zero.
 const SETTLE_AFTER_LOAD: Duration = Duration::from_secs(3);
+/// The entry page's quiet period instead: long enough for a consent manager
+/// and the trackers it lets through unasked to show up before any click.
+const HOME_WAIT: Duration = Duration::from_secs(8);
 /// How long a single read may block before cancellation is re-checked.
 const CANCEL_POLL: Duration = Duration::from_millis(100);
 /// Cap on the number of `href`s taken out of a page before filtering, so a
@@ -1158,6 +1193,15 @@ struct Driver<T: CdpTransport> {
     /// loaded, via [`Driver::probe_storage_keys`] — see
     /// [`Observation::storage_keys`].
     storage_keys: Vec<StorageKey>,
+    /// The phase every host and cookie seen from now on is tagged with.
+    phase: Phase,
+    /// The hosts already known when a consent attempt began, so a failed
+    /// attempt can give back everything first seen during it.
+    #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
+    attempt_known: Option<HashSet<String>>,
+    /// `(name, domain)` of every cookie at the first snapshot, taken on the
+    /// home page before any click.
+    before_cookies: HashSet<(String, String)>,
 }
 
 impl<T: CdpTransport> Driver<T> {
@@ -1172,7 +1216,28 @@ impl<T: CdpTransport> Driver<T> {
             consent_markers: Vec::new(),
             form_fields: Vec::new(),
             storage_keys: Vec::new(),
+            phase: Phase::Before,
+            attempt_known: None,
+            before_cookies: HashSet::new(),
         }
+    }
+
+    /// A consent click is about to happen: everything first seen from now on
+    /// is `After`.
+    #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
+    fn begin_consent_attempt(&mut self) {
+        self.attempt_known = Some(self.acc.known());
+        self.phase = Phase::After;
+    }
+
+    /// The attempt failed, so no consent was given: everything first seen
+    /// since it began goes back to `Before`.
+    #[cfg_attr(not(test), allow(dead_code))] // Task 6 wires the click.
+    fn abandon_consent_attempt(&mut self) {
+        if let Some(known) = self.attempt_known.take() {
+            self.acc.rewind_to_before(&known);
+        }
+        self.phase = Phase::Before;
     }
 
     /// Sends one command and reads until its own response arrives, servicing
@@ -1240,7 +1305,7 @@ impl<T: CdpTransport> Driver<T> {
                 .and_then(|r| r.get("url"))
                 .and_then(|u| u.as_str())
             {
-                self.acc.record(url);
+                self.acc.record(url, self.phase);
             }
         } else if method == EventAttachedToTarget::IDENTIFIER {
             // A target this module cannot parse must not simply disappear.
@@ -1468,6 +1533,7 @@ impl<T: CdpTransport> Driver<T> {
         &mut self,
         session: &SessionId,
         url: &str,
+        settle: Duration,
         cancel: &CancellationToken,
     ) -> Result<bool, CdpError> {
         self.load_fired = false;
@@ -1495,7 +1561,7 @@ impl<T: CdpTransport> Driver<T> {
         // The quiet period after load is short by design, but arming is not
         // held to it: a frame that attaches late still gets a full budget.
         self.settle(
-            SETTLE_AFTER_LOAD,
+            settle,
             cancel,
             Instant::now() + ARM_DRAIN_BUDGET,
         )
@@ -1749,7 +1815,7 @@ impl<T: CdpTransport> Driver<T> {
         if cancel.is_cancelled() || max_pages == 0 {
             return self.finish(pages_visited, cancel.is_cancelled()).await;
         }
-        if self.visit(&session, entry_url, cancel).await? {
+        if self.visit(&session, entry_url, HOME_WAIT, cancel).await? {
             pages_visited += 1;
             // Once, on the entry page's own session — the banner is a
             // site-level fact, not a per-page one, so no later page in the
@@ -1772,6 +1838,9 @@ impl<T: CdpTransport> Driver<T> {
                 let keys = self.probe_storage_keys(&session).await?;
                 self.storage_keys.extend(keys);
             }
+            if !cancel.is_cancelled() {
+                self.snapshot_before_cookies().await?;
+            }
         }
 
         if cancel.is_cancelled() || max_pages <= 1 {
@@ -1784,7 +1853,7 @@ impl<T: CdpTransport> Driver<T> {
             if cancel.is_cancelled() {
                 break;
             }
-            if self.visit(&session, &url, cancel).await? {
+            if self.visit(&session, &url, SETTLE_AFTER_LOAD, cancel).await? {
                 pages_visited += 1;
                 if !cancel.is_cancelled() {
                     let fields = self.probe_form_fields(&session, &url).await?;
@@ -1856,17 +1925,38 @@ impl<T: CdpTransport> Driver<T> {
         }
     }
 
+    /// Snapshot 1: the cookies on the home page before any click. Only their
+    /// `(name, domain)` pairs are kept, to tag snapshot 2.
+    async fn snapshot_before_cookies(&mut self) -> Result<(), CdpError> {
+        let (cookies, gap) = self.fetch_cookies().await?;
+        if gap {
+            self.gaps.note("cookies:gap");
+        }
+        self.before_cookies = cookies.into_iter().map(|c| (c.name, c.domain)).collect();
+        Ok(())
+    }
+
     /// The one place that builds the [`Observation`] a completed, cancelled,
     /// or budget-exhausted `run()` actually returns: folds in the cookie
-    /// jar, captured once here rather than in [`Driver::observation`] itself.
+    /// jar at snapshot 2, rather than in [`Driver::observation`] itself. A
+    /// cookie not in snapshot 1 takes the current phase, so with no click
+    /// everything stays `Before`.
     async fn finish(
         &mut self,
         pages_visited: u32,
         stopped_early: bool,
     ) -> Result<Observation, CdpError> {
-        let (cookies, gap) = self.fetch_cookies().await?;
+        let (mut cookies, gap) = self.fetch_cookies().await?;
         if gap {
             self.gaps.note("cookies:gap");
+        }
+        for c in &mut cookies {
+            let pair = (c.name.clone(), c.domain.clone());
+            c.phase = if self.before_cookies.contains(&pair) {
+                Phase::Before
+            } else {
+                self.phase
+            };
         }
         let mut observation = self.observation(pages_visited, stopped_early);
         observation.cookies = cookies;
@@ -1969,9 +2059,9 @@ mod tests {
     #[test]
     fn counts_repeat_requests_to_one_host_once_as_a_host() {
         let mut acc = HostAccumulator::new();
-        acc.record("https://www.google-analytics.com/collect?v=1");
-        acc.record("https://www.google-analytics.com/collect?v=2");
-        acc.record("https://doubleclick.net/pixel.gif");
+        acc.record("https://www.google-analytics.com/collect?v=1", Phase::Before);
+        acc.record("https://www.google-analytics.com/collect?v=2", Phase::Before);
+        acc.record("https://doubleclick.net/pixel.gif", Phase::Before);
         let hosts = acc.finish();
         assert_eq!(hosts.len(), 2);
         let ga = hosts
@@ -1984,8 +2074,8 @@ mod tests {
     #[test]
     fn lowercases_hosts_so_one_host_is_not_counted_twice() {
         let mut acc = HostAccumulator::new();
-        acc.record("https://WWW.Example.COM/a");
-        acc.record("https://www.example.com/b");
+        acc.record("https://WWW.Example.COM/a", Phase::Before);
+        acc.record("https://www.example.com/b", Phase::Before);
         assert_eq!(acc.finish().len(), 1);
     }
 
@@ -1999,7 +2089,7 @@ mod tests {
             "not a url",
             "blob:https://x/y",
         ] {
-            acc.record(u);
+            acc.record(u, Phase::Before);
         }
         assert!(acc.finish().is_empty());
     }
@@ -2007,7 +2097,7 @@ mod tests {
     #[test]
     fn strips_the_port_and_userinfo_from_a_host() {
         let mut acc = HostAccumulator::new();
-        acc.record("https://user:pw@example.com:8443/x");
+        acc.record("https://user:pw@example.com:8443/x", Phase::Before);
         let hosts = acc.finish();
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].host, "example.com");
@@ -2023,7 +2113,7 @@ mod tests {
             "https://a.example/1",
             "https://c.example/1",
         ] {
-            a.record(u);
+            a.record(u, Phase::Before);
         }
         let mut b = HostAccumulator::new();
         for u in [
@@ -2031,7 +2121,7 @@ mod tests {
             "https://a.example/1",
             "https://b.example/1",
         ] {
-            b.record(u);
+            b.record(u, Phase::Before);
         }
         let names_a: Vec<_> = a.finish().into_iter().map(|h| h.host).collect();
         let names_b: Vec<_> = b.finish().into_iter().map(|h| h.host).collect();
@@ -2127,6 +2217,9 @@ mod tests {
         next_id: usize,
         /// Canned `result` payloads by method name.
         results: HashMap<String, serde_json::Value>,
+        /// Per-method answers used once each, in order, before `results` —
+        /// a method whose answer changes between two calls.
+        queued: HashMap<String, VecDeque<serde_json::Value>>,
         /// Events emitted immediately before the response to a matching
         /// (method, session) submit — i.e. while that command is in flight.
         inject: Vec<(String, Option<String>, CdpJsonEventMessage)>,
@@ -2150,6 +2243,7 @@ mod tests {
                 in_flight: None,
                 next_id: 0,
                 results: HashMap::new(),
+                queued: HashMap::new(),
                 inject: Vec::new(),
                 refuse: Vec::new(),
                 answers: true,
@@ -2234,9 +2328,10 @@ mod tests {
                         None
                     } else {
                         Some(
-                            self.results
-                                .get(method.as_ref())
-                                .cloned()
+                            self.queued
+                                .get_mut(method.as_ref())
+                                .and_then(VecDeque::pop_front)
+                                .or_else(|| self.results.get(method.as_ref()).cloned())
                                 .unwrap_or_else(|| json!({})),
                         )
                     },
@@ -2828,7 +2923,7 @@ mod tests {
             "https://..example.com/x",            // empty label
             "https://.example.com/x",             // leading dot
         ] {
-            acc.record(bad);
+            acc.record(bad, Phase::Before);
         }
         assert!(acc.finish().is_empty());
 
@@ -2840,7 +2935,7 @@ mod tests {
             "https://[2001:db8::1]:8443/x",
             "https://[::1]/x",
         ] {
-            acc.record(good);
+            acc.record(good, Phase::Before);
         }
         assert_eq!(acc.finish().len(), 4);
     }
@@ -2852,11 +2947,11 @@ mod tests {
         // the map, the renderer and the project file.
         let long = "a".repeat(3_000_000);
         let mut acc = HostAccumulator::new();
-        acc.record(&format!("https://{long}.example/x"));
+        acc.record(&format!("https://{long}.example/x"), Phase::Before);
         assert!(acc.finish().is_empty());
         // The paired control: 253 bytes is the DNS limit and must still work.
         let mut acc = HostAccumulator::new();
-        acc.record(&format!("https://{}/x", "b".repeat(253)));
+        acc.record(&format!("https://{}/x", "b".repeat(253)), Phase::Before);
         assert_eq!(acc.finish().len(), 1);
     }
 
@@ -2864,7 +2959,7 @@ mod tests {
     fn stops_taking_new_hosts_at_the_limit_and_says_so() {
         let mut acc = HostAccumulator::new();
         for i in 0..(MAX_HOSTS + 10) {
-            acc.record(&format!("https://h{i}.example/x"));
+            acc.record(&format!("https://h{i}.example/x"), Phase::Before);
         }
         assert!(acc.overflowed(), "the overflow must be visible, not silent");
         assert_eq!(acc.finish().len(), MAX_HOSTS);
@@ -2874,7 +2969,7 @@ mod tests {
     async fn a_host_list_that_hit_its_limit_is_reported_as_a_possible_gap() {
         let mut driver = Driver::new(FakeTransport::new());
         for i in 0..(MAX_HOSTS + 1) {
-            driver.acc.record(&format!("https://h{i}.example/x"));
+            driver.acc.record(&format!("https://h{i}.example/x"), Phase::Before);
         }
         assert_eq!(driver.observation(1, false).possible_gaps, 1);
     }
@@ -2885,8 +2980,8 @@ mod tests {
         // lowercases. A host recorded here as "example.com." would split its
         // count against the undotted form and miss Task 9's dictionary.
         let mut acc = HostAccumulator::new();
-        acc.record("https://www.google-analytics.com./collect");
-        acc.record("https://www.google-analytics.com/collect");
+        acc.record("https://www.google-analytics.com./collect", Phase::Before);
+        acc.record("https://www.google-analytics.com/collect", Phase::Before);
         let hosts = acc.finish();
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].host, "www.google-analytics.com");
@@ -2941,8 +3036,8 @@ mod tests {
         // M-2. The module's doc says it never panics; unchecked u32 arithmetic
         // on a page-driven counter would make that untrue in a debug build.
         let mut acc = HostAccumulator::new();
-        acc.counts.insert("x.example".to_string(), u32::MAX);
-        acc.record("https://x.example/a");
+        acc.counts.insert("x.example".to_string(), (u32::MAX, Phase::Before));
+        acc.record("https://x.example/a", Phase::Before);
         assert_eq!(acc.finish()[0].request_count, u32::MAX);
     }
 
@@ -3030,6 +3125,7 @@ mod tests {
             hosts: vec![ObservedHost {
                 host: "doubleclick.net".to_string(),
                 request_count: 3,
+                phase: Phase::Before,
             }],
             pages_visited: 4,
             possible_gaps: 0,
@@ -3042,7 +3138,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&observation).expect("json"),
             json!({
-                "hosts": [{"host": "doubleclick.net", "requestCount": 3}],
+                "hosts": [{"host": "doubleclick.net", "requestCount": 3, "phase": "before"}],
                 "pagesVisited": 4,
                 "possibleGaps": 0,
                 "stoppedEarly": false,
@@ -3081,6 +3177,51 @@ mod tests {
         // The gap must come from the refusal, not from `{}` answering some
         // other method string (a missing `cookies` array is a gap too).
         assert_eq!(d.transport.methods_for(None), ["Storage.getCookies"]);
+    }
+
+    // --- Task 4: phases ---
+
+    #[test]
+    fn a_host_keeps_the_first_phase_it_was_seen_in() {
+        let mut acc = HostAccumulator::default();
+        acc.record("https://a.example/x", Phase::Before);
+        acc.record("https://a.example/y", Phase::After);
+        acc.record("https://b.example/", Phase::After);
+        let h = acc.finish();
+        assert_eq!(h.iter().find(|x| x.host == "a.example").unwrap().phase, Phase::Before);
+        assert_eq!(h.iter().find(|x| x.host == "b.example").unwrap().phase, Phase::After);
+    }
+
+    #[test]
+    fn a_failed_consent_attempt_leaves_everything_before() {
+        let mut d = Driver::new(FakeTransport::new());
+        d.acc.record("https://pre.example/", d.phase);
+        d.begin_consent_attempt();
+        d.acc.record("https://during.example/", d.phase);
+        d.abandon_consent_attempt();
+        d.acc.record("https://later.example/", d.phase);
+        let hosts = std::mem::take(&mut d.acc).finish();
+        assert_eq!(hosts.len(), 3);
+        assert!(hosts.iter().all(|h| h.phase == Phase::Before));
+    }
+
+    #[tokio::test]
+    async fn a_cookie_present_at_the_first_snapshot_stays_before() {
+        let a = json!({ "name": "A", "domain": ".site.example", "session": true, "expires": -1.0 });
+        let b = json!({ "name": "B", "domain": ".ads.example", "session": false, "expires": 2e9 });
+        let mut t = FakeTransport::new();
+        t.queued.insert(
+            "Storage.getCookies".into(),
+            VecDeque::from([json!({ "cookies": [a.clone()] }), json!({ "cookies": [a, b] })]),
+        );
+        let mut d = Driver::new(t);
+        d.snapshot_before_cookies().await.unwrap();
+        d.begin_consent_attempt();
+        let observation = d.finish(1, false).await.unwrap();
+        let phase = |n: &str| observation.cookies.iter().find(|c| c.name == n).unwrap().phase;
+        assert_eq!(phase("A"), Phase::Before);
+        assert_eq!(phase("B"), Phase::After);
+        assert_eq!(d.transport.methods_for(None), ["Storage.getCookies", "Storage.getCookies"]);
     }
 
     #[test]
@@ -3162,8 +3303,10 @@ mod tests {
             domain: "google.com".into(),
             session: false,
             expires_epoch_seconds: 2.0e9,
+            phase: Phase::After,
         })
         .unwrap();
+        assert!(json.contains("\"phase\":\"after\""));
         for key in ["\"name\"", "\"domain\"", "\"session\"", "\"expiresEpochSeconds\""] {
             assert!(json.contains(key), "missing {key}");
         }
