@@ -308,17 +308,36 @@ async fn connect_to_permitted(
     }))
 }
 
+/// Name resolution, as a seam. The application resolves through the system; a test hands in a
+/// resolver that answers with whatever hostile address it needs, so the real connector's check can
+/// be exercised without the suite ever resolving a name.
+pub type Resolver =
+    Arc<dyn Fn(String, u16) -> BoxFuture<'static, std::io::Result<Vec<SocketAddr>>> + Send + Sync>;
+
+fn system_resolver() -> Resolver {
+    Arc::new(|host: String, port: u16| {
+        Box::pin(async move { Ok(tokio::net::lookup_host((host.as_str(), port)).await?.collect()) })
+            as BoxFuture<'static, std::io::Result<Vec<SocketAddr>>>
+    })
+}
+
+/// Resolve, then dial only if every resolved address is permitted. Resolution is done here rather
+/// than inside `TcpStream::connect` so that every address it produces is checked before anything
+/// is dialled. With a visitor's third parties admitted, this is the network guard: `decide` sees
+/// only a name, and any third party's DNS can answer with a private address.
+pub fn connector_with(resolve: Resolver) -> Connector {
+    Arc::new(move |host: String, port: u16| {
+        let resolving = resolve(host, port);
+        Box::pin(async move { connect_to_permitted(resolving.await?).await })
+            as BoxFuture<'static, std::io::Result<TcpStream>>
+    })
+}
+
 /// The connector the application installs. Tests never use it: a test that dials anything but
 /// 127.0.0.1 violates the product's own promise (Global Constraints), so every test injects a
-/// connector pointed at a local stand-in. Resolution is done here rather than inside
-/// `TcpStream::connect` so that every address it produces is checked before anything is dialled.
+/// connector pointed at a local stand-in, or `connector_with` and a fake resolver.
 pub fn real_connector() -> Connector {
-    Arc::new(|host: String, port: u16| {
-        Box::pin(async move {
-            let addrs = tokio::net::lookup_host((host.as_str(), port)).await?;
-            connect_to_permitted(addrs).await
-        }) as BoxFuture<'static, std::io::Result<TcpStream>>
-    })
+    connector_with(system_resolver())
 }
 
 pub async fn start(
@@ -424,14 +443,12 @@ async fn handle(
             ledger.note_denied(host, port, reason);
             let _ = client.write_all(REFUSED).await;
         }
-        Decision::Allow { host: approved, origin: _ } => {
+        Decision::Allow { host: approved } => {
             // Recorded at the moment of admission, not at the moment of success. An upstream that
             // then refuses the connection must not vanish from the record.
             //
             // Both the record and the connect use `approved` — the host the guard normalised and
-            // vetted — never the raw authority off the request line and never the scan origin it
-            // matched. Recording the origin would collapse every subdomain of a scan target into
-            // the apex, losing the vendors the map exists to show; connecting to the raw string
+            // vetted — never the raw authority off the request line: connecting to the raw string
             // would hand the resolver a name the guard never saw.
             ledger.note_allowed(approved.clone(), port);
             match connect(approved, port).await {
@@ -860,7 +877,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn denies_a_third_party_while_a_scan_is_running() {
+    async fn denies_a_third_party_on_a_non_web_port_while_a_scan_is_running() {
         // The paired control runs in the same process, against the same ledger, as the denials.
         // Three refusals asserted against a ledger that has never once recorded an allow prove
         // nothing about the guard — that is exactly the reading the spike's crashed oracle gave
@@ -875,7 +892,7 @@ mod tests {
         .unwrap();
 
         for host in ["ib.adnxs.com", "pagead2.googlesyndication.com", "cdn.adsafeprotected.com"] {
-            let reply = send(p.addr, &format!("CONNECT {host}:443 HTTP/1.1\r\nHost: {host}\r\n\r\n")).await;
+            let reply = send(p.addr, &format!("CONNECT {host}:8443 HTTP/1.1\r\nHost: {host}\r\n\r\n")).await;
             assert!(reply.starts_with("HTTP/1.1 403"), "{host} got {reply:?}");
         }
 
@@ -1196,7 +1213,7 @@ mod tests {
         let l = Ledger::new();
         for i in 0..(MAX_LEDGER_ENTRIES + 50) {
             l.note_accepted();
-            l.note_denied(format!("h{i}.example"), 443, DenyReason::NotAScanTarget);
+            l.note_denied(format!("h{i}.example"), 8443, DenyReason::PortNotAllowed);
         }
         assert_eq!(l.denied().len(), MAX_LEDGER_ENTRIES);
         assert_eq!(l.dropped_records(), 50, "a truncated record must be visible, not silent");
@@ -1336,6 +1353,39 @@ mod tests {
         assert!(any_address_refused(&[]), "an empty resolution is a refusal, not a success");
     }
 
+    /// A resolver that answers every name with `ip`, so the real connector's code path can be
+    /// exercised against a hostile DNS answer without the suite resolving anything.
+    fn resolver_to(ip: &'static str) -> Resolver {
+        Arc::new(move |_h, port| {
+            Box::pin(async move { Ok(vec![SocketAddr::new(ip.parse().unwrap(), port)]) })
+        })
+    }
+
+    #[tokio::test]
+    async fn a_public_name_that_resolves_to_a_private_address_is_never_dialled() {
+        // With any well-formed host admitted during a scan, this is the guard: a third party's
+        // DNS can point anywhere, and `decide` never sees the answer. Loopback comes first so a
+        // build that has lost the check fails here, on this machine, before it ever tries the LAN.
+        for ip in ["127.0.0.1", "::1", "10.0.0.5", "192.168.1.1", "169.254.169.254", "100.64.0.1", "fe80::1", "::ffff:10.0.0.5"] {
+            let err = connector_with(resolver_to(ip))("internal.example".into(), 443).await.unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied, "{ip}");
+        }
+    }
+
+    #[tokio::test]
+    async fn through_the_proxy_a_privately_resolving_name_gets_502() {
+        // The name resolves to a loopback listener that is genuinely accepting, so a proxy that
+        // dialled it would answer 200 — a 502 here can only come from the address check, never
+        // from an unreachable address, and nothing is ever sent off this machine.
+        let listening = fake_upstream(b"pong").await;
+        let resolve: Resolver =
+            Arc::new(move |_h, _p| Box::pin(async move { Ok(vec![listening]) }));
+        let handle = start(origins(&["rossi-editore.it"]), connector_with(resolve)).await.unwrap();
+        let reply = send(handle.addr, "CONNECT internal.example:443 HTTP/1.1\r\nHost: internal.example:443\r\n\r\n").await;
+        assert!(reply.starts_with("HTTP/1.1 502"), "{reply}");
+        assert_sensor_alive(&handle.ledger);
+    }
+
     // ---- plain HTTP forwarding ---------------------------------------------
 
     /// Absolute-form request lines are assembled rather than written out: the remote-asset guard
@@ -1404,19 +1454,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refuses_a_plain_http_request_to_a_host_outside_the_scan() {
+    async fn refuses_a_plain_http_request_to_a_third_party_on_a_non_web_port() {
         let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
             .await
             .unwrap();
         let reply =
-            send(p.addr, &format!("GET {SCHEME}doubleclick.net/pixel.gif HTTP/1.1\r\nHost: doubleclick.net\r\n\r\n"))
+            send(p.addr, &format!("GET {SCHEME}doubleclick.net:8080/pixel.gif HTTP/1.1\r\nHost: doubleclick.net\r\n\r\n"))
                 .await;
         assert!(reply.starts_with("HTTP/1.1 403"), "got {reply:?}");
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(p.ledger.allowed().is_empty());
         assert_eq!(
             p.ledger.denied(),
-            vec![("doubleclick.net".to_string(), 80, DenyReason::NotAScanTarget)]
+            vec![("doubleclick.net".to_string(), 8080, DenyReason::PortNotAllowed)]
         );
         assert_sensor_alive(&p.ledger);
     }
@@ -1449,7 +1499,7 @@ mod tests {
             .unwrap();
         let reply = send(
             p.addr,
-            &format!("GET {SCHEME}doubleclick.net/p.gif HTTP/1.1\r\nHost: rossi-editore.it\r\n\r\n"),
+            &format!("GET {SCHEME}doubleclick.net:8080/p.gif HTTP/1.1\r\nHost: rossi-editore.it\r\n\r\n"),
         )
         .await;
         assert!(reply.starts_with("HTTP/1.1 403"), "got {reply:?}");
@@ -1457,7 +1507,7 @@ mod tests {
         assert!(p.ledger.allowed().is_empty());
         assert_eq!(
             p.ledger.denied(),
-            vec![("doubleclick.net".to_string(), 80, DenyReason::NotAScanTarget)],
+            vec![("doubleclick.net".to_string(), 8080, DenyReason::PortNotAllowed)],
             "the Host header, not the request line, decided"
         );
         assert_sensor_alive(&p.ledger);
@@ -1672,7 +1722,7 @@ mod tests {
 
         for headers in ["", "Host: rossi-editore.it\r\n", "Host: a\r\nHost: b\r\n", "Host: \r\n"] {
             let reply =
-                send(p.addr, &format!("GET {SCHEME}doubleclick.net/p HTTP/1.1\r\n{headers}\r\n"))
+                send(p.addr, &format!("GET {SCHEME}doubleclick.net:8080/p HTTP/1.1\r\n{headers}\r\n"))
                     .await;
             assert!(reply.starts_with("HTTP/1.1 403"), "{headers:?} got {reply:?}");
         }
@@ -1685,7 +1735,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(p.ledger.denied().len(), 4);
-        assert!(p.ledger.denied().iter().all(|(h, p, _)| h == "doubleclick.net" && *p == 80));
+        assert!(p.ledger.denied().iter().all(|(h, p, _)| h == "doubleclick.net" && *p == 8080));
         assert_eq!(p.ledger.allowed(), vec![("rossi-editore.it".to_string(), 80)]);
         assert_sensor_alive(&p.ledger);
     }
@@ -1956,19 +2006,21 @@ mod tests {
         );
         assert_eq!(parse_absolute_form(&format!("{s}doubleclick.net@rossi-editore.it?x")), None);
 
-        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
-            .await
-            .unwrap();
+        // Through the proxy: a third party is admitted during a scan, so what matters is the name
+        // that reaches the connector and the record — the third party, never the hidden in-scope one.
+        let (upstream, _seen) = recording_upstream().await;
+        let (connector, dialled) = recording_connector(upstream);
+        let p = start(origins(&["rossi-editore.it"]), connector).await.unwrap();
         for target in [
             format!("{SCHEME}doubleclick.net?x=rossi-editore.it"),
             format!("{SCHEME}doubleclick.net#.rossi-editore.it"),
         ] {
-            let reply = send(p.addr, &format!("GET {target} HTTP/1.1\r\n\r\n")).await;
-            assert!(reply.starts_with("HTTP/1.1 403"), "{target} got {reply:?}");
+            send_tolerating_a_closed_socket(p.addr, &format!("GET {target} HTTP/1.1\r\n\r\n")).await;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(p.ledger.allowed().is_empty());
-        assert!(p.ledger.denied().iter().all(|(h, _, _)| h == "doubleclick.net"));
+        assert_eq!(*dialled.lock().unwrap(), vec!["doubleclick.net".to_string(); 2]);
+        assert_eq!(p.ledger.allowed(), vec![("doubleclick.net".to_string(), 80); 2]);
+        assert!(p.ledger.denied().is_empty());
         assert_sensor_alive(&p.ledger);
     }
 

@@ -1,21 +1,26 @@
-//! The admission decision. This is the executable form of spec §7.1.
+//! The admission decision. This is the executable form of spec §7.1, as widened by spec §13.
 //!
-//! Pure by construction: no I/O, no clock, no global state. The proxy in `proxy.rs` is the
-//! only caller, and it must treat a `Deny` as final. Nothing here can panic — a panic inside a
-//! spawned connection task would be a silent failure of the guard, which is the one failure mode
-//! this component may not have.
+//! During a scan the proxy admits what a visitor's browser would fetch: any well-formed host on
+//! 80 or 443, third parties included. A scanner that saw only the first-party layer would miss the
+//! vendors a data-flow map exists to show, because each tag a page loads goes on to load the next.
+//! What stays denied, whoever asks: IP literals, every other port, a malformed authority, and
+//! everything when no scan is running.
 //!
-//! The deny path allocates nothing at all. `vet_host` validates in place and hands back a
-//! borrowed slice of the caller's input; comparison is `eq_ignore_ascii_case` and a
-//! length-arithmetic label-boundary check rather than a lowercased copy and a `format!("{.o}")`.
-//! No deny reason carries a value, so no deny path can interpolate anything either. Only the
-//! `Allow` arm allocates, once it has a decision worth carrying: the vetted host and the origin
-//! that matched.
+//! This decision is therefore no longer the network guard. It reads an authority string; it cannot
+//! know where a name resolves, and any third party's DNS can point at the user's router or the
+//! cloud metadata endpoint. The guard is `proxy::is_permitted_upstream`, applied to every address
+//! a name resolves to before anything is dialled. Denying IP literals here keeps an address from
+//! skipping resolution altogether, and keeps the ledger a list of names.
 //!
-//! This is a real constraint and not housekeeping. `decide` runs once per connection attempt on
-//! a path whose whole job is to reject, and an earlier version of this module claimed to be
-//! allocation-free on deny while allocating once per origin entry per request. The claim is now
-//! enforced by construction rather than by comment.
+//! Pure by construction: no I/O, no clock, no global state. The proxy in `proxy.rs` is the only
+//! caller, and it must treat a `Deny` as final. Nothing here can panic — a panic inside a spawned
+//! connection task would be a silent failure of the guard.
+//!
+//! The deny path allocates nothing at all. `vet_host` validates in place and hands back a borrowed
+//! slice of the caller's input, and no deny reason carries a value, so no deny path can
+//! interpolate anything either. Only the `Allow` arm allocates, once, for the vetted host. This is
+//! a real constraint: `decide` runs once per connection attempt, and an earlier version of this
+//! module claimed to be allocation-free on deny while allocating once per origin entry per request.
 
 use std::net::IpAddr;
 
@@ -32,18 +37,14 @@ const ALLOWED_PORTS: [u16; 2] = [80, 443];
 /// asked to allow, so it is rejected before any comparison work happens.
 const MAX_HOST_LEN: usize = 253;
 
-/// `Allow` carries both halves deliberately.
-///
 /// `host` is the *normalised* host that was asked for — the only string the guard has actually
 /// vetted. The caller must connect to that and record that; the raw authority it parsed off the
 /// request line differs from it by anything `str::trim` removes, which is the whole Unicode
 /// `White_Space` set, so handing the raw string to a resolver would mean dialling a name the
-/// guard never approved. `origin` is the scan-origin entry that matched, which is what makes the
-/// decision explicable but is not the host anything was contacted at: three different subdomains
-/// of one scan target must not all be recorded as the apex.
+/// guard never approved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
-    Allow { host: String, origin: String },
+    Allow { host: String },
     Deny { reason: DenyReason },
 }
 
@@ -57,7 +58,6 @@ pub enum DenyReason {
     IpLiteral,
     PortNotAllowed,
     NoScanRunning,
-    NotAScanTarget,
 }
 
 /// Normalise a host for comparison, or refuse to compare it at all.
@@ -99,32 +99,14 @@ pub(crate) fn vet_host(raw: &str) -> Option<&str> {
     Some(host)
 }
 
-/// True when `h` is a strict subdomain of `o`, on a label boundary.
-///
-/// Length arithmetic and `get`, never `format!` and never indexing: the `format!(".{o}")` this
-/// replaces allocated once per origin entry per request, on the path whose entire job is to
-/// reject. `checked_sub` and `str::get` mean no input can make this panic, which
-/// `regression_never_panics_on_hostile_input` is there to hold.
-fn is_subdomain_of(h: &str, o: &str) -> bool {
-    let Some(cut) = h.len().checked_sub(o.len()) else {
-        return false;
-    };
-    let (Some(prefix), Some(suffix)) = (h.get(..cut), h.get(cut..)) else {
-        return false;
-    };
-    // `prefix` must be at least one label character plus the separating dot, so `notrossi` can
-    // never pass for `.rossi` and a leading-dot host can never match.
-    prefix.len() >= 2 && prefix.ends_with('.') && suffix.eq_ignore_ascii_case(o)
-}
-
 fn is_ip_literal(host: &str) -> bool {
     host.parse::<IpAddr>().is_ok()
 }
 
-/// A scan-origin entry only counts if it is a hostname that can be matched against. Anything
-/// else is skipped, never matched: a blank entry, a single label such as a bare TLD, or an IP
-/// literal. `scan_origins` is populated from parsed user input in Phase 2, where a partial or
-/// empty value is easy to produce.
+/// A scan-origin entry only counts as a running scan if it is a dotted hostname. Anything else is
+/// skipped: a blank entry, a single label such as a bare TLD, or an IP literal. `scan_origins` is
+/// populated from parsed user input, where a partial or empty value is easy to produce, and a list
+/// holding only such entries must read as no scan at all — never as "admit everything".
 fn usable_origin(entry: &str) -> Option<&str> {
     let o = vet_host(entry)?;
     if !o.contains('.') {
@@ -141,30 +123,19 @@ pub fn decide(host: &str, port: u16, scan_origins: &[String]) -> Decision {
         return Decision::Deny { reason: DenyReason::MalformedAuthority };
     };
     if is_ip_literal(h) {
-        // A scan target is a hostname the user typed. Denying IP literals unconditionally costs
-        // the ability to scan a bare address — which the product does not offer — and closes
-        // loopback pivots and cloud metadata endpoints (169.254.169.254) in one rule.
+        // A scan target is a hostname the user typed, and a visitor's third parties are named
+        // too. An address never passes through a resolver, so it would reach the network guard
+        // only at dial time; refusing it here keeps the ledger a list of names.
         return Decision::Deny { reason: DenyReason::IpLiteral };
     }
     if !ALLOWED_PORTS.contains(&port) {
         return Decision::Deny { reason: DenyReason::PortNotAllowed };
     }
-    if scan_origins.is_empty() {
+    if !scan_origins.iter().any(|o| usable_origin(o).is_some()) {
         return Decision::Deny { reason: DenyReason::NoScanRunning };
     }
-    for entry in scan_origins {
-        let Some(o) = usable_origin(entry) else { continue };
-        // Suffix matching is on a label boundary only, never a bare `ends_with(o)`, so
-        // `notrossi-editore.it` cannot pass as `rossi-editore.it`. Only here, having decided to
-        // admit, is anything allocated.
-        if h.eq_ignore_ascii_case(o) || is_subdomain_of(h, o) {
-            return Decision::Allow {
-                host: h.to_ascii_lowercase(),
-                origin: o.to_ascii_lowercase(),
-            };
-        }
-    }
-    Decision::Deny { reason: DenyReason::NotAScanTarget }
+    // Only here, having decided to admit, is anything allocated.
+    Decision::Allow { host: h.to_ascii_lowercase() }
 }
 
 #[cfg(test)]
@@ -178,14 +149,12 @@ mod tests {
     fn denied(d: &Decision) -> &DenyReason {
         match d {
             Decision::Deny { reason } => reason,
-            Decision::Allow { host, origin } => {
-                panic!("expected a deny, got allow for {host} via {origin}")
-            }
+            Decision::Allow { host } => panic!("expected a deny, got allow for {host}"),
         }
     }
 
-    fn allowed(host: &str, origin: &str) -> Decision {
-        Decision::Allow { host: host.to_string(), origin: origin.to_string() }
+    fn allowed(host: &str) -> Decision {
+        Decision::Allow { host: host.to_string() }
     }
 
     // ---- ordinary behaviour -------------------------------------------------
@@ -198,30 +167,9 @@ mod tests {
     #[test]
     fn allows_the_scan_target_and_its_subdomains() {
         let o = origins(&["rossi-editore.it"]);
-        assert_eq!(decide("rossi-editore.it", 443, &o), allowed("rossi-editore.it", "rossi-editore.it"));
-        assert_eq!(decide("www.rossi-editore.it", 443, &o), allowed("www.rossi-editore.it", "rossi-editore.it"));
-        assert_eq!(decide("a.b.rossi-editore.it", 80, &o), allowed("a.b.rossi-editore.it", "rossi-editore.it"));
-    }
-
-    // ---- audit finding F4: the label-boundary check, without format! -------
-
-    #[test]
-    fn the_label_boundary_check_holds_at_every_edge() {
-        // The allocation-free replacement for `h.ends_with(&format!(".{o}"))`. These are the
-        // cases where length arithmetic could go wrong where string concatenation would not.
-        assert!(is_subdomain_of("www.rossi-editore.it", "rossi-editore.it"));
-        assert!(is_subdomain_of("a.b.rossi-editore.it", "rossi-editore.it"));
-        assert!(is_subdomain_of("A.ROSSI-EDITORE.IT", "rossi-editore.it"));
-        // equal is not a *sub*domain; `decide` handles that with eq_ignore_ascii_case
-        assert!(!is_subdomain_of("rossi-editore.it", "rossi-editore.it"));
-        // no label boundary
-        assert!(!is_subdomain_of("notrossi-editore.it", "rossi-editore.it"));
-        // a bare dot is not a label
-        assert!(!is_subdomain_of(".rossi-editore.it", "rossi-editore.it"));
-        // origin longer than the host must not underflow
-        assert!(!is_subdomain_of("it", "rossi-editore.it"));
-        assert!(!is_subdomain_of("", "rossi-editore.it"));
-        assert!(!is_subdomain_of("x", ""));
+        assert_eq!(decide("rossi-editore.it", 443, &o), allowed("rossi-editore.it"));
+        assert_eq!(decide("www.rossi-editore.it", 443, &o), allowed("www.rossi-editore.it"));
+        assert_eq!(decide("a.b.rossi-editore.it", 80, &o), allowed("a.b.rossi-editore.it"));
     }
 
     // ---- audit finding F1/F3 -----------------------------------------------
@@ -235,11 +183,11 @@ mod tests {
         let o = origins(&["rossi-editore.it"]);
         assert_eq!(
             decide("analytics.rossi-editore.it", 443, &o),
-            allowed("analytics.rossi-editore.it", "rossi-editore.it")
+            allowed("analytics.rossi-editore.it")
         );
         assert_eq!(
             decide("cdn.rossi-editore.it", 443, &o),
-            allowed("cdn.rossi-editore.it", "rossi-editore.it")
+            allowed("cdn.rossi-editore.it")
         );
     }
 
@@ -252,24 +200,31 @@ mod tests {
         for raw in ["  ROSSI-EDITORE.IT  ", "rossi-editore.it.", "\u{a0}rossi-editore.it"] {
             assert_eq!(
                 decide(raw, 443, &o),
-                allowed("rossi-editore.it", "rossi-editore.it"),
+                allowed("rossi-editore.it"),
                 "{raw:?}"
             );
         }
     }
 
     #[test]
-    fn still_denies_third_parties_during_a_scan() {
+    fn admits_a_visitors_third_parties_during_a_scan() {
         let o = origins(&["rossi-editore.it"]);
-        assert_eq!(denied(&decide("tracker.example", 443, &o)), &DenyReason::NotAScanTarget);
-        assert_eq!(denied(&decide("fonts.googleapis.com", 443, &o)), &DenyReason::NotAScanTarget);
+        assert_eq!(decide("fonts.googleapis.com", 443, &o), allowed("fonts.googleapis.com"));
+        assert_eq!(decide("Tracker.Example.", 80, &o), allowed("tracker.example"));
     }
 
     #[test]
-    fn does_not_treat_a_lookalike_host_as_the_scan_target() {
-        let o = origins(&["rossi-editore.it"]);
-        assert_eq!(denied(&decide("rossi-editore.it.evil.example", 443, &o)), &DenyReason::NotAScanTarget);
-        assert_eq!(denied(&decide("notrossi-editore.it", 443, &o)), &DenyReason::NotAScanTarget);
+    fn a_third_party_on_another_port_is_still_denied() {
+        assert_eq!(
+            denied(&decide("cdn.example", 8443, &origins(&["rossi-editore.it"]))),
+            &DenyReason::PortNotAllowed
+        );
+    }
+
+    #[test]
+    fn a_blank_or_bare_tld_origin_list_is_no_scan_running_not_a_wildcard() {
+        assert_eq!(denied(&decide("tracker.example", 443, &origins(&[""]))), &DenyReason::NoScanRunning);
+        assert_eq!(denied(&decide("tracker.example", 443, &origins(&["it"]))), &DenyReason::NoScanRunning);
     }
 
     #[test]
@@ -282,8 +237,8 @@ mod tests {
     fn treats_a_trailing_dot_as_the_same_host_on_both_sides() {
         assert!(matches!(decide("rossi-editore.it.", 443, &origins(&["rossi-editore.it"])), Decision::Allow { .. }));
         assert!(matches!(decide("rossi-editore.it", 443, &origins(&["rossi-editore.it."])), Decision::Allow { .. }));
-        // and the normalisation must not open a suffix bypass
-        assert_eq!(denied(&decide("evil.example.", 443, &origins(&["rossi-editore.it"]))), &DenyReason::NotAScanTarget);
+        // and a third party's trailing dot is stripped the same way before it is recorded
+        assert_eq!(decide("evil.example.", 443, &origins(&["rossi-editore.it"])), allowed("evil.example"));
     }
 
     // ---- regression: the four defects the egressGuard.ts audits found -------
@@ -298,15 +253,15 @@ mod tests {
 
     #[test]
     fn regression_a_blank_scan_origin_is_never_a_wildcard() {
-        assert_eq!(denied(&decide("evil.example.", 443, &origins(&[""]))), &DenyReason::NotAScanTarget);
-        assert_eq!(denied(&decide("evil.example", 443, &origins(&["   "]))), &DenyReason::NotAScanTarget);
-        assert_eq!(denied(&decide("evil.example", 443, &origins(&["."]))), &DenyReason::NotAScanTarget);
+        assert_eq!(denied(&decide("evil.example.", 443, &origins(&[""]))), &DenyReason::NoScanRunning);
+        assert_eq!(denied(&decide("evil.example", 443, &origins(&["   "]))), &DenyReason::NoScanRunning);
+        assert_eq!(denied(&decide("evil.example", 443, &origins(&["."]))), &DenyReason::NoScanRunning);
     }
 
     #[test]
     fn regression_a_bare_tld_scan_origin_is_never_a_wildcard() {
-        assert_eq!(denied(&decide("anything.it", 443, &origins(&["it"]))), &DenyReason::NotAScanTarget);
-        assert_eq!(denied(&decide("anything.com", 443, &origins(&["com"]))), &DenyReason::NotAScanTarget);
+        assert_eq!(denied(&decide("anything.it", 443, &origins(&["it"]))), &DenyReason::NoScanRunning);
+        assert_eq!(denied(&decide("anything.com", 443, &origins(&["com"]))), &DenyReason::NoScanRunning);
     }
 
     #[test]
@@ -322,7 +277,11 @@ mod tests {
         for h in hostile {
             for port in [0u16, 80, 443, 8080, 65535] {
                 let d = decide(h, port, &origins(&["rossi-editore.it", "", "it"]));
-                assert!(matches!(d, Decision::Deny { .. }), "expected deny for {h:?}:{port}");
+                // `-.-` and `xn--` pass `vet_host`'s character allowlist, so on a web port they are
+                // admitted like any other third-party name: no resolver will answer them, and one
+                // that did would still face `proxy::is_permitted_upstream`.
+                let admissible = matches!(h, "-.-" | "xn--") && (port == 80 || port == 443);
+                assert_eq!(matches!(d, Decision::Allow { .. }), admissible, "{h:?}:{port}");
             }
         }
     }
@@ -332,7 +291,7 @@ mod tests {
         let o = origins(&["", "   ", "it", ".", "rossi-editore.it"]);
         assert!(matches!(decide("rossi-editore.it", 443, &o), Decision::Allow { .. }));
         assert!(matches!(decide("www.rossi-editore.it", 443, &o), Decision::Allow { .. }));
-        assert_eq!(denied(&decide("anything.it", 443, &o)), &DenyReason::NotAScanTarget);
+        assert!(matches!(decide("anything.it", 443, &o), Decision::Allow { .. }));
     }
 
     // ---- new classes the URL guard never decided ---------------------------

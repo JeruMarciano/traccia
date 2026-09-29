@@ -15,14 +15,20 @@ use tokio::net::{TcpListener, TcpStream};
 use traccia_lib::proxy;
 use traccia_lib::scan::{self, ScanOutput, ScanState, Target};
 
-/// The page every `fixture_site()` serves. Three off-site hosts by IP literal
-/// — never resolved, never dialled, and `admission::decide` denies an IP
-/// literal unconditionally (`DenyReason::IpLiteral`) before any connector sees
-/// it — which is what proves the third assertion in `egress.rs`'s
-/// `a_scan_contacts_the_target_and_nothing_else` is testing something real
-/// rather than an empty ledger nobody ever tried to fill.
+/// The named third party every fixture site's home page can load. Fixed rather
+/// than port-derived: each `Site`'s connector maps it to that site's own
+/// listener, so two scans never share it.
+pub const THIRD_PARTY_HOST: &str = "thirdparty.invalid";
+
+/// The page every `fixture_site()` serves. One named third party, which a scan
+/// admits like any vendor a visitor's browser would fetch, and three off-site
+/// hosts by IP literal — never resolved, never dialled, and `admission::decide`
+/// denies an IP literal unconditionally (`DenyReason::IpLiteral`) before any
+/// connector sees it. Both kinds are what make `egress.rs`'s assertions test
+/// something real rather than an empty ledger nobody ever tried to fill.
 pub const FIXTURE_HTML: &str = concat!(
     "<!doctype html><html><body>",
+    "<script src=\"http://thirdparty.invalid/t.js\"></script>",
     "<img src=\"http://192.0.2.10/pixel.gif\">",
     "<script src=\"http://198.51.100.20/track.js\"></script>",
     "<link rel=\"stylesheet\" href=\"http://203.0.113.30/style.css\">",
@@ -38,6 +44,8 @@ pub const FIXTURE_HTML: &str = concat!(
 pub struct Site {
     pub host: String,
     pub origin_port: u16,
+    /// The loopback listener standing in for `THIRD_PARTY_HOST`.
+    pub third_party_port: u16,
 }
 
 impl Site {
@@ -50,22 +58,27 @@ impl Site {
     }
 
     /// The one seam `run_pipeline` allows a test to substitute. Recognises
-    /// exactly `(self.host, 80)` — the only pair `admission::decide` will
-    /// ever admit for this scan's origins — and dials the loopback fixture
-    /// listener directly, performing no name resolution at all. Anything
-    /// else reaching this connector would mean `admission::decide` admitted
-    /// a host this scan never should have, so it is refused rather than
-    /// guessed at.
+    /// exactly `(self.host, 80)` and `(THIRD_PARTY_HOST, 80)` and dials the
+    /// matching loopback listener directly, performing no name resolution at
+    /// all. `admission::decide` now admits any named host on 80/443 during a
+    /// scan, so Chrome's own service hosts reach this connector too; it
+    /// refuses them, and everything else, so nothing a test scan admits ever
+    /// leaves the machine.
     pub fn connector(&self) -> proxy::Connector {
         let host = self.host.clone();
         let origin_port = self.origin_port;
+        let third_party_port = self.third_party_port;
         Arc::new(move |h: String, p: u16| {
-            let dial = (h == host && p == 80).then_some(origin_port);
+            let dial = match (h.as_str(), p) {
+                (h, 80) if h == host => Some(origin_port),
+                (THIRD_PARTY_HOST, 80) => Some(third_party_port),
+                _ => None,
+            };
             Box::pin(async move {
                 match dial {
                     Some(port) => TcpStream::connect(("127.0.0.1", port)).await,
                     None => Err(std::io::Error::other(
-                        "test connector: admitted a host the fixture does not recognise",
+                        "test connector: refusing a host the fixture does not stand in for",
                     )),
                 }
             }) as proxy::BoxFuture<'static, std::io::Result<TcpStream>>
@@ -84,6 +97,17 @@ pub async fn fixture_site() -> Site {
 /// per call, so concurrent tests never share one scan's admitted origin with
 /// another's.
 pub async fn fixture_site_serving(pages: Vec<(&'static str, String)>) -> Site {
+    let addr = serve(pages).await;
+    let third_party = serve(vec![("/t.js", String::new())]).await;
+    Site {
+        host: format!("scan-fixture-{}.invalid", addr.port()),
+        origin_port: addr.port(),
+        third_party_port: third_party.port(),
+    }
+}
+
+/// Binds a loopback listener serving `pages` and returns its address.
+async fn serve(pages: Vec<(&'static str, String)>) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind loopback fixture listener");
@@ -97,10 +121,7 @@ pub async fn fixture_site_serving(pages: Vec<(&'static str, String)>) -> Site {
             tokio::spawn(serve_fixture_page(stream, Arc::clone(&pages)));
         }
     });
-    Site {
-        host: format!("scan-fixture-{}.invalid", addr.port()),
-        origin_port: addr.port(),
-    }
+    addr
 }
 
 /// Runs the real pipeline against `site` and returns what the renderer would
