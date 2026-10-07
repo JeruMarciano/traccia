@@ -4866,4 +4866,17 @@ mod tests {
         assert!(found.iter().all(|o| o.page == "https://rossi.it/"));
         assert!(!gap);
     }
+
+    #[test]
+    fn the_33rd_qualifying_offsite_link_is_dropped_and_reported() {
+        let links: Vec<String> =
+            (0..33).map(|i| format!("{}h{i}.invalid/prenota", concat!("https", "://"))).collect();
+        let refs: Vec<(&str, &str)> = links.iter().map(|l| (l.as_str(), "")).collect();
+        let entry = concat!("https", "://rossi.it/");
+        let (found, gap) = offsite_links(entry, &refs);
+        assert_eq!(found.len(), 32);
+        assert!(gap);
+        let (found, gap) = offsite_links(entry, &refs[..32]);
+        assert_eq!((found.len(), gap), (32, false));
+    }
 }

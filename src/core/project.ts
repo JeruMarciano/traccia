@@ -177,6 +177,19 @@ export function validateProject(value: unknown): ValidationResult {
         errors.push(`collectionPoints[${i}] has a malformed kind, provider, pages or destination.`)
         return
       }
+      // Bounds a scan can actually produce: 13 pages, a page identity of at most 2048 characters,
+      // and a provider that is a place name (a hostname, 253).
+      if (
+        (typeof x.provider === 'string' && x.provider.length > 253) ||
+        (Array.isArray(x.pages) && (x.pages.length > 13 || x.pages.some((p: string) => p.length > 2048)))
+      ) {
+        errors.push(`collectionPoints[${i}] has too many pages, a page that is too long, or a provider that is too long.`)
+        return
+      }
+      if (typeof x.destination === 'string' && !validPlaces.some((p) => p.id === x.destination)) {
+        errors.push(`collectionPoints[${i}] sends data to an unknown place: ${x.destination}`)
+        return
+      }
       if (!fieldsOk) return
       validCollectionPoints.push(x as unknown as CollectionPoint)
     })
