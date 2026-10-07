@@ -131,6 +131,10 @@ pub enum LaunchError {
     /// profile directory would let another local account read it and drive
     /// the browser.
     ProfileDirPermissions(PathBuf, std::io::Error),
+    /// Seeding the profile's `Preferences` (download directory inside the profile) failed.
+    /// Launch stops: without it a download that slips past the CDP policy lands in the
+    /// user's real Downloads folder.
+    ProfilePreferences(PathBuf, std::io::Error),
     Spawn(std::io::Error),
     /// The child process exited before it ever wrote `DevToolsActivePort`.
     /// `code` is `None` when the process was killed by a signal rather than
@@ -349,22 +353,19 @@ const PROFILE_REMOVE_RETRY_DELAY: Duration = Duration::from_millis(100);
 /// ledger, so keeping them would be exactly the no-op-as-protection failure
 /// mode this file's own history (Task 6) already removed once.
 ///
-/// **Status for the Task 13 handover:** the residual four hosts
-/// (`www.gstatic.com`, `accounts.google.com`, `www.google.com`,
-/// `android.clients.google.com`) are *attempted* — distinct from
-/// *unverified*. Since spec §13 they are admitted on 80/443 during a scan like
-/// any host a visitor's browser reaches (except `android.clients.google.com`, refused by
-/// name), so in the product they may reach the network (only ever at an address `proxy::is_permitted_upstream` permits);
-/// in tests the connector refuses to dial them. They never become a host the
-/// site contacted: `ScanOutput.hosts` comes from the pages' own CDP events.
-/// What remains unsuppressed, after two genuine, evidence-based search
-/// rounds, is the *attempt itself*.
-/// `android.clients.google.com` is now refused by name in `admission::decide`
-/// (`BROWSER_SERVICE_HOSTS`, with `update.googleapis.com` and the Safe Browsing gateway), so it
-/// never reaches the network; the other three remain admitted like a visitor's third party.
-/// `tests/egress.rs`'s `KNOWN_DENIED_BROWSER_SERVICE_HOSTS` carries the
-/// same hosts with the same per-host reasoning, asserted as the
-/// exhaustive documented-exception list rather than silently tolerated.
+/// **Status for the Task 13 handover:** six hosts of Chrome's own are *attempted* during a
+/// scan — distinct from *unverified*; what remains unsuppressed, after two evidence-based search
+/// rounds, is the attempt itself. Three are still admitted on 80/443 like any host a visitor's
+/// browser reaches (`www.gstatic.com`, `accounts.google.com`, `www.google.com`), so in the
+/// product they may reach the network, only at an address `proxy::is_permitted_upstream`
+/// permits; in tests the connector refuses to dial them. Three are refused by name in
+/// `admission::decide` (`BROWSER_SERVICE_HOSTS`, `DenyReason::BrowserService`) and never reach
+/// the network: `android.clients.google.com`, `update.googleapis.com` and
+/// `safebrowsingohttpgateway.googleapis.com`. None becomes a host the site contacted:
+/// `ScanOutput.hosts` comes from the pages' own CDP events.
+/// `tests/egress.rs`'s `KNOWN_DENIED_BROWSER_SERVICE_HOSTS` carries the same six hosts with the
+/// same per-host reasoning, asserted as the exhaustive documented-exception list rather than
+/// silently tolerated.
 pub fn launch_flags(profile_dir: &Path, proxy_port: u16) -> Vec<String> {
     vec![
         "--headless=new".to_string(),
@@ -479,6 +480,21 @@ fn create_profile_dir(profile_dir: &Path) -> Result<(), LaunchError> {
     restrict_to_owner(profile_dir)
 }
 
+/// Seeds `<profile>/Default/Preferences` so Chrome's download directory is inside the
+/// throw-away profile. `Browser.setDownloadBehavior` ends when the CDP connection closes, which
+/// happens before Chrome is killed; anything that lands in that window, or before the policy is
+/// set, goes into a directory the scan deletes instead of the user's Downloads.
+fn seed_download_preferences(profile_dir: &Path) -> Result<(), LaunchError> {
+    let fail = |e| LaunchError::ProfilePreferences(profile_dir.to_path_buf(), e);
+    let default = profile_dir.join("Default");
+    std::fs::create_dir(&default).map_err(fail)?;
+    let prefs = serde_json::json!({"download": {
+        "default_directory": profile_dir.join("downloads"),
+        "prompt_for_download": false,
+    }});
+    std::fs::write(default.join("Preferences"), prefs.to_string()).map_err(fail)
+}
+
 #[cfg(unix)]
 fn restrict_to_owner(profile_dir: &Path) -> Result<(), LaunchError> {
     use std::os::unix::fs::PermissionsExt;
@@ -585,6 +601,7 @@ fn wait_for_devtools_port(
 /// scanned site's cookies on disk under a name nothing ever cleans up.
 pub fn launch(found: &Found, profile_dir: PathBuf, proxy_port: u16) -> Result<Launched, LaunchError> {
     create_profile_dir(&profile_dir)?;
+    seed_download_preferences(&profile_dir)?;
 
     let flags = launch_flags(&profile_dir, proxy_port);
     let mut user_data_dir_arg = std::ffi::OsString::from("--user-data-dir=");
@@ -854,6 +871,20 @@ mod tests {
     // the child process exits before ever opening its debugging port — all
     // three are named as required reporting in the task instructions, and
     // "report on it" is hollow without a test backing the claim.
+
+    #[test]
+    fn the_profile_is_seeded_so_downloads_land_inside_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let profile = dir.path().join("profile");
+        create_profile_dir(&profile).expect("create");
+        seed_download_preferences(&profile).expect("seed");
+        let prefs: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(profile.join("Default/Preferences")).expect("read"))
+                .expect("json");
+        let target = std::path::PathBuf::from(prefs["download"]["default_directory"].as_str().expect("dir"));
+        assert!(target.starts_with(&profile), "{target:?}");
+        assert_eq!(prefs["download"]["prompt_for_download"], serde_json::json!(false));
+    }
 
     #[test]
     fn profile_dir_creation_refuses_a_path_that_already_exists() {
