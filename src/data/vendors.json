@@ -1362,5 +1362,79 @@
     "owner": "Plyr",
     "category": "video",
     "purposeGroup": "Systems"
+  },
+  "italiaonline.it": {
+    "owner": "Italiaonline",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "paginegialle.it": {
+    "owner": "Italiaonline",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "iol.it": {
+    "owner": "Italiaonline",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "evnt.iol.it": {
+    "owner": "Italiaonline",
+    "category": "analytics",
+    "purposeGroup": "Marketing",
+    "note": "event collection endpoint of Italiaonline's site platform"
+  },
+  "dwhitelabel.com": {
+    "owner": "Duda",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "jimcdn.com": {
+    "owner": "Jimdo",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "jimdo.systems": {
+    "owner": "Jimdo",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "tripadvisor.com": {
+    "owner": "Tripadvisor",
+    "category": "reviews",
+    "purposeGroup": "Marketing"
+  },
+  "tripadvisor.it": {
+    "owner": "Tripadvisor",
+    "category": "reviews",
+    "purposeGroup": "Marketing"
+  },
+  "tacdn.com": {
+    "owner": "Tripadvisor",
+    "category": "reviews",
+    "purposeGroup": "Marketing"
+  },
+  "jscache.com": {
+    "owner": "Tripadvisor",
+    "category": "reviews",
+    "purposeGroup": "Marketing"
+  },
+  "maps.gstatic.com": {
+    "owner": "Google",
+    "category": "maps",
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
+  },
+  "ggpht.com": {
+    "owner": "Google",
+    "category": "cdn",
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
+  },
+  "googlevideo.com": {
+    "owner": "Google",
+    "category": "video",
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   }
 }

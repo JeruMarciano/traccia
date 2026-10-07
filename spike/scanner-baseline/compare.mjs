@@ -4,6 +4,8 @@ import fs from 'node:fs';
 const D = process.env.DATA.replace(/\/?$/, '/'); // data dir outside the repo: sites.tsv in, runs/ out
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const REPO = process.argv[2];
+import { register } from 'node:module';
+register('./ts-resolve.mjs', import.meta.url);
 const { identify, classifyHost } = await import(REPO + '/src/core/vendors.ts');
 const { classifyDoors } = await import(REPO + '/src/core/doors.ts');
 const { isSameSite } = await import(REPO + '/src/core/scan.ts').catch(() => ({}));
