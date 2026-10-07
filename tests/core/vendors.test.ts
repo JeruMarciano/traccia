@@ -70,6 +70,15 @@ describe('identify by host and first path segment', () => {
   })
 })
 
+describe('the shipped dictionary: google.it', () => {
+  const d = vendorsJson as VendorDictionary
+  it('only an advertising path is ads; a bare or other path is never guessed as ads', () => {
+    expect(identify('www.google.it', d, 'pagead')?.category).toBe('ads')
+    expect(identify('www.google.it', d, 'maps')?.category).not.toBe('ads')
+    expect(identify('www.google.it', d)).toBeNull()
+  })
+})
+
 describe('the shipped dictionary: longest suffix wins', () => {
   it('evnt.iol.it is analytics, any other iol.it host is hosting', () => {
     const d = vendorsJson as VendorDictionary

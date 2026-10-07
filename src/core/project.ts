@@ -132,6 +132,18 @@ export function validateProject(value: unknown): ValidationResult {
       if (!ids.has(f.to)) errors.push(`Flow ${f.id} refers to unknown id: ${f.to}`)
     })
 
+    // Name fields added in a later release: optional, but bounded when present (a crafted file
+    // must not smuggle in a huge array or an arbitrary string). paths: at most 8 first segments.
+    ;(v.observations as unknown[]).forEach((o, i) => {
+      const paths = isRecord(o) ? o.paths : undefined
+      if (
+        paths !== undefined &&
+        !(Array.isArray(paths) && paths.length <= 8 && paths.every((s) => typeof s === 'string' && /^[a-z0-9_-]{1,32}$/.test(s)))
+      ) {
+        errors.push(`observations[${i}].paths must be at most 8 plain first path segments.`)
+      }
+    })
+
     const rawCookies = (v.cookies ?? []) as unknown[]
     rawCookies.forEach((x, i) => {
       if (
@@ -143,6 +155,10 @@ export function validateProject(value: unknown): ValidationResult {
         !COOKIE_LIFETIMES.includes(x.lifetime as CookieLifetime)
       ) {
         errors.push(`cookies[${i}] must be an object with string name and domain, boolean thirdParty, and a valid lifetime.`)
+        return
+      }
+      if (x.platform !== undefined && !(typeof x.platform === 'string' && x.platform.length <= 128)) {
+        errors.push(`cookies[${i}].platform must be a string of at most 128 characters.`)
         return
       }
       validCookies.push(x as unknown as CapturedCookie)
