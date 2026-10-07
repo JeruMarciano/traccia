@@ -79,10 +79,11 @@ describe('the shipped dictionary: google.it', () => {
   })
 })
 
-describe('the shipped dictionary: longest suffix wins', () => {
-  it('evnt.iol.it is analytics, any other iol.it host is hosting', () => {
+describe('the shipped dictionary: a purpose is never guessed from a host name', () => {
+  it('evnt.iol.it is named Italiaonline, hosting, like any other iol.it host', () => {
     const d = vendorsJson as VendorDictionary
-    expect(identify('evnt.iol.it', d)?.category).toBe('analytics')
+    expect(identify('evnt.iol.it', d)?.owner).toBe('Italiaonline')
+    expect(identify('evnt.iol.it', d)?.category).toBe('hosting')
     expect(identify('x.iol.it', d)?.category).toBe('hosting')
   })
 })
