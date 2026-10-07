@@ -1,7 +1,7 @@
 import { isThirdPartyCookie } from '../core/cookies'
-import { isCollectingField } from '../core/forms'
+import { classifyDoors } from '../core/doors'
 import { isSameSite } from '../core/scan'
-import type { ScanResult } from '../core/types'
+import type { ScanResult, VendorDictionary } from '../core/types'
 import { STRINGS } from './strings'
 
 /**
@@ -16,16 +16,14 @@ function cookieNotice(result: ScanResult): string | null {
 }
 
 /**
- * The collection-point count to append, or null when the scan found no page with a collecting
- * field — mirrors `cookieNotice`: a scan that discovered no door says nothing about doors, rather
- * than reporting a hollow "0 collection points discovered".
+ * The door count to append, or null when the scan found none — mirrors `cookieNotice`: a scan that
+ * discovered no door says nothing about doors, rather than reporting a hollow "0 collection points
+ * discovered". The number is what `ingestScan` will create or update: one per form page, and one
+ * per (kind, provider) for newsletters, bookings, chats and embeds.
  */
-function collectionPointsNotice(result: ScanResult): string | null {
-  const pages = new Set<string>()
-  for (const field of result.formFields) {
-    if (isCollectingField(field)) pages.add(field.page)
-  }
-  return pages.size === 0 ? null : STRINGS.collectionPointsDiscovered(pages.size)
+function collectionPointsNotice(result: ScanResult, dictionary: VendorDictionary): string | null {
+  const n = classifyDoors(result, dictionary).length
+  return n === 0 ? null : STRINGS.collectionPointsDiscovered(n)
 }
 
 /**
@@ -118,9 +116,9 @@ function consentNotice(result: ScanResult): string | null {
  * would be a claim about a check that never happened, so the sentence is dropped rather than
  * stated wrongly (see `consentNotice`).
  */
-export function scanResultNotice(result: ScanResult): string {
+export function scanResultNotice(result: ScanResult, dictionary: VendorDictionary): string {
   const cookies = cookieNotice(result)
-  const collectionPoints = collectionPointsNotice(result)
+  const collectionPoints = collectionPointsNotice(result, dictionary)
   const storageKeys = storageKeysNotice(result)
   const consent = consentNotice(result)
   if (result.stoppedEarly) {

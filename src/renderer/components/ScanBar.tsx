@@ -23,6 +23,7 @@ export function ScanBar({ scanning, onScan, onCancel }: Props) {
   }
 
   return (
+    <>
     <form className="scanbar" onSubmit={submit}>
       <input
         className="scan-input"
@@ -41,7 +42,8 @@ export function ScanBar({ scanning, onScan, onCancel }: Props) {
           {STRINGS.scan}
         </button>
       )}
-      <p className="scan-visitor">{STRINGS.scanVisitorLine}</p>
     </form>
+    <p className="scan-visitor">{STRINGS.scanVisitorLine}</p>
+    </>
   )
 }

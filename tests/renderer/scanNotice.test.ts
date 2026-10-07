@@ -37,5 +37,7 @@ describe('scanNotice', () => {
   it('says the scan is a real visit, as text, before any scan starts', () => {
     const markup = renderToStaticMarkup(createElement(ScanBar, { scanning: false, onScan: () => {}, onCancel: () => {} }))
     expect(markup).toContain(STRINGS.scanVisitorLine)
+    // Outside the form's field row, or the flex row squeezes the address field.
+    expect(markup.indexOf(STRINGS.scanVisitorLine)).toBeGreaterThan(markup.indexOf('</form>'))
   })
 })
