@@ -32,7 +32,7 @@ for (const f of fs.readdirSync(D + 'runs').filter((f) => f.endsWith('.meta.json'
   const afterOnly = [...all].filter((h) => !pre.has(h));
   const scanHosts = (scan.hosts ?? []).map((h) => h.host);
   const scan3 = scanHosts.filter((h) => !sameSite(h, scan.scannedHost ?? ''));
-  const scanPhase = new Map((scan.hosts ?? []).map((h) => [h.host, h.phase ?? 'before']));
+  const scanPhase = new Map((scan.hosts ?? []).map((h) => [h.host, h.phase ?? 'unknown']));
   r.scanPre3 = scan3.filter((h) => scanPhase.get(h) === 'before').length;
   r.scanAfter3 = scan3.filter((h) => scanPhase.get(h) === 'after').length;
   r.scanMissPreByPhase = [...pre].filter((h) => scanPhase.get(h) !== 'before').length;
