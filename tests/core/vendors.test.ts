@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { classifyHost, identify } from '../../src/core/vendors'
+import vendorsJson from '../../src/data/vendors.json'
 import type { VendorDictionary } from '../../src/core/types'
 
 const DICT: VendorDictionary = {
@@ -66,6 +67,14 @@ describe('identify by host and first path segment', () => {
   it('an unlisted path falls back to the host entry, never to a guess', () => {
     expect(identify('www.google.com', D, 'search')?.category).toBe('search')
     expect(identify('www.gstatic.com', D, 'recaptcha')).toBeNull()
+  })
+})
+
+describe('the shipped dictionary: longest suffix wins', () => {
+  it('evnt.iol.it is analytics, any other iol.it host is hosting', () => {
+    const d = vendorsJson as VendorDictionary
+    expect(identify('evnt.iol.it', d)?.category).toBe('analytics')
+    expect(identify('x.iol.it', d)?.category).toBe('hosting')
   })
 })
 
