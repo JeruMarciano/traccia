@@ -17,6 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use chromiumoxide::cdp::browser_protocol::browser::{
+    SetDownloadBehaviorBehavior, SetDownloadBehaviorParams,
+};
 use chromiumoxide::cdp::browser_protocol::network::EventRequestWillBeSent;
 use chromiumoxide::cdp::browser_protocol::page::{EventLoadEventFired, NavigateParams};
 use chromiumoxide::cdp::browser_protocol::target::{
@@ -891,8 +894,9 @@ const PURPOSES: [(Purpose, &[&str]); 6] = [
 ];
 
 /// Extensions of files that are not pages.
-const SKIPPED_EXTENSIONS: [&str; 13] = [
+const SKIPPED_EXTENSIONS: [&str; 24] = [
     "pdf", "doc", "docx", "xls", "xlsx", "zip", "jpg", "jpeg", "png", "gif", "webp", "svg", "mp4",
+    "exe", "dmg", "msi", "pkg", "apk", "deb", "rar", "7z", "gz", "tar", "iso",
 ];
 
 /// Lowercase words: everything that is not `[a-z0-9àèéìòù]` separates, so
@@ -2570,6 +2574,15 @@ impl<T: CdpTransport> Driver<T> {
         max_pages: u32,
         cancel: &CancellationToken,
     ) -> Result<Observation, CdpError> {
+        // Downloads are refused for the whole browser, before anything is
+        // navigated. A refusal fails the scan: a policy that could not be set
+        // is not a policy, and an installer on disk is worse than no scan.
+        self.call(
+            None,
+            MethodId::from(SetDownloadBehaviorParams::IDENTIFIER),
+            to_params(&SetDownloadBehaviorParams::new(SetDownloadBehaviorBehavior::Deny))?,
+        )
+        .await?;
         // F1/F2 on the browser session first, so the page target created below
         // attaches paused rather than running.
         self.call(
@@ -3023,11 +3036,16 @@ mod tests {
         let site = concat!("https", "://site.it");
         let l = |p: &str| format!("{site}{p}");
         let userinfo = concat!("https", "://user:pass@site.it/contatti");
+        let installers = [l("/setup.exe"), l("/app.dmg"), l("/setup.exe?v=2"), l("/a.TAR")];
         let backslash = concat!("https", "://site.it/a\\b");
         let links = [
             l("/contatti.pdf"),
             l("/film.MP4"),
             l("/a.docx"),
+            installers[0].clone(),
+            installers[1].clone(),
+            installers[2].clone(),
+            installers[3].clone(),
             userinfo.to_string(),
             backslash.to_string(),
             l("/ok"),
@@ -4494,6 +4512,43 @@ mod tests {
             .expect("a refused probe is a gap, not a scan failure");
         assert!(fields.is_empty());
         assert_eq!(driver.observation(1, false).possible_gaps, 1);
+    }
+
+    #[tokio::test]
+    async fn downloads_are_denied_on_the_browser_session_before_any_navigation() {
+        let mut transport = FakeTransport::new();
+        transport
+            .results
+            .insert("Target.createTarget".to_string(), json!({"targetId": "T-1"}));
+        transport.inject_on(
+            "Target.createTarget",
+            None,
+            attached_event("SESSION-A", "T-1", "page", true),
+        );
+        transport.hang_when_empty = true;
+        let mut driver = Driver::new(transport);
+        let _ = driver
+            .run("https://rossi-editore.it/", 1, &CancellationToken::new())
+            .await;
+        let browser = driver.transport.methods_for(None);
+        assert_eq!(browser.first(), Some(&"Browser.setDownloadBehavior"));
+        assert_eq!(
+            driver.transport.params_for("Browser.setDownloadBehavior", None).map(|p| p["behavior"].clone()),
+            Some(json!("deny"))
+        );
+        assert!(driver.transport.params_for("Browser.setDownloadBehavior", Some("SESSION-A")).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_refused_download_policy_fails_the_scan_before_any_navigation() {
+        let mut transport = FakeTransport::new();
+        transport.refuse_on("Browser.setDownloadBehavior", None);
+        let mut driver = Driver::new(transport);
+        let result = driver
+            .run("https://rossi-editore.it/", 1, &CancellationToken::new())
+            .await;
+        assert!(result.is_err());
+        assert_eq!(driver.transport.methods_for(None), vec!["Browser.setDownloadBehavior"]);
     }
 
     #[tokio::test]

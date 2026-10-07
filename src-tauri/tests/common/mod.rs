@@ -15,6 +15,9 @@ use tokio::net::{TcpListener, TcpStream};
 use traccia_lib::proxy;
 use traccia_lib::scan::{self, ScanOutput, ScanState, Target};
 
+/// The filename every fixture attachment is offered under.
+pub const ATTACHMENT_NAME: &str = "traccia-fixture-download.bin";
+
 /// The named third party every fixture site's home page can load. Fixed rather
 /// than port-derived: each `Site`'s connector maps it to that site's own
 /// listener, so two scans never share it.
@@ -96,7 +99,8 @@ pub async fn fixture_site() -> Site {
 
 /// Starts the loopback fixture server and returns the `Site` describing it.
 /// Each `(path, html)` pair is served on an exact path match (`/` = home);
-/// any other path is a 404; an `html` of `"302 <location>"` is that redirect
+/// any other path is a 404; an `html` of `"302 <location>"` is that redirect, and one of
+/// `"attachment <body>"` is served with `Content-Disposition: attachment`
 /// (`{port}` in the location is this listener's port).
 /// A fresh listener and a fresh, port-derived host
 /// per call, so concurrent tests never share one scan's admitted origin with
@@ -169,6 +173,12 @@ async fn serve_fixture_page(
         Some((_, html)) if html.starts_with("302 ") => format!(
             "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
             html[4..].replace("{port}", &port.to_string()),
+        ),
+        // A page registered as "attachment <body>" is a download.
+        Some((_, body)) if body.starts_with("attachment ") => format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"{ATTACHMENT_NAME}\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len() - 11,
+            &body[11..],
         ),
         Some((_, html)) => format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
