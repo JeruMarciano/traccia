@@ -145,6 +145,8 @@ describe('validateProject', () => {
     const withObs = (paths: unknown) => ({ ...base, observations: [{ domain: 'a.com', requestCount: 1, beforeConsent: true, paths }] })
     const withCookie = (platform: unknown) => ({ ...base, cookies: [{ name: '_ga', domain: 'a.com', thirdParty: true, lifetime: 'session', platform }] })
     expect(validateProject({ ...base, observations: [{ domain: 'a.com', requestCount: 1, beforeConsent: true }] }).ok).toBe(true)
+    expect(validateProject({ ...base, observations: [{ domain: 'a.com', requestCount: 1 }] }).ok).toBe(true)
+    expect(validateProject({ ...base, observations: [{ domain: 'a.com', requestCount: 1, beforeConsent: 'yes' }] }).ok).toBe(false)
     expect(validateProject(withObs(['maps', 'a_b-1'])).ok).toBe(true)
     expect(validateProject(withCookie('Google Analytics')).ok).toBe(true)
     for (const bad of [[1], ['A/b'], ['a'.repeat(33)], [''], 'maps', Array.from({ length: 9 }, (_, i) => `s${i}`)]) {

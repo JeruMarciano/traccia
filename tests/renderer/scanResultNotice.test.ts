@@ -288,6 +288,15 @@ describe('scanResultNotice', () => {
       expect(notice).toBe("Accepted by matching the text 'Accept all'.")
     })
 
+    it('names every reason and a consent manager with a text click, and states no zero counts', () => {
+      expect(run({ ...base, reason: 'no-button' })).toBe("No consent was given: the banner's button could not be found.")
+      expect(run({ ...base, reason: 'click-failed' })).toBe('No consent was given: the click did not complete.')
+      expect(run({ ...base, cmp: 'Cookiebot', clicked: true, rule: 'text', matchedText: 'OK' })).toBe(
+        "Consent manager: Cookiebot; accepted by matching the text 'OK'.",
+      )
+      expect(run({ ...base, clicked: true, rule: 'text', matchedText: 'OK' }, { hosts: [{ host: 'doubleclick.net', requestCount: 1 }] })).not.toContain('contacted')
+    })
+
     it('flags a click that left the page', () => {
       const notice = run({ ...base, cmp: 'iubenda', clicked: true, rule: 'cmp', ruleName: 'iubenda', clickNavigated: true })
       expect(notice.endsWith(STRINGS.consentClickLeftPage)).toBe(true)

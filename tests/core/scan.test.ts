@@ -538,6 +538,20 @@ describe('ingestScan consent phase', () => {
     ] }, DICT, { prefix: 's1' })
     expect(p.observations.find((o) => o.domain === 'old.example')?.beforeConsent).toBe(true)
   })
+
+  it('leaves the phase unknown for a host without one when the scan has a consent record', () => {
+    const consent = { cmp: null, clicked: false, rule: null, ruleName: '', matchedText: '', clickNavigated: false } as const
+    const p = ingestScan(emptyProject(), { ...result(), consent, hosts: [
+      { host: 'unsure.example', requestCount: 1 },
+      { host: 'pre.example', requestCount: 1, phase: 'before' },
+      { host: 'post.example', requestCount: 1, phase: 'after' },
+    ] }, DICT, { prefix: 's1' })
+    const by = Object.fromEntries(p.observations.map((o) => [o.domain, o.beforeConsent]))
+    expect(by['unsure.example']).toBeUndefined()
+    expect('beforeConsent' in (p.observations.find((o) => o.domain === 'unsure.example') ?? {})).toBe(false)
+    expect(by['pre.example']).toBe(true)
+    expect(by['post.example']).toBe(false)
+  })
 })
 
 describe('ingestScan doors', () => {
