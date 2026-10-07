@@ -27,11 +27,11 @@ function result(over: Partial<ScanResult> = {}): ScanResult {
 
 describe('scanResultNotice', () => {
   it('reports no consent banner for a scan that finished cleanly with no possible gaps', () => {
-    expect(scanResultNotice(result())).toBe(STRINGS.consentBannerNotDetected)
+    expect(scanResultNotice(result(), {})).toBe(STRINGS.consentBannerNotDetected)
   })
 
   it('names the gap count for a completed scan that has possible gaps', () => {
-    const notice = scanResultNotice(result({ possibleGaps: 3 }))
+    const notice = scanResultNotice(result({ possibleGaps: 3 }), {})
     expect(notice).toBe(`${STRINGS.scanIncomplete(3)} ${STRINGS.consentBannerNotDetected}`)
   })
 
@@ -39,9 +39,9 @@ describe('scanResultNotice', () => {
     // consentMarkers non-empty here so the consent sentence still applies on a stopped scan --
     // a stopped scan with no marker found suppresses that sentence entirely (see the "consent
     // banner" describe block below), which would make this test ambiguous about what it checks.
-    const stopped = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 2, consentMarkers: ['OneTrust'] }))
+    const stopped = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 2, consentMarkers: ['OneTrust'] }), {})
     const completedWithSameGaps = scanResultNotice(
-      result({ stoppedEarly: false, possibleGaps: 2, consentMarkers: ['OneTrust'] }),
+      result({ stoppedEarly: false, possibleGaps: 2, consentMarkers: ['OneTrust'] }), {}
     )
     expect(stopped).toBe(`${STRINGS.scanStopped(2)} ${STRINGS.consentBannerDetected('OneTrust')}`)
     expect(stopped).not.toBe(completedWithSameGaps)
@@ -49,7 +49,7 @@ describe('scanResultNotice', () => {
 
   it('reports nothing found when the scan only ever saw the scanned site itself', () => {
     expect(
-      scanResultNotice(result({ hosts: [{ host: 'rossi-editore.it', requestCount: 1 }] })),
+      scanResultNotice(result({ hosts: [{ host: 'rossi-editore.it', requestCount: 1 }] }), {}),
     ).toBe(`${STRINGS.scanFoundNothing} ${STRINGS.consentBannerNotDetected}`)
   })
 
@@ -59,7 +59,7 @@ describe('scanResultNotice', () => {
     // gap count in this situation. The renderer notice must agree with it, rather
     // than dropping the incompleteness signal because hosts.length <= 1.
     const notice = scanResultNotice(
-      result({ hosts: [{ host: 'rossi-editore.it', requestCount: 1 }], possibleGaps: 2 }),
+      result({ hosts: [{ host: 'rossi-editore.it', requestCount: 1 }], possibleGaps: 2 }), {}
     )
     expect(notice).toBe(`${STRINGS.scanIncomplete(2)} ${STRINGS.consentBannerNotDetected}`)
     expect(notice).not.toBe(`${STRINGS.scanFoundNothing} ${STRINGS.consentBannerNotDetected}`)
@@ -71,7 +71,7 @@ describe('scanResultNotice', () => {
         hosts: [{ host: 'rossi-editore.it', requestCount: 1 }],
         possibleGaps: 2,
         stoppedEarly: true,
-      }),
+      }), {}
     )
     // No consentMarkers on a stopped scan: the consent probe never ran, so nothing is claimed
     // about it either way (see the "consent banner" describe block below).
@@ -89,22 +89,22 @@ describe('scanResultNotice', () => {
     ]
 
     it('stands alone (with the consent sentence) when no other notice applies', () => {
-      const notice = scanResultNotice(result({ cookies: twoCookies }))
+      const notice = scanResultNotice(result({ cookies: twoCookies }), {})
       expect(notice).toBe(`${STRINGS.cookiesRecorded(2, 1)} ${STRINGS.consentBannerNotDetected}`)
     })
 
     it('says nothing about cookies when none were captured', () => {
-      expect(scanResultNotice(result({ cookies: [] }))).toBe(STRINGS.consentBannerNotDetected)
+      expect(scanResultNotice(result({ cookies: [] }), {})).toBe(STRINGS.consentBannerNotDetected)
     })
 
     it('counts only the third-party subset, not the total, as third-party', () => {
-      const notice = scanResultNotice(result({ cookies: twoCookies }))
+      const notice = scanResultNotice(result({ cookies: twoCookies }), {})
       expect(notice).not.toBe(`${STRINGS.cookiesRecorded(2, 2)} ${STRINGS.consentBannerNotDetected}`)
       expect(notice).not.toBe(`${STRINGS.cookiesRecorded(2, 0)} ${STRINGS.consentBannerNotDetected}`)
     })
 
     it('is appended to a base notice rather than replacing it', () => {
-      const notice = scanResultNotice(result({ possibleGaps: 3, cookies: twoCookies }))
+      const notice = scanResultNotice(result({ possibleGaps: 3, cookies: twoCookies }), {})
       expect(notice).toBe(
         `${STRINGS.scanIncomplete(3)} ${STRINGS.cookiesRecorded(2, 1)} ${STRINGS.consentBannerNotDetected}`,
       )
@@ -113,13 +113,13 @@ describe('scanResultNotice', () => {
     it('is appended even to a stopped-scan notice', () => {
       // No consentMarkers here: the consent probe never ran on this stopped scan, so the
       // notice ends after the cookie sentence rather than claiming an absence (see below).
-      const notice = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 1, cookies: twoCookies }))
+      const notice = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 1, cookies: twoCookies }), {})
       expect(notice).toBe(`${STRINGS.scanStopped(1)} ${STRINGS.cookiesRecorded(2, 1)}`)
     })
 
     it('uses the singular for exactly one cookie', () => {
       const oneCookie = [{ name: 'lang', domain: 'rossi-editore.it', session: true, expiresEpochSeconds: -1 }]
-      const notice = scanResultNotice(result({ cookies: oneCookie }))
+      const notice = scanResultNotice(result({ cookies: oneCookie }), {})
       expect(notice).toBe(`${STRINGS.cookiesRecorded(1, 0)} ${STRINGS.consentBannerNotDetected}`)
       expect(STRINGS.cookiesRecorded(1, 0)).toBe('1 cookie recorded (0 third-party).')
     })
@@ -128,21 +128,21 @@ describe('scanResultNotice', () => {
   describe('collection points', () => {
     it('names the door count when a collecting field was seen', () => {
       const notice = scanResultNotice(
-        result({ formFields: [{ page: 'https://rossi-editore.it/contatti', name: 'email', type: 'email', autocomplete: '', label: '' }] }),
+        result({ formFields: [{ page: 'https://rossi-editore.it/contatti', name: 'email', type: 'email', autocomplete: '', label: '' }] }), {}
       )
       expect(notice).toBe(`${STRINGS.collectionPointsDiscovered(1)} ${STRINGS.consentBannerNotDetected}`)
     })
 
     it('says nothing about collection points when no collecting field was seen', () => {
       const notice = scanResultNotice(
-        result({ formFields: [{ page: 'https://rossi-editore.it/x', name: 'csrf', type: 'hidden', autocomplete: '', label: '' }] }),
+        result({ formFields: [{ page: 'https://rossi-editore.it/x', name: 'csrf', type: 'hidden', autocomplete: '', label: '' }] }), {}
       )
       expect(notice).toBe(STRINGS.consentBannerNotDetected)
     })
 
     it('uses the singular for exactly one collection point', () => {
       const notice = scanResultNotice(
-        result({ formFields: [{ page: 'https://rossi-editore.it/contatti', name: 'email', type: 'email', autocomplete: '', label: '' }] }),
+        result({ formFields: [{ page: 'https://rossi-editore.it/contatti', name: 'email', type: 'email', autocomplete: '', label: '' }] }), {}
       )
       expect(notice).toBe(`${STRINGS.collectionPointsDiscovered(1)} ${STRINGS.consentBannerNotDetected}`)
       expect(STRINGS.collectionPointsDiscovered(1)).toBe('1 collection point discovered.')
@@ -152,19 +152,19 @@ describe('scanResultNotice', () => {
   describe('storage keys', () => {
     it('names the count when storage keys were recorded', () => {
       const notice = scanResultNotice(
-        result({ storageKeys: [{ scope: 'local', key: 'auth_token', bytes: 42 }] }),
+        result({ storageKeys: [{ scope: 'local', key: 'auth_token', bytes: 42 }] }), {}
       )
       expect(notice).toBe(`${STRINGS.storageKeysRecorded(1)} ${STRINGS.consentBannerNotDetected}`)
     })
 
     it('says nothing about storage keys when none were captured', () => {
-      const notice = scanResultNotice(result({ storageKeys: [] }))
+      const notice = scanResultNotice(result({ storageKeys: [] }), {})
       expect(notice).toBe(STRINGS.consentBannerNotDetected)
     })
 
     it('uses the singular for exactly one storage key', () => {
       const notice = scanResultNotice(
-        result({ storageKeys: [{ scope: 'local', key: 'auth_token', bytes: 42 }] }),
+        result({ storageKeys: [{ scope: 'local', key: 'auth_token', bytes: 42 }] }), {}
       )
       expect(notice).toBe(`${STRINGS.storageKeysRecorded(1)} ${STRINGS.consentBannerNotDetected}`)
       expect(STRINGS.storageKeysRecorded(1)).toBe('1 storage key recorded.')
@@ -177,7 +177,7 @@ describe('scanResultNotice', () => {
           cookies: twoCookiesForConsentTest,
           storageKeys: [{ scope: 'session', key: 'cart', bytes: 10 }],
           consentMarkers: ['Cookiebot'],
-        }),
+        }), {}
       )
       expect(notice).toBe(
         `${STRINGS.scanIncomplete(3)} ${STRINGS.cookiesRecorded(2, 1)} ${STRINGS.storageKeysRecorded(1)} ${STRINGS.consentBannerDetected('Cookiebot')}`,
@@ -187,12 +187,12 @@ describe('scanResultNotice', () => {
 
   describe('consent banner', () => {
     it('names the marker when one was detected', () => {
-      const notice = scanResultNotice(result({ consentMarkers: ['OneTrust'] }))
+      const notice = scanResultNotice(result({ consentMarkers: ['OneTrust'] }), {})
       expect(notice).toBe(STRINGS.consentBannerDetected('OneTrust'))
     })
 
     it('says neutrally that none was detected, never "missing" or "required"', () => {
-      const notice = scanResultNotice(result({ consentMarkers: [] }))
+      const notice = scanResultNotice(result({ consentMarkers: [] }), {})
       expect(notice).toBe(STRINGS.consentBannerNotDetected)
       expect(notice.toLowerCase()).not.toContain('missing')
       expect(notice.toLowerCase()).not.toContain('required')
@@ -201,7 +201,7 @@ describe('scanResultNotice', () => {
 
     it('is appended last, after the gap and cookie sentences', () => {
       const notice = scanResultNotice(
-        result({ possibleGaps: 3, cookies: twoCookiesForConsentTest, consentMarkers: ['Cookiebot'] }),
+        result({ possibleGaps: 3, cookies: twoCookiesForConsentTest, consentMarkers: ['Cookiebot'] }), {}
       )
       expect(notice).toBe(
         `${STRINGS.scanIncomplete(3)} ${STRINGS.cookiesRecorded(2, 1)} ${STRINGS.consentBannerDetected('Cookiebot')}`,
@@ -212,44 +212,65 @@ describe('scanResultNotice', () => {
     // must never claim an absence the probe never checked for. Presence found before the stop
     // is still a fact and is still reported either way.
     it('says nothing about consent when the scan stopped early and no marker was found', () => {
-      const notice = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 1, consentMarkers: [] }))
+      const notice = scanResultNotice(result({ stoppedEarly: true, possibleGaps: 1, consentMarkers: [] }), {})
       expect(notice).toBe(STRINGS.scanStopped(1))
       expect(notice.toLowerCase()).not.toContain('consent')
     })
 
     it('still reports presence when a marker was found before a stopped scan', () => {
       const notice = scanResultNotice(
-        result({ stoppedEarly: true, possibleGaps: 1, consentMarkers: ['OneTrust'] }),
+        result({ stoppedEarly: true, possibleGaps: 1, consentMarkers: ['OneTrust'] }), {}
       )
       expect(notice).toBe(`${STRINGS.scanStopped(1)} ${STRINGS.consentBannerDetected('OneTrust')}`)
     })
 
     it('reads the CMP from consent.cmp, in the same words', () => {
       const consent = { cmp: 'iubenda', clicked: true, rule: 'cmp' as const, ruleName: 'iubenda', matchedText: '', clickNavigated: false }
-      const notice = scanResultNotice(result({ consentMarkers: undefined, consent }))
+      const notice = scanResultNotice(result({ consentMarkers: undefined, consent }), {})
       expect(notice).toBe(STRINGS.consentAcceptedByCmp('iubenda'))
     })
 
     // A blank beats a guess: with no reason, detection never ran to its end, so no absence is claimed.
     it('claims no absence when consent carries no reason', () => {
       const blank = { cmp: null, clicked: false, rule: null, ruleName: '', matchedText: '', clickNavigated: false }
-      expect(scanResultNotice(result({ consentMarkers: undefined, consent: blank }))).toBe('')
+      expect(scanResultNotice(result({ consentMarkers: undefined, consent: blank }), {})).toBe('')
       const ran = { ...blank, reason: 'no-banner' as const }
-      expect(scanResultNotice(result({ consentMarkers: undefined, consent: ran }))).toBe(
+      expect(scanResultNotice(result({ consentMarkers: undefined, consent: ran }), {})).toBe(
         STRINGS.consentNotGiven('no-banner'),
       )
     })
 
     it('still reports absence when a completed scan found no marker', () => {
-      const notice = scanResultNotice(result({ stoppedEarly: false, consentMarkers: [] }))
+      const notice = scanResultNotice(result({ stoppedEarly: false, consentMarkers: [] }), {})
       expect(notice).toBe(STRINGS.consentBannerNotDetected)
+    })
+  })
+
+  describe('collection points', () => {
+    it('counts every door the scan creates, not only form pages', () => {
+      const field = (page: string, name: string, type: string, form = 0) =>
+        ({ page, name, type, autocomplete: '', label: '', form }) as const
+      const dict = { 'tawk.to': { owner: 'Tawk', category: 'live-chat', purposeGroup: 'Support' } }
+      const r = result({
+        formFields: [
+          field('https://rossi-editore.it/contatti/', 'email', 'email'),
+          field('https://rossi-editore.it/contatti/', 'nome', 'text'),
+          field('https://rossi-editore.it/news/', 'email', 'email'),
+        ],
+        hosts: [
+          { host: 'rossi-editore.it', requestCount: 1 },
+          { host: 'embed.tawk.to', requestCount: 1 },
+        ],
+      })
+      // a contact form, a newsletter sign-up and a chat: three doors, two form pages.
+      expect(scanResultNotice(r, dict)).toContain(STRINGS.collectionPointsDiscovered(3))
     })
   })
 
   describe('consent as the scan did it', () => {
     const base = { cmp: null, clicked: false, rule: null, ruleName: '', matchedText: '', clickNavigated: false }
     const run = (consent: ScanResult['consent'], over: Partial<ScanResult> = {}) =>
-      scanResultNotice(result({ consentMarkers: undefined, consent, ...over }))
+      scanResultNotice(result({ consentMarkers: undefined, consent, ...over }), {})
 
     it('says no consent was given, with the reason, and never counts "only after"', () => {
       const notice = run({ ...base, reason: 'no-banner' }, {

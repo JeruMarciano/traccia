@@ -109,7 +109,7 @@ export function App() {
     try {
       const result = await startScan(url)
       setHistory((h) => push(h, ingestScan(h.present, result, VENDORS, { prefix: `scan${h.past.length + 1}` }, COOKIE_PLATFORMS)))
-      setNotice(scanResultNotice(result))
+      setNotice(scanResultNotice(result, VENDORS))
       setLastScan({ possibleGaps: result.possibleGaps, stoppedEarly: result.stoppedEarly })
     } catch (e) {
       setNotice(scanNotice(e))

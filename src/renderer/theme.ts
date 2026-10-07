@@ -118,6 +118,7 @@ export const STYLESHEET = `
   border-radius:999px;
   padding:5px 11px;
 }
+.scan-visitor{font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;color:var(--ink-soft);max-width:330px;margin:5px 0 0;}
 .scanbar .action{padding:4px 11px;font-size:10px;}
 .scan-input::placeholder{color:var(--ink-soft);}
 .scan-input:disabled{color:var(--ink-soft);}
