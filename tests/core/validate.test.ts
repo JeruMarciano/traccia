@@ -118,8 +118,24 @@ describe('validateProject', () => {
     const cp = { id: 'cp-1', page: 'https://x.it/', fields: [], sources: [], confidence: 'observed' }
     const withCp = (extra: object) => ({ ...makeProject(), collectionPoints: [{ ...cp, ...extra }] })
     expect(validateProject(withCp({})).ok).toBe(true)
-    expect(validateProject(withCp({ kind: 'booking', provider: 'X', pages: ['/'], destination: 'pl-1' })).ok).toBe(true)
+    expect(validateProject(withCp({ kind: 'booking', provider: 'X', pages: ['/'] })).ok).toBe(true)
     for (const bad of [{ kind: 'spy' }, { provider: 3 }, { pages: [1] }, { destination: {} }]) {
+      expect(validateProject(withCp(bad)).ok).toBe(false)
+    }
+  })
+
+  it('refuses a door whose destination is no place, or whose pages and provider are oversized', () => {
+    const cp = { id: 'cp-1', page: 'https://x.it/', fields: [], sources: [], confidence: 'observed' }
+    const place = { id: 'pl-1', name: 'P', kind: 'processor', purposeGroup: 'Systems', holder: 'supplier', leavesEEA: 'unknown', sources: [], confidence: 'observed' }
+    const withCp = (extra: object) => ({ ...makeProject(), places: [place], collectionPoints: [{ ...cp, ...extra }] })
+    const six = Array.from({ length: 6 }, (_, i) => `https://x.it/${i}`)
+    expect(validateProject(withCp({ kind: 'embed', provider: 'Google Maps', pages: six, destination: 'pl-1' })).ok).toBe(true)
+    for (const bad of [
+      { destination: 'pl-missing' },
+      { pages: Array(14).fill('https://x.it/') },
+      { pages: ['https://x.it/' + 'a'.repeat(2048)] },
+      { provider: 'p'.repeat(254) },
+    ]) {
       expect(validateProject(withCp(bad)).ok).toBe(false)
     }
   })
