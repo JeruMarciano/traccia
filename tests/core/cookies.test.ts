@@ -25,6 +25,15 @@ describe('isThirdPartyCookie', () => {
     expect(isThirdPartyCookie('shop.rossi-editore.it', 'rossi-editore.it')).toBe(false))
   it('a suffix that is not on a label boundary is third-party', () =>
     expect(isThirdPartyCookie('evilrossi-editore.it', 'rossi-editore.it')).toBe(true))
+  it('a parent domain of the scanned host is first-party, on a label boundary only', () => {
+    const s = 'www.studio-esempio.it'
+    expect(isThirdPartyCookie('.studio-esempio.it', s)).toBe(false)
+    expect(isThirdPartyCookie('studio-esempio.it', s)).toBe(false)
+    expect(isThirdPartyCookie('shop.www.studio-esempio.it', s)).toBe(false)
+    expect(isThirdPartyCookie('.doubleclick.net', s)).toBe(true)
+    expect(isThirdPartyCookie('.altro-esempio.it', s)).toBe(true)
+    expect(isThirdPartyCookie('esempio.it', 'studio-esempio.it')).toBe(true)
+  })
   it('anything else is third-party', () =>
     expect(isThirdPartyCookie('doubleclick.net', 'rossi-editore.it')).toBe(true))
 })

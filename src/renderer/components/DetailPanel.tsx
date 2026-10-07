@@ -255,9 +255,11 @@ function DoorView({ panel }: { panel: DoorPanel }) {
       <h2 className="detail-head">{STRINGS.detailDoorHeading}</h2>
       <article className="detail-place">
         <h3 className="detail-place-name">{panel.label}</h3>
-        <p className="detail-said-by">
-          {panel.origin === 'discovered' ? STRINGS.doorDiscovered : STRINGS.doorDeclared}
-        </p>
+        {panel.origin === 'unsourced' ? null : (
+          <p className="detail-said-by">
+            {panel.origin === 'discovered' ? STRINGS.doorDiscovered : STRINGS.doorDeclared}
+          </p>
+        )}
         <p>{STRINGS.doorKind[panel.kind]}</p>
         {panel.pages.length === 0 ? null : <p>{STRINGS.doorPages(panel.pages.length)}</p>}
         {panel.destinationName === null ? null : <p>{STRINGS.doorSendsTo(panel.destinationName)}</p>}

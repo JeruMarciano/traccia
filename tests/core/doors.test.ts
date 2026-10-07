@@ -20,6 +20,19 @@ describe('deriveDoors', () => {
     expect(byId.get('cp:cp-1')?.origin).toBe('discovered')
   })
 
+  it('does not call a scan-seeded place declared, and claims nothing when it cannot tell', () => {
+    const p = rossiEditore()
+    const base = p.places.find((x) => x.id === 'pl-2')
+    if (base === undefined) throw new Error('fixture changed')
+    p.places.push(
+      { ...base, id: 'pl-scan', name: 'x.it', sources: [], confidence: 'observed' },
+      { ...base, id: 'pl-hand', name: 'y.it', sources: [], confidence: 'declared' },
+    )
+    const byId = new Map(deriveDoors(p).map((d) => [d.id, d]))
+    expect(byId.get('place:pl-scan')?.origin).toBe('discovered')
+    expect(byId.get('place:pl-hand')?.origin).toBe('unsourced')
+  })
+
   it('labels a discovered door with its page and a declared one with its place name', () => {
     const byId = new Map(deriveDoors(rossiEditore()).map((d) => [d.id, d]))
     expect(byId.get('place:pl-2')?.label).toBe('Newsletter sign-up')
