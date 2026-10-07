@@ -129,4 +129,57 @@ describe('MapView', () => {
     expect(markup).toMatch(/class="more more--highlighted"[^>]*role="button"/)
     expect(markup).toMatch(/\+5 more/)
   })
+
+  // No DOM in this suite, so the component is called as a function and its element tree walked:
+  // MapView is hook-free and draws host elements only, which makes the handlers reachable.
+  describe('the +N more marks', () => {
+    type El = { props?: { className?: string; children?: unknown; [k: string]: unknown } }
+    const collect = (node: unknown, out: Record<string, unknown>[] = []): Record<string, unknown>[] => {
+      if (Array.isArray(node)) node.forEach((n) => collect(n, out))
+      const el = node as El
+      if (el === null || typeof el !== 'object' || el.props === undefined) return out
+      if (typeof el.props.className === 'string' && el.props.className.split(' ').includes('more')) out.push(el.props)
+      return collect(el.props.children, out)
+    }
+    const many = (doors: number, members: number): Project => {
+      const p = rossiEditore()
+      p.places = p.places.filter((pl) => pl.kind !== 'collection' && pl.purposeGroup !== 'Marketing')
+      for (let i = 0; i < members; i++) {
+        p.places.push({ id: `cap-${i}`, name: `V${i}`, kind: 'processor', purposeGroup: 'Marketing', holder: 'supplier', leavesEEA: false, sources: [], confidence: 'declared' })
+      }
+      p.collectionPoints = Array.from({ length: doors }, (_, i) => ({ id: `cp-${i}`, page: `https://x.it/${i}`, fields: [], sources: [], confidence: 'observed' as const }))
+      return p
+    }
+    const tree = (onSelect: (id: string | null) => void) =>
+      MapView({
+        layout: computeLayout(many(10, 9), SIZE, 'Marketing'),
+        selected: null,
+        onSelect,
+        openGroup: 'Marketing',
+        onToggleGroup: () => {},
+      })
+    const ringMark = (t: unknown) => {
+      return collect(t).find((m) => m.onClick !== undefined) as Record<string, (ev: unknown) => void>
+    }
+    const ev = (key?: string) => ({ key, stopPropagation: () => {}, preventDefault: () => {} })
+
+    it('selects the group on click, Enter and Space', () => {
+      const picked: (string | null)[] = []
+      const props = ringMark(tree((id) => picked.push(id)))
+      props.onClick!(ev())
+      props.onKeyDown!(ev('Enter'))
+      props.onKeyDown!(ev(' '))
+      props.onKeyDown!(ev('a'))
+      expect(picked).toEqual(['group:Marketing', 'group:Marketing', 'group:Marketing'])
+    })
+
+    it('leaves the door mark inert and out of the tab order', () => {
+      const marks = collect(tree(() => {}))
+      expect(marks).toHaveLength(2)
+      const inert = marks.filter((m) => m.onClick === undefined)
+      expect(inert).toHaveLength(1)
+      expect(inert[0]!.tabIndex).toBeUndefined()
+      expect(inert[0]!.role).toBeUndefined()
+    })
+  })
 })
