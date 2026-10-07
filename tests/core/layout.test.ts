@@ -348,4 +348,71 @@ describe('map caps', () => {
     const p = projectWithMembers('Marketing', 9)
     expect(computeLayout(p, SIZE, 'Marketing', 'cap-8')).toEqual(computeLayout(p, SIZE, 'Marketing', 'cap-8'))
   })
+
+  const declaredDoors = (n: number) => {
+    const p = rossiEditore()
+    const subject = p.subjectGroups[0]!.id
+    p.places = p.places.filter((pl) => pl.kind !== 'collection')
+    p.flows = []
+    for (let i = 0; i < n; i++) {
+      p.places.push({
+        id: `door-${i}`,
+        name: `Door ${i}`,
+        kind: 'collection',
+        purposeGroup: 'Intake',
+        holder: 'you',
+        leavesEEA: false,
+        sources: [],
+        confidence: 'declared',
+      })
+      p.flows.push({
+        id: `fl-${i}`,
+        from: subject,
+        to: `door-${i}`,
+        dataDescription: '',
+        purpose: '',
+        sources: [],
+        confidence: 'declared',
+      })
+    }
+    return p
+  }
+  const edgesOf = (r: ReturnType<typeof computeLayout>, from: string, to: string) =>
+    r.edges.filter((e) => e.from === from && e.to === to)
+
+  it('exactly 8 doors draw all 8 and no mark', () => {
+    const r = computeLayout(projectWithDoors(8), SIZE)
+    expect(r.nodes.filter((n) => n.kind === 'door')).toHaveLength(8)
+    expect(r.nodes.some((n) => n.id === 'more:doors')).toBe(false)
+  })
+
+  it('a selected hidden door highlights the door mark, by node id or raw id', () => {
+    const p = projectWithDoors(10)
+    for (const id of ['door:cp:cp-10', 'cp:cp-10']) {
+      expect(computeLayout(p, SIZE, null, id).nodes.find((n) => n.id === 'more:doors')?.highlighted).toBe(true)
+    }
+    expect(computeLayout(p, SIZE, null, 'cp:cp-1').nodes.find((n) => n.id === 'more:doors')?.highlighted).toBeUndefined()
+  })
+
+  it('collapses edges to hidden members onto one neutral line when their doors differ', () => {
+    const p = projectWithMembers('Marketing', 9)
+    p.collectionPoints = [6, 7, 8].map((m, i) => ({
+      id: `cp-${i + 1}`,
+      page: `https://rossi-editore.it/${i + 1}`,
+      destination: `cap-${m}`,
+      fields: [],
+      sources: [],
+      confidence: 'observed' as const,
+    }))
+    const edges = edgesOf(computeLayout(p, SIZE, 'Marketing'), 'controller', 'more:Marketing')
+    expect(edges).toHaveLength(1)
+    expect(edges[0]!.colourIndex).toBeUndefined()
+  })
+
+  it('collapses the edges of hidden doors onto one line each way', () => {
+    const r = computeLayout(declaredDoors(10), SIZE)
+    expect(edgesOf(r, p0(r), 'more:doors')).toHaveLength(1)
+    expect(edgesOf(r, 'more:doors', 'controller')).toHaveLength(1)
+  })
+  const p0 = (r: ReturnType<typeof computeLayout>) => r.nodes.find((n) => n.kind === 'subject')!.id
 })

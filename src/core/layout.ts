@@ -284,9 +284,11 @@ export function computeLayout(
       if (g === undefined) continue
       const to = g === open ? (hiddenMembers.get(dest) ?? `member:${dest}`) : `group:${g}`
       if (!drawn.has(to)) continue
-      if (!to.startsWith('more:') || !edges.some((e) => e.from === 'controller' && e.to === to)) {
-        edges.push({ from: 'controller', to, directed: true, colourIndex })
-      }
+      // Several hidden members collapse onto one edge; it keeps a colour only while every path
+      // that reaches the mark agrees on it.
+      const prior = to.startsWith('more:') ? edges.find((e) => e.from === 'controller' && e.to === to) : undefined
+      if (prior === undefined) edges.push({ from: 'controller', to, directed: true, colourIndex })
+      else if (prior.colourIndex !== colourIndex) delete prior.colourIndex
       reached.add(to)
     }
   }
