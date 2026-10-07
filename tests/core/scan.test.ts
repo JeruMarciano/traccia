@@ -563,6 +563,34 @@ describe('ingestScan consent phase', () => {
     expect(by['pre.example']).toBe(true)
     expect(by['post.example']).toBe(false)
   })
+
+  describe('on a rescan the latest scan wins', () => {
+    const consent = { cmp: null, clicked: true, rule: 'text', ruleName: '', matchedText: 'accetta', clickNavigated: false } as const
+    const first = (phase: 'before' | 'after') =>
+      ingestScan(emptyProject(), { ...result(), consent, hosts: [{ host: 't.example', requestCount: 1, phase }] }, DICT, { prefix: 's1' })
+    const again = (project: ReturnType<typeof first>, over: Partial<ScanResult>, phase?: 'before' | 'after') =>
+      ingestScan(project, { ...result(), ...over, hosts: [{ host: 't.example', requestCount: 2, ...(phase ? { phase } : {}) }] }, DICT, { prefix: 's2' })
+        .observations.find((o) => o.domain === 't.example')
+
+    it('a host recorded before consent that the rescan saw only after is no longer before', () => {
+      expect(again(first('before'), { consent }, 'after')).toMatchObject({ requestCount: 2, beforeConsent: false })
+    })
+
+    it('a host recorded after consent that the rescan saw before is now before', () => {
+      expect(again(first('after'), { consent }, 'before')?.beforeConsent).toBe(true)
+    })
+
+    it('a host the rescan has no phase for loses its phase when the rescan has a consent record', () => {
+      const o = again(first('before'), { consent })
+      expect(o?.requestCount).toBe(2)
+      expect('beforeConsent' in (o ?? {})).toBe(false)
+    })
+
+    it('a v0.3 payload (no consent record) leaves a known host with the phase it had', () => {
+      expect(again(first('after'), {})?.beforeConsent).toBe(false)
+      expect(again(first('before'), {})?.beforeConsent).toBe(true)
+    })
+  })
 })
 
 describe('ingestScan doors', () => {
