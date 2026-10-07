@@ -81,6 +81,7 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup }
   const opened = groups.filter((n) => n.open === true)
   const closed = groups.filter((n) => n.open !== true)
   const members = layout.nodes.filter((n) => n.kind === 'member')
+  const more = layout.nodes.filter((n) => n.kind === 'more')
 
   function select(id: string, alsoToggle?: string) {
     const act = (): void => {
@@ -260,6 +261,24 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup }
                 {count}
               </text>
               <text className="node-label" x={n.x} y={n.y + r + 15} textAnchor="middle">
+                {n.label}
+              </text>
+            </g>
+          )
+        })}
+
+        {/* '+N more': text only. The ring's mark selects the group, whose panel lists every member;
+            the door mark does nothing, since the panel lists every door. Highlighted when the
+            selection is one of the hidden items, so a selection is never drawn nowhere. */}
+        {more.map((n) => {
+          const ring = n.id !== 'more:doors'
+          return (
+            <g
+              key={n.id}
+              className={`more${n.highlighted === true ? ' more--highlighted' : ''}`}
+              {...(ring ? select(`group:${n.id.slice(5)}`) : {})}
+            >
+              <text className="more-label" x={n.x} y={n.y + 4} textAnchor="middle">
                 {n.label}
               </text>
             </g>
