@@ -197,6 +197,10 @@ async fn a_home_that_answers_404_itself_is_a_loaded_page() {
     let out = common::scan(&site).await;
     assert_eq!(out.pages_visited, 1, "{out:?}");
     assert_eq!(out.consent.reason, Some("no-banner"), "{:?}", out.consent);
+    // One gap, and it is not `home:not-loaded` (that branch returns 0 pages
+    // and a blank consent, see above): the storage probe throws on the error
+    // document Chrome draws for an empty-bodied 404.
+    assert_eq!(out.possible_gaps, 1, "{out:?}");
 }
 
 // --- Task 9: probes and doors ---

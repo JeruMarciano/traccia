@@ -1199,6 +1199,35 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 /// empty body: some server answered, and the browser drew its own error page.
 const HTTP_ERROR_STATUS: &str = "net::ERR_HTTP_RESPONSE_CODE_FAILURE";
 
+/// `Page.navigate`'s `errorText` when the navigation committed no document at
+/// all — a download, a 204 — so the page before it is still the live one.
+const NO_DOCUMENT: &str = "net::ERR_ABORTED";
+
+/// How a navigation ended, for a caller that must decide what to keep.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Visit {
+    Loaded,
+    /// The browser drew its own error page: what it fetched meanwhile is the
+    /// browser's, not the site's.
+    ErrorPage,
+    /// No new document — refused, a download, a 204. The previous page kept
+    /// running, so what was contacted meanwhile is still the site's.
+    NoDocument,
+}
+
+/// The `(host, port)` the proxy would have dialled for `url`, the port
+/// defaulted by scheme. `None` for anything that is not a plain http(s) URL.
+fn host_and_port(url: &str) -> Option<(String, u16)> {
+    let host = http_host(url)?;
+    let (scheme, authority) = origin(url)?;
+    let port = match authority.rsplit_once(':') {
+        Some((_, port)) => port.parse().ok()?,
+        None if scheme == "https" => 443,
+        None => 80,
+    };
+    Some((host, port))
+}
+
 /// `Page.navigate` itself was not answered inside `COMMAND_TIMEOUT`.
 fn navigation_timed_out(error: &CdpError) -> bool {
     matches!(error, CdpError::Timeout(m) if m.as_ref() == NavigateParams::IDENTIFIER)
@@ -1524,8 +1553,8 @@ struct Driver<T: CdpTransport> {
     iframes: Vec<IframeSeen>,
     offsite_links: Vec<OffsiteLink>,
     /// The scan's own proxy ledger: the one witness that can tell the proxy's
-    /// 502 from the site's. `None` in unit tests, which have no proxy.
-    ledger: Option<Arc<crate::proxy::Ledger>>,
+    /// 502 from the site's. An empty one of its own until `observe` sets it.
+    ledger: Arc<crate::proxy::Ledger>,
 }
 
 impl<T: CdpTransport> Driver<T> {
@@ -1549,7 +1578,7 @@ impl<T: CdpTransport> Driver<T> {
             pages: Vec::new(),
             iframes: Vec::new(),
             offsite_links: Vec::new(),
-            ledger: None,
+            ledger: crate::proxy::Ledger::new(),
         }
     }
 
@@ -1876,12 +1905,13 @@ impl<T: CdpTransport> Driver<T> {
 
     /// Navigates `session` to `url` and waits for the page to load and go
     /// quiet. A navigation the browser refuses is not fatal — the proxy may
-    /// have denied it, which is the proxy doing its job — so the error is
-    /// reported to the caller as `false` rather than failing the scan.
+    /// have denied it, which is the proxy doing its job — so it is reported
+    /// to the caller as [`Visit::NoDocument`] rather than failing the scan,
+    /// as is one that committed no document ([`NO_DOCUMENT`]).
     ///
-    /// `false` as well for a navigation that ended on the browser's own error
-    /// page (`errorText`), with one exception: [`HTTP_ERROR_STATUS`] means an
-    /// HTTP error status came back with an empty body, and a site that
+    /// Any other `errorText` is the browser's own error page
+    /// ([`Visit::ErrorPage`]), with one exception: [`HTTP_ERROR_STATUS`] means
+    /// an HTTP error status came back with an empty body, and a site that
     /// answers 404 itself *did* answer. The proxy's own 502 for a host it
     /// could not reach reads exactly the same to the browser, so there the
     /// proxy's ledger decides, not the status.
@@ -1891,7 +1921,7 @@ impl<T: CdpTransport> Driver<T> {
         url: &str,
         settle: Duration,
         cancel: &CancellationToken,
-    ) -> Result<bool, CdpError> {
+    ) -> Result<Visit, CdpError> {
         self.load_fired = false;
         let params = to_params(&NavigateParams::new(url.to_string()))?;
         let result = match self
@@ -1903,7 +1933,7 @@ impl<T: CdpTransport> Driver<T> {
             .await
         {
             Ok(result) => result,
-            Err(CdpError::Protocol { .. }) => return Ok(false),
+            Err(CdpError::Protocol { .. }) => return Ok(Visit::NoDocument),
             Err(e) => return Err(e),
         };
         let error = result
@@ -1930,19 +1960,19 @@ impl<T: CdpTransport> Driver<T> {
         // Decided only now, after the wait: whatever the browser fetched for
         // its own error page falls inside the window the caller rolls back.
         match error.as_str() {
-            "" => Ok(true),
+            "" => Ok(Visit::Loaded),
+            NO_DOCUMENT => Ok(Visit::NoDocument),
             HTTP_ERROR_STATUS => {
                 // Where it ended up, not where it was sent: a redirect to a
                 // host the proxy could not reach is that host's failure.
                 let landed = self.current_url(session).await?;
-                let host = http_host(landed.as_deref().unwrap_or(url));
-                let unreachable = match (&self.ledger, host) {
-                    (Some(ledger), Some(host)) => ledger.unreachable(&host),
-                    _ => false,
-                };
-                Ok(!unreachable)
+                // Chrome reports the failed http(s) URL itself here. Anything
+                // else cannot be asked about, so it is not claimed as loaded.
+                let reached = host_and_port(landed.as_deref().unwrap_or(url))
+                    .is_some_and(|(host, port)| !self.ledger.unreachable(&host, port));
+                Ok(if reached { Visit::Loaded } else { Visit::ErrorPage })
             }
-            _ => Ok(false),
+            _ => Ok(Visit::ErrorPage),
         }
     }
 
@@ -2508,6 +2538,32 @@ impl<T: CdpTransport> Driver<T> {
         Ok(keys)
     }
 
+    /// The reload after a consent click, so the tags that wait for consent
+    /// load. Not a new page: not counted, not probed again. One that does not
+    /// load is a gap and never a failed scan — the click happened, so
+    /// `consent` stays as recorded; only the browser's own error-page traffic
+    /// is given back. `false` when the navigation timed out: the browser has
+    /// stopped answering and the walk ends with what it has.
+    async fn reload_after_consent(
+        &mut self,
+        session: &SessionId,
+        entry_url: &str,
+        cancel: &CancellationToken,
+    ) -> Result<bool, CdpError> {
+        let before = self.acc.clone();
+        let reload = match self.visit(session, entry_url, SETTLE_AFTER_LOAD, cancel).await {
+            Err(e) if navigation_timed_out(&e) => None,
+            visit => Some(visit?),
+        };
+        if reload == Some(Visit::ErrorPage) {
+            self.acc = before;
+        }
+        if reload != Some(Visit::Loaded) {
+            self.gaps.note("home:reload-not-loaded");
+        }
+        Ok(reload.is_some())
+    }
+
     async fn run(
         &mut self,
         entry_url: &str,
@@ -2546,14 +2602,15 @@ impl<T: CdpTransport> Driver<T> {
             return self.finish(pages_visited, cancel.is_cancelled()).await;
         }
         let before = self.acc.clone();
-        let home_loaded = match self.visit(&session, entry_url, HOME_WAIT, cancel).await {
-            Err(e) if navigation_timed_out(&e) => false,
-            loaded => loaded?,
+        let home = match self.visit(&session, entry_url, HOME_WAIT, cancel).await {
+            Err(e) if navigation_timed_out(&e) => Visit::NoDocument,
+            visit => visit?,
         };
-        if !home_loaded {
+        if home != Visit::Loaded {
             // Nothing was seen: no probe, no consent claim, no key pages, and
             // what the browser fetched for its own error page is not the
-            // site's.
+            // site's. Rolled back in every case: there is no page before the
+            // home whose traffic this could erase.
             self.acc = before;
             self.gaps.note("home:not-loaded");
             return self.finish(pages_visited, cancel.is_cancelled()).await;
@@ -2585,10 +2642,11 @@ impl<T: CdpTransport> Driver<T> {
             let detection = self.detect_consent(&session, cancel).await?;
             self.consent = self.consent_step(&session, cancel, entry_url, detection).await?;
             self.end_consent(&session).await?;
-            // Reloaded so the tags that wait for consent load. Not a new
-            // page: not counted, not probed again.
-            if self.consent.clicked && !cancel.is_cancelled() {
-                self.visit(&session, entry_url, SETTLE_AFTER_LOAD, cancel).await?;
+            if self.consent.clicked
+                && !cancel.is_cancelled()
+                && !self.reload_after_consent(&session, entry_url, cancel).await?
+            {
+                return self.finish(pages_visited, cancel.is_cancelled()).await;
             }
         }
 
@@ -2609,9 +2667,10 @@ impl<T: CdpTransport> Driver<T> {
                 break;
             }
             let before = self.acc.clone();
-            let loaded = match self.visit(&session, &url, SETTLE_AFTER_LOAD, cancel).await {
+            let visit = match self.visit(&session, &url, SETTLE_AFTER_LOAD, cancel).await {
                 Err(e) if navigation_timed_out(&e) => {
-                    self.acc = before;
+                    // Not rolled back: no new document, so the page before
+                    // was live the whole 30 s and what it contacted is its own.
                     self.gaps.note(format!("page:timeout:{n}"));
                     // ponytail: the walk stops at the first navigation
                     // timeout, so later pages are never tried — a browser that
@@ -2619,10 +2678,15 @@ impl<T: CdpTransport> Driver<T> {
                     // Upgrade path: retry once on a fresh target.
                     break;
                 }
-                loaded => loaded?,
+                visit => visit?,
             };
-            if !loaded {
-                self.acc = before;
+            if visit != Visit::Loaded {
+                // Given back only when the browser drew its own error page.
+                // With no new document the page before is still live: a site
+                // must not be able to hide a deferred tracker behind a 204.
+                if visit == Visit::ErrorPage {
+                    self.acc = before;
+                }
                 self.gaps.note(format!("page:not-loaded:{n}"));
                 continue;
             }
@@ -2786,7 +2850,7 @@ pub async fn observe(
         .await
         .map_err(|e| CdpError::Connect(e.to_string()))?;
     let mut driver = Driver::new(connection);
-    driver.ledger = Some(ledger);
+    driver.ledger = ledger;
     driver.run(entry_url, max_pages, &cancel).await
 }
 
@@ -3196,16 +3260,16 @@ mod tests {
             if !self.answers {
                 return Ok(id);
             }
+            for (m, s, event) in &self.inject_always {
+                if m == method.as_ref() && *s == session_str {
+                    self.inbox.push_back(Message::Event(event.clone()));
+                }
+            }
             if let Some((m, nth)) = &self.time_out {
                 let earlier = self.sent.iter().filter(|(sent, ..)| sent == m).count();
                 if m == method.as_ref() && earlier == nth + 1 {
                     self.timed_out = Some(method);
                     return Ok(id);
-                }
-            }
-            for (m, s, event) in &self.inject_always {
-                if m == method.as_ref() && *s == session_str {
-                    self.inbox.push_back(Message::Event(event.clone()));
                 }
             }
             let mut remaining = Vec::new();
@@ -3245,8 +3309,11 @@ mod tests {
         }
 
         async fn recv(&mut self) -> Option<Result<Message<CdpJsonEventMessage>, CdpError>> {
-            if let Some(method) = self.timed_out.take() {
-                return Some(Err(CdpError::Timeout(method)));
+            // Whatever the live page did meanwhile arrives before the timeout.
+            if self.inbox.is_empty() {
+                if let Some(method) = self.timed_out.take() {
+                    return Some(Err(CdpError::Timeout(method)));
+                }
             }
             if self.inbox.is_empty() && self.hang_when_empty {
                 std::future::pending::<()>().await;
@@ -4647,6 +4714,123 @@ mod tests {
         assert_eq!(observation.hosts[0].request_count, 3, "{:?}", observation.hosts);
     }
 
+    /// One `visit` (or reload) of `url` on a bare session: the navigation
+    /// answers `navigate`, fires its load event and one request to
+    /// `seen.example`, and the history reads `landed`.
+    fn one_navigation(navigate: serde_json::Value, landed: &str) -> Driver<FakeTransport> {
+        let mut transport = three_linked_pages();
+        transport
+            .queued
+            .insert("Page.navigate".to_string(), VecDeque::from([navigate]));
+        transport.results.insert(
+            "Page.getNavigationHistory".to_string(),
+            json!({"currentIndex": 0, "entries": [{"url": landed}]}),
+        );
+        Driver::new(transport)
+    }
+
+    async fn visit_once(driver: &mut Driver<FakeTransport>) -> Visit {
+        let session = SessionId::from("SESSION-A".to_string());
+        driver
+            .visit(&session, T14_HOME, Duration::ZERO, &CancellationToken::new())
+            .await
+            .expect("visit")
+    }
+
+    fn http_error() -> serde_json::Value {
+        json!({"errorText": HTTP_ERROR_STATUS})
+    }
+
+    #[tokio::test]
+    async fn an_http_error_page_is_the_sites_own_unless_the_proxy_never_reached_it() {
+        // The site answered 404 itself: the dial went through.
+        let mut driver = one_navigation(http_error(), T14_HOME);
+        assert_eq!(visit_once(&mut driver).await, Visit::Loaded);
+        // The same error text, but the 502 was the proxy's own.
+        let mut driver = one_navigation(http_error(), T14_HOME);
+        driver.ledger.note_dial("rossi-editore.it", 443, false);
+        assert_eq!(visit_once(&mut driver).await, Visit::ErrorPage);
+        // A dead :80 says nothing about the :443 the page landed on.
+        let mut driver = one_navigation(http_error(), T14_HOME);
+        driver.ledger.note_dial("rossi-editore.it", 80, false);
+        assert_eq!(visit_once(&mut driver).await, Visit::Loaded);
+        // It is the landing place that is asked about, not where it was sent.
+        let mut driver = one_navigation(http_error(), "http://www.rossi-editore.it:8080/x");
+        driver.ledger.note_dial("www.rossi-editore.it", 8080, false);
+        assert_eq!(visit_once(&mut driver).await, Visit::ErrorPage);
+    }
+
+    #[tokio::test]
+    async fn an_http_error_page_whose_address_cannot_be_read_is_not_claimed_as_loaded() {
+        let mut driver = one_navigation(http_error(), "chrome-error://chromewebdata/");
+        assert_eq!(visit_once(&mut driver).await, Visit::ErrorPage);
+    }
+
+    #[tokio::test]
+    async fn a_reload_after_consent_that_does_not_load_is_a_gap_and_gives_back_the_error_page() {
+        let mut driver = one_navigation(json!({"errorText": "net::ERR_NAME_NOT_RESOLVED"}), T14_HOME);
+        driver.consent.clicked = true;
+        let session = SessionId::from("SESSION-A".to_string());
+        let goes_on = driver
+            .reload_after_consent(&session, T14_HOME, &CancellationToken::new())
+            .await
+            .expect("a reload that did not load is not a failed scan");
+        assert!(goes_on);
+        assert!(driver.gaps.keys.contains("home:reload-not-loaded"), "{:?}", driver.gaps);
+        assert!(driver.consent.clicked, "the click happened");
+        assert_eq!(driver.observation(1, false).hosts, Vec::new());
+    }
+
+    #[tokio::test]
+    async fn a_reload_after_consent_that_times_out_ends_the_walk_and_keeps_the_live_page() {
+        let mut driver = one_navigation(json!({}), T14_HOME);
+        driver.transport.time_out = Some(("Page.navigate".to_string(), 0));
+        let session = SessionId::from("SESSION-A".to_string());
+        let goes_on = driver
+            .reload_after_consent(&session, T14_HOME, &CancellationToken::new())
+            .await
+            .expect("a reload that timed out is not a failed scan");
+        assert!(!goes_on);
+        assert!(driver.gaps.keys.contains("home:reload-not-loaded"), "{:?}", driver.gaps);
+        // The home was live while the navigation hung: its request stays.
+        assert_eq!(driver.observation(1, false).hosts[0].request_count, 1);
+    }
+
+    #[tokio::test]
+    async fn a_reload_after_consent_that_loads_is_no_gap() {
+        let mut driver = one_navigation(json!({}), T14_HOME);
+        let session = SessionId::from("SESSION-A".to_string());
+        let goes_on = driver
+            .reload_after_consent(&session, T14_HOME, &CancellationToken::new())
+            .await
+            .expect("reload");
+        assert!(goes_on);
+        assert!(driver.gaps.keys.is_empty(), "{:?}", driver.gaps);
+    }
+
+    #[tokio::test]
+    async fn a_key_link_that_commits_no_document_never_erases_what_the_live_page_contacted() {
+        // A key link answered with a 204 or a download: the previous page
+        // keeps running, and a tracker it defers until then is still the
+        // site's.
+        let mut transport = three_linked_pages();
+        transport.queued.insert(
+            "Page.navigate".to_string(),
+            VecDeque::from([json!({}), json!({}), json!({"errorText": "net::ERR_ABORTED"})]),
+        );
+        let mut driver = Driver::new(transport);
+        let observation = driver
+            .run(T14_HOME, 10, &CancellationToken::new())
+            .await
+            .expect("run");
+        assert_eq!(
+            visited(&observation),
+            ["https://rossi-editore.it/a", "https://rossi-editore.it/c"]
+        );
+        assert!(driver.gaps.keys.contains("page:not-loaded:1"), "{:?}", driver.gaps);
+        assert_eq!(observation.hosts[0].request_count, 4, "{:?}", observation.hosts);
+    }
+
     #[tokio::test]
     async fn a_key_page_that_times_out_stops_the_walk_and_keeps_what_was_read() {
         let mut transport = three_linked_pages();
@@ -4660,6 +4844,10 @@ mod tests {
         assert_eq!(observation.pages_visited, 2);
         assert!(driver.gaps.keys.contains("page:timeout:1"), "{:?}", driver.gaps);
         assert_eq!(navigations(&driver.transport), 3, "`/c` must not be requested");
+        // No new document was committed, so `/a` was still live while the
+        // navigation hung: what it contacted meanwhile stays (home, `/a`, and
+        // the request seen during the timeout).
+        assert_eq!(observation.hosts[0].request_count, 3, "{:?}", observation.hosts);
         assert!(
             observation.form_fields.iter().any(|f| f.name == "email"),
             "{:?}",

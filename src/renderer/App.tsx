@@ -108,11 +108,7 @@ export function App() {
     setScanning(true)
     try {
       const result = await startScan(url)
-      setHistory((h) => {
-        const next = ingestScan(h.present, result, VENDORS, { prefix: `scan${h.past.length + 1}` }, COOKIE_PLATFORMS)
-        // A scan whose page did not load changes nothing, and so is not a step to undo.
-        return next === h.present ? h : push(h, next)
-      })
+      setHistory((h) => push(h, ingestScan(h.present, result, VENDORS, { prefix: `scan${h.past.length + 1}` }, COOKIE_PLATFORMS)))
       setNotice(scanResultNotice(result, VENDORS))
       setLastScan({ possibleGaps: result.possibleGaps, stoppedEarly: result.stoppedEarly })
     } catch (e) {
