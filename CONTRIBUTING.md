@@ -6,8 +6,11 @@ them changes what the tool is, not how it is written.
 
 ## The non-negotiables
 
-No outbound network traffic, except a scan of a URL the user explicitly entered. No telemetry,
-no crash reporting, no update check, no CDN, no web font. Everything ships bundled. A pull
+Network: only a scan of a URL the user explicitly entered. During a scan the page loads as a
+real visitor's browser would load it, so third-party services on the site receive the visit, but
+IP literals, ports other than 80/443, and any name resolving to a loopback, private, link-local
+or CGNAT address are refused. No telemetry, no crash reporting, no update check, no CDN, no web
+font. Everything ships bundled. A pull
 request that adds a network call for any other reason will be declined however useful it is,
 because this promise is the reason the tool can be pointed at a real client's website in the
 first place.
