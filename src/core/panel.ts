@@ -129,8 +129,8 @@ function titleCase(s: string): string {
     .join(' ')
 }
 
-function derivedPlaceName(host: string, dictionary: VendorDictionary): string {
-  const hit = identify(host, dictionary)
+function derivedPlaceName(host: string, dictionary: VendorDictionary, segment?: string): string {
+  const hit = identify(host, dictionary, segment)
   return hit === null ? host : `${hit.owner} ${titleCase(hit.category)}`
 }
 
@@ -202,7 +202,12 @@ function placePanel(project: Project, place: Place, dictionary: VendorDictionary
     name: place.name,
     facts: factsFor(place),
     observations: project.observations
-      .filter((o) => derivedPlaceName(o.domain, dictionary).toLowerCase() === place.name.toLowerCase())
+      // As ingestScan names it: one name per observed first segment, or the bare host when none.
+      .filter((o) =>
+        (o.paths?.length ? o.paths : [undefined]).some(
+          (seg) => derivedPlaceName(o.domain, dictionary, seg).toLowerCase() === place.name.toLowerCase(),
+        ),
+      )
       .map((o) => ({ domain: o.domain, requestCount: o.requestCount, beforeConsent: o.beforeConsent })),
     cookies: (project.cookies ?? [])
       .filter((c) => c.placeId === place.id)

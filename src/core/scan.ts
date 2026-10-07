@@ -34,8 +34,8 @@ const VISITORS = 'Website visitors'
  * Analytics. An unrecognised host keeps its full name and collapses with
  * nothing.
  */
-export function displayName(host: string, dictionary: VendorDictionary): string {
-  const hit = identify(host, dictionary)
+export function displayName(host: string, dictionary: VendorDictionary, segment?: string): string {
+  const hit = identify(host, dictionary, segment)
   return hit === null ? host : `${hit.owner} ${titleCase(hit.category)}`
 }
 
@@ -155,9 +155,9 @@ export function ingestScan(
   // 3. Every third party, named from the dictionary, each with a flow from the
   //    site. The scanned host itself is skipped — it is the site, not a
   //    recipient of its own data. The same find-or-create serves a door's provider below.
-  const placeForHost = (host: string): Place => {
-    const name = displayName(host, dictionary)
-    const hit = identify(host, dictionary)
+  const placeForHost = (host: string, segment?: string): Place => {
+    const name = displayName(host, dictionary, segment)
+    const hit = identify(host, dictionary, segment)
 
     let place = findPlaceByName(working, name)
     if (place === undefined) {
@@ -186,7 +186,11 @@ export function ingestScan(
   }
   for (const observed of result.hosts) {
     if (isSameSite(observed.host, result.scannedHost)) continue
-    placeForHost(observed.host)
+    // One place per observed first segment (a segment nothing lists falls back to the host's own
+    // entry); a host with no segments is the bare host.
+    for (const segment of observed.paths?.length ? observed.paths : [undefined]) {
+      placeForHost(observed.host, segment)
+    }
   }
 
   // 4. The raw observations, so the map can always be traced back to what was
@@ -203,13 +207,18 @@ export function ingestScan(
   //    array is preserved rather than moved to the end, so ordering already
   //    relied on elsewhere does not shift underneath it.
   const latestCountByKey = new Map<string, number>()
+  const latestPathsByKey = new Map<string, string[]>()
   for (const h of result.hosts) {
     latestCountByKey.set(h.host.toLowerCase(), h.requestCount)
+    if (h.paths?.length) latestPathsByKey.set(h.host.toLowerCase(), h.paths)
   }
 
   const updatedExisting = working.observations.map((o) => {
-    const latest = latestCountByKey.get(o.domain.toLowerCase())
-    return latest === undefined ? o : { ...o, requestCount: latest }
+    const key = o.domain.toLowerCase()
+    const latest = latestCountByKey.get(key)
+    if (latest === undefined) return o
+    const paths = latestPathsByKey.get(key)
+    return { ...o, requestCount: latest, ...(paths ? { paths } : {}) }
   })
 
   const alreadyKnown = new Set(working.observations.map((o) => o.domain.toLowerCase()))
@@ -223,6 +232,7 @@ export function ingestScan(
       domain: h.host,
       requestCount: latestCountByKey.get(key) ?? h.requestCount,
       beforeConsent: h.phase !== 'after',
+      ...(h.paths?.length ? { paths: h.paths } : {}),
     })
   }
 
@@ -280,7 +290,7 @@ export function ingestScan(
     kind === 'form' ? `form|${page}` : `${kind}|${provider ?? ''}`
   const freshDoors = new Map<string, CollectionPoint>()
   for (const door of classifyDoors(result, dictionary)) {
-    const provider = door.provider === null ? undefined : placeForHost(door.provider)
+    const provider = door.provider === null ? undefined : placeForHost(door.provider, door.segment)
     const page = door.page === '' ? result.scannedHost : door.page
     freshDoors.set(doorKey(door.kind, page, provider?.name), {
       id: nextId(taken, ids.prefix, 'cp'),

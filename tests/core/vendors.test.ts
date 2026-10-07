@@ -54,6 +54,21 @@ describe('identify', () => {
   })
 })
 
+describe('identify by host and first path segment', () => {
+  const D: VendorDictionary = {
+    'google.com': { owner: 'Google', category: 'search', purposeGroup: 'Systems' },
+    'www.google.com/recaptcha': { owner: 'Google', category: 'captcha', purposeGroup: 'Systems' },
+    'www.google.com/maps': { owner: 'Google', category: 'maps', purposeGroup: 'Systems' },
+  }
+  it('host + first segment is tried before the host', () => {
+    expect(identify('www.google.com', D, 'recaptcha')?.category).toBe('captcha')
+  })
+  it('an unlisted path falls back to the host entry, never to a guess', () => {
+    expect(identify('www.google.com', D, 'search')?.category).toBe('search')
+    expect(identify('www.gstatic.com', D, 'recaptcha')).toBeNull()
+  })
+})
+
 describe('classifyHost', () => {
   it('reads a purpose out of a host name the dictionary does not know', () => {
     expect(classifyHost('stats.rossi-editore.it')).toBe('Marketing')

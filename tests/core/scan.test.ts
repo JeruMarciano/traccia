@@ -491,6 +491,22 @@ describe('ingestScan', () => {
   })
 })
 
+describe('ingestScan names by host and segment', () => {
+  const D: VendorDictionary = {
+    'www.google.com/recaptcha': { owner: 'Google', category: 'captcha', purposeGroup: 'Systems' },
+    'www.google.com/maps': { owner: 'Google', category: 'maps', purposeGroup: 'Systems' },
+  }
+  const scan = (paths: string[]) =>
+    result({ hosts: [{ host: 'www.google.com', requestCount: 4, paths }] })
+  it('two listed segments are two places; the bare host appears only for a segment nothing matched', () => {
+    const two = ingestScan(emptyProject(), scan(['maps', 'recaptcha']), D, IDS)
+    expect(two.places.map((p) => p.name).sort()).toEqual(['Google Captcha', 'Google Maps', 'rossi-editore.it'])
+    const three = ingestScan(emptyProject(), scan(['maps', 'search']), D, IDS)
+    expect(three.places.map((p) => p.name).sort()).toEqual(['Google Maps', 'rossi-editore.it', 'www.google.com'])
+    expect(three.observations.find((o) => o.domain === 'www.google.com')?.paths).toEqual(['maps', 'search'])
+  })
+})
+
 describe('ingestScan consent phase', () => {
   it('marks an observation before consent only when its host was first seen before', () => {
     const p = ingestScan(emptyProject(), { ...result(), hosts: [

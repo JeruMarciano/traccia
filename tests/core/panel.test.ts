@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { ingestScan } from '../../src/core/scan'
 import { panelFor } from '../../src/core/panel'
 import { answerByHand } from '../../src/core/answers'
 import { rossiEditore } from '../fixtures/rossiEditore'
@@ -85,6 +86,20 @@ describe('panelFor a place', () => {
     const d = panel('pl-8')
     if (d?.sort !== 'place') throw new Error('expected a place panel')
     expect(d.observations.map((o) => o.domain)).toEqual(['stat.rossi-editore.it'])
+  })
+
+  it('lists a host\'s observation under the place its segment named', () => {
+    const dict: VendorDictionary = { 'www.google.com/maps': { owner: 'Google', category: 'maps', purposeGroup: 'Systems' } }
+    const scanned = ingestScan(
+      emptyProject(),
+      { scannedHost: 'x.it', hosts: [{ host: 'www.google.com', requestCount: 2, paths: ['maps'] }], pagesVisited: 1, possibleGaps: 0, stoppedEarly: false, cookies: [], formFields: [], storageKeys: [], capturedAtEpochSeconds: 0 },
+      dict,
+      { prefix: 's' },
+    )
+    const maps = scanned.places.find((pl) => pl.name === 'Google Maps')!
+    const d = panelFor(scanned, maps.id, dict)
+    if (d?.sort !== 'place') throw new Error('expected a place panel')
+    expect(d.observations.map((o) => o.domain)).toEqual(['www.google.com'])
   })
 
   it('lists the cookies recorded against the place', () => {
