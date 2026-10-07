@@ -200,9 +200,11 @@ export function ingestScan(
   }
 
   // 4. The raw observations, so the map can always be traced back to what was
-  //    seen. beforeConsent is false only for a host first seen after a consent
-  //    click; a host without a phase (a v0.3 payload, from before Traccia ever
-  //    clicked) stays true.
+  //    seen. beforeConsent follows the latest scan's phase for the host: true
+  //    for 'before', false for 'after', and left out when that scan has a
+  //    consent record but no phase for the host -- a blank beats a guess. A
+  //    v0.3 payload (no consent record, from before Traccia ever clicked) says
+  //    nothing new: a new host is read as before, a known host keeps what it had.
   //
   //    Keyed case-insensitively, the same way place matching is (finding 3),
   //    so "X.com" and "x.com" collapse to one row rather than two — whether
@@ -212,19 +214,27 @@ export function ingestScan(
   //    left stale (finding 2): the newer scan wins. Its position in the
   //    array is preserved rather than moved to the end, so ordering already
   //    relied on elsewhere does not shift underneath it.
-  const latestCountByKey = new Map<string, number>()
+  type ScannedHost = ScanResult['hosts'][number]
+  const latestByKey = new Map<string, ScannedHost>()
   const latestPathsByKey = new Map<string, string[]>()
   for (const h of result.hosts) {
-    latestCountByKey.set(h.host.toLowerCase(), h.requestCount)
+    latestByKey.set(h.host.toLowerCase(), h)
     if (h.paths?.length) latestPathsByKey.set(h.host.toLowerCase(), h.paths)
+  }
+  // The one reading of a host's phase. `withoutRecord` is what a v0.3 payload leaves in place.
+  const phaseOf = (h: ScannedHost, withoutRecord: boolean | undefined): { beforeConsent?: boolean } => {
+    const before =
+      h.phase !== undefined ? h.phase === 'before' : result.consent === undefined ? withoutRecord : undefined
+    return before === undefined ? {} : { beforeConsent: before }
   }
 
   const updatedExisting = working.observations.map((o) => {
     const key = o.domain.toLowerCase()
-    const latest = latestCountByKey.get(key)
+    const latest = latestByKey.get(key)
     if (latest === undefined) return o
     const paths = latestPathsByKey.get(key)
-    return { ...o, requestCount: latest, ...(paths ? { paths } : {}) }
+    const { beforeConsent: had, ...rest } = o
+    return { ...rest, requestCount: latest.requestCount, ...phaseOf(latest, had), ...(paths ? { paths } : {}) }
   })
 
   const alreadyKnown = new Set(working.observations.map((o) => o.domain.toLowerCase()))
@@ -236,14 +246,8 @@ export function ingestScan(
     seenThisScan.add(key)
     fresh.push({
       domain: h.host,
-      requestCount: latestCountByKey.get(key) ?? h.requestCount,
-      // Unknown phase: before for a v0.3 payload (no consent record, today's reading), otherwise
-      // left out -- a blank beats a guess.
-      ...(h.phase !== undefined
-        ? { beforeConsent: h.phase === 'before' }
-        : result.consent === undefined
-          ? { beforeConsent: true }
-          : {}),
+      requestCount: latestByKey.get(key)?.requestCount ?? h.requestCount,
+      ...phaseOf(h, true),
       ...(h.paths?.length ? { paths: h.paths } : {}),
     })
   }
