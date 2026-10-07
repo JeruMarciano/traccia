@@ -37,6 +37,15 @@ const ALLOWED_PORTS: [u16; 2] = [80, 443];
 /// asked to allow, so it is rejected before any comparison work happens.
 const MAX_HOST_LEN: usize = 253;
 
+/// Chrome's own service hosts: Safe Browsing's OHTTP gateway, GCM device checkin, and the
+/// updater (attempted despite `--disable-component-update`). None is a site's; none should leave
+/// the machine. Exact names only: `googleapis.com` as a whole serves real sites (fonts, maps).
+const BROWSER_SERVICE_HOSTS: [&str; 3] = [
+    "safebrowsingohttpgateway.googleapis.com",
+    "android.clients.google.com",
+    "update.googleapis.com",
+];
+
 /// `host` is the *normalised* host that was asked for — the only string the guard has actually
 /// vetted. The caller must connect to that and record that; the raw authority it parsed off the
 /// request line differs from it by anything `str::trim` removes, which is the whole Unicode
@@ -58,6 +67,8 @@ pub enum DenyReason {
     IpLiteral,
     PortNotAllowed,
     NoScanRunning,
+    /// Chrome's own background subsystems, never a site's third party.
+    BrowserService,
 }
 
 /// Normalise a host for comparison, or refuse to compare it at all.
@@ -139,6 +150,9 @@ pub fn decide(host: &str, port: u16, scan_origins: &[String]) -> Decision {
     }
     if !scan_origins.iter().any(|o| usable_origin(o).is_some()) {
         return Decision::Deny { reason: DenyReason::NoScanRunning };
+    }
+    if BROWSER_SERVICE_HOSTS.iter().any(|b| b.eq_ignore_ascii_case(h)) {
+        return Decision::Deny { reason: DenyReason::BrowserService };
     }
     // Only here, having decided to admit, is anything allocated.
     Decision::Allow { host: h.to_ascii_lowercase() }
@@ -238,6 +252,23 @@ mod tests {
             denied(&decide("cdn.example", 8443, &origins(&["rossi-editore.it"]))),
             &DenyReason::PortNotAllowed
         );
+    }
+
+    #[test]
+    fn chromes_own_service_hosts_are_refused_by_exact_name_only() {
+        let o = origins(&["rossi-editore.it"]);
+        for h in [
+            "update.googleapis.com",
+            "Update.GoogleApis.com",
+            "update.googleapis.com.",
+            "safebrowsingohttpgateway.googleapis.com",
+            "android.clients.google.com",
+        ] {
+            assert_eq!(denied(&decide(h, 443, &o)), &DenyReason::BrowserService, "{h}");
+        }
+        for h in ["fonts.googleapis.com", "xupdate.googleapis.com", "update.googleapis.com.evil.it"] {
+            assert!(matches!(decide(h, 443, &o), Decision::Allow { .. }), "{h}");
+        }
     }
 
     #[test]
