@@ -1,5 +1,6 @@
 import { isThirdPartyCookie } from '../core/cookies'
 import { isCollectingField } from '../core/forms'
+import { isSameSite } from '../core/scan'
 import type { ScanResult } from '../core/types'
 import { STRINGS } from './strings'
 
@@ -43,6 +44,35 @@ function joinAll(...parts: (string | null)[]): string {
 }
 
 /**
+ * What the scan did about consent, when it can say: the click and what it showed, or that none was
+ * given and why. Null when `consent` is absent (a v0.3 payload) or says too little, so the older
+ * sentence applies. Counts are third-party hosts with a known phase only; none is counted for a
+ * scan that gave no consent, and a count of nothing is not stated.
+ */
+function consentDone(result: ScanResult): string | null {
+  const c = result.consent
+  if (!c) return null
+  if (c.clicked && c.rule !== null) {
+    const how =
+      c.rule === 'cmp'
+        ? STRINGS.consentAcceptedByCmp(c.ruleName)
+        : STRINGS.consentAcceptedByText(c.cmp, c.matchedText)
+    const third = result.hosts.filter((h) => !isSameSite(h.host, result.scannedHost))
+    const before = third.filter((h) => h.phase === 'before').length
+    const after = third.filter((h) => h.phase === 'after').length
+    return joinAll(
+      how,
+      before + after === 0 ? null : STRINGS.consentCounts(before, after),
+      c.clickNavigated ? STRINGS.consentClickLeftPage : null,
+    )
+  }
+  if (c.clicked || result.stoppedEarly) return null
+  if (c.reason !== undefined) return STRINGS.consentNotGiven(c.reason)
+  // Detected but no reason: the scan could not tell why. Nothing detected either is a blank.
+  return c.cmp ? STRINGS.consentNotGivenNoReason : null
+}
+
+/**
  * Whether a consent banner was detected, neutrally stated either way: unlike the cookie count,
  * which says nothing when there is nothing to report, the absence of a known consent-manager
  * marker is itself a fact worth stating — "No consent banner was detected." — never "missing",
@@ -59,6 +89,8 @@ function joinAll(...parts: (string | null)[]): string {
  * reported.
  */
 function consentNotice(result: ScanResult): string | null {
+  const done = consentDone(result)
+  if (done !== null) return done
   const first = result.consent ? result.consent.cmp : result.consentMarkers?.[0]
   if (first) return STRINGS.consentBannerDetected(first)
   if (result.stoppedEarly) return null

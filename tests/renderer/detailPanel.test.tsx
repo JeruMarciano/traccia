@@ -85,6 +85,46 @@ describe('DetailPanel', () => {
     )
   })
 
+  it('says per observation whether it was before or only after consent', () => {
+    const project = rossiEditore()
+    const o = project.observations[0]
+    if (o === undefined) throw new Error('fixture has no observation')
+    const placeId = project.places.find((p) => show(p.id, project).includes(o.domain))?.id
+    if (placeId === undefined) throw new Error('no place carries the observation')
+    expect(show(placeId, project)).toContain(STRINGS.detailBeforeConsent)
+    o.beforeConsent = false
+    expect(show(placeId, project)).toContain(STRINGS.detailAfterConsent)
+  })
+
+  it('shows a door’s kind and pages, and a destination only when it has one', () => {
+    const project = rossiEditore()
+    const markup = show('door:cp:cp-1', project)
+    expect(markup).toContain(STRINGS.doorKind.form)
+    expect(markup).toContain(STRINGS.doorPages(1))
+    expect(markup).not.toContain('Sends data to')
+    const cp = project.collectionPoints?.[0]
+    if (cp === undefined) throw new Error('fixture changed')
+    cp.destination = 'pl-4'
+    const name = project.places.find((p) => p.id === 'pl-4')?.name ?? ''
+    expect(show('door:cp:cp-1', project)).toContain(STRINGS.doorSendsTo(name))
+  })
+
+  it('lists, under the controller, cookies named for a platform that belong to no place', () => {
+    const project = rossiEditore()
+    project.cookies = [
+      { name: '_ga', domain: 'x', thirdParty: false, lifetime: 'session', platform: 'Google Analytics' },
+      { name: 'PHPSESSID', domain: 'x', thirdParty: false, lifetime: 'session', platform: 'PHP' },
+      { name: 'att', domain: 'x', thirdParty: false, lifetime: 'session', platform: 'Hotjar', placeId: 'pl-4' },
+      { name: 'bare', domain: 'x', thirdParty: false, lifetime: 'session' },
+    ]
+    const markup = show('controller', project)
+    expect(markup).toContain(STRINGS.cookiesByPlatform('Google Analytics'))
+    expect(markup).toContain('_ga')
+    expect(markup).toContain(STRINGS.cookiesByPlatform('PHP'))
+    expect(markup).not.toContain('Hotjar')
+    expect(markup).not.toContain('bare')
+  })
+
   it('lists a group’s members', () => {
     expect(show('group:Marketing')).toContain('stat.rossi-editore.it')
   })

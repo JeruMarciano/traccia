@@ -227,7 +227,7 @@ describe('scanResultNotice', () => {
     it('reads the CMP from consent.cmp, in the same words', () => {
       const consent = { cmp: 'iubenda', clicked: true, rule: 'cmp' as const, ruleName: 'iubenda', matchedText: '', clickNavigated: false }
       const notice = scanResultNotice(result({ consentMarkers: undefined, consent }))
-      expect(notice).toBe(STRINGS.consentBannerDetected('iubenda'))
+      expect(notice).toBe(STRINGS.consentAcceptedByCmp('iubenda'))
     })
 
     // A blank beats a guess: with no reason, detection never ran to its end, so no absence is claimed.
@@ -235,12 +235,62 @@ describe('scanResultNotice', () => {
       const blank = { cmp: null, clicked: false, rule: null, ruleName: '', matchedText: '', clickNavigated: false }
       expect(scanResultNotice(result({ consentMarkers: undefined, consent: blank }))).toBe('')
       const ran = { ...blank, reason: 'no-banner' as const }
-      expect(scanResultNotice(result({ consentMarkers: undefined, consent: ran }))).toBe(STRINGS.consentBannerNotDetected)
+      expect(scanResultNotice(result({ consentMarkers: undefined, consent: ran }))).toBe(
+        STRINGS.consentNotGiven('no-banner'),
+      )
     })
 
     it('still reports absence when a completed scan found no marker', () => {
       const notice = scanResultNotice(result({ stoppedEarly: false, consentMarkers: [] }))
       expect(notice).toBe(STRINGS.consentBannerNotDetected)
+    })
+  })
+
+  describe('consent as the scan did it', () => {
+    const base = { cmp: null, clicked: false, rule: null, ruleName: '', matchedText: '', clickNavigated: false }
+    const run = (consent: ScanResult['consent'], over: Partial<ScanResult> = {}) =>
+      scanResultNotice(result({ consentMarkers: undefined, consent, ...over }))
+
+    it('says no consent was given, with the reason, and never counts "only after"', () => {
+      const notice = run({ ...base, reason: 'no-banner' }, {
+        hosts: [
+          { host: 'rossi-editore.it', requestCount: 1 },
+          { host: 'doubleclick.net', requestCount: 1, phase: 'before' },
+        ],
+      })
+      expect(notice).toBe('No consent was given: no consent banner was recognised.')
+      expect(notice).not.toContain('only after')
+    })
+
+    it('says just that no consent was given when the scan could not tell why', () => {
+      expect(run({ ...base, cmp: 'iubenda' })).toBe(STRINGS.consentNotGivenNoReason)
+      expect(STRINGS.consentNotGivenNoReason).toBe('No consent was given.')
+    })
+
+    it('counts third parties by phase after a click, leaving out hosts with no phase and the site itself', () => {
+      const notice = run(
+        { ...base, cmp: 'iubenda', clicked: true, rule: 'cmp', ruleName: 'iubenda' },
+        {
+          hosts: [
+            { host: 'rossi-editore.it', requestCount: 1, phase: 'before' },
+            { host: 'doubleclick.net', requestCount: 1, phase: 'before' },
+            { host: 'facebook.net', requestCount: 1, phase: 'after' },
+            { host: 'hotjar.com', requestCount: 1, phase: 'after' },
+            { host: 'mystery.example', requestCount: 1 },
+          ],
+        },
+      )
+      expect(notice).toBe(`${STRINGS.consentAcceptedByCmp('iubenda')} ${STRINGS.consentCounts(1, 2)}`)
+    })
+
+    it('reports a text click on an unrecognised banner without a consent manager', () => {
+      const notice = run({ ...base, clicked: true, rule: 'text', matchedText: 'Accept all' })
+      expect(notice).toBe("Accepted by matching the text 'Accept all'.")
+    })
+
+    it('flags a click that left the page', () => {
+      const notice = run({ ...base, cmp: 'iubenda', clicked: true, rule: 'cmp', ruleName: 'iubenda', clickNavigated: true })
+      expect(notice.endsWith(STRINGS.consentClickLeftPage)).toBe(true)
     })
   })
 })
