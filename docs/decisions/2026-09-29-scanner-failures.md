@@ -163,3 +163,35 @@ in `compare.json`), same thresholds. The old figure stays printed beside it.
 **Accepted with Task 8's audit.** A key link that leaves the site is not probed and everything
 that visit contacted is rolled back, with one gap note per page; cookies such a page set stay in
 the jar. Pages not linked from the home page are not reached (sitemap.xml is the spec's follow-up).
+
+## R4 (after Task 10, 2026-10-07)
+
+`scanner-upgrade-R4-2026-10-07`, **fresh reference** (it records first path segments), scanner
+built at 66b1341; naming computed by `compare.mjs` against the dictionary at aa52370.
+
+| Gate | Target | R4 |
+|---|---|---|
+| third-party organisations with a name | ≥ 85% (baseline 67%) | **498 of 541 = 92%** |
+
+Reported (not gated here): median `recallAll` 0.96; cookies at end 545/591; accept clicked 41;
+contacts missed 1; form pages with a field seen nowhere 13 (plain count 42 of 143); p90 77 s;
+**sites with an embed door 35 of 43 = 81%** — below the 90% that R5 gates. Task 13 must look at the
+eight sites without one before the final re-measure.
+
+Left unnamed on purpose: Elfsight and WonderPush (no fitting category in the dictionary — widgets,
+push), and a tail of hosts seen once. Owners of Italiaonline, Duda's white-label domain, Jimdo's
+asset hosts, Tripadvisor's and three Google content hosts were assigned from the controller's own
+knowledge, not from a page fetched that day; `evnt.iol.it` is classed as analytics from its name,
+with a note in the data. To be confirmed by the user.
+
+**What R4 found that is not about names.** In the first pass 14 sites came back as a home page with
+three requests and nothing else (about 21 s each). Re-run alone, ten scanned normally; the rest
+recovered over two more tries except two. The cause is outside the scanner: name resolution on the
+measuring machine failed intermittently (`curl` to the same sites answered "Could not resolve host"
+at the same moments). The figures above are after the re-runs; the two sites still short (50, 53)
+are in them as they came. The first pass is kept in `summary.run1.txt` and `run1-short/`.
+
+It does expose a product gap, older than this work: **when the home page does not load, the scan
+still returns a normal-looking result** — one page, a handful of hosts, "no consent banner was
+recognised" — with only "possibly incomplete" to hint at it. Proposed follow-up: a home page that
+did not load is said so, and no claim about consent is made.
