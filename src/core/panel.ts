@@ -67,7 +67,7 @@ export interface PlacePanel {
   id: string
   name: string
   facts: PanelFact[]
-  observations: { domain: string; requestCount: number; beforeConsent: boolean }[]
+  observations: { domain: string; requestCount: number; beforeConsent?: boolean }[]
   cookies: { name: string; lifetime: CookieLifetime; thirdParty: boolean }[]
   /** The doors this place is reached from, each with the colour the map gave it. Carrying the
    *  colour rather than deriving it from list position is the whole point: a chip that disagrees
@@ -219,7 +219,7 @@ function placePanel(project: Project, place: Place, dictionary: VendorDictionary
           (seg) => derivedPlaceName(o.domain, dictionary, seg).toLowerCase() === place.name.toLowerCase(),
         ),
       )
-      .map((o) => ({ domain: o.domain, requestCount: o.requestCount, beforeConsent: o.beforeConsent })),
+      .map((o) => ({ domain: o.domain, requestCount: o.requestCount, ...(o.beforeConsent === undefined ? {} : { beforeConsent: o.beforeConsent }) })),
     cookies: (project.cookies ?? [])
       .filter((c) => c.placeId === place.id)
       .map((c) => ({ name: c.name, lifetime: c.lifetime, thirdParty: c.thirdParty })),

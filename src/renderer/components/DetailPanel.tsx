@@ -212,10 +212,12 @@ function PlaceView({ panel, onAnswer }: { panel: PlacePanel; onAnswer?: AnswerHa
               {panel.observations.map((o) => (
                 <li key={o.domain}>
                   {STRINGS.detailObservation(o.domain, o.requestCount)}
-                  <span className="detail-said-by">
-                    {' · '}
-                    {o.beforeConsent ? STRINGS.detailBeforeConsent : STRINGS.detailAfterConsent}
-                  </span>
+                  {o.beforeConsent === undefined ? null : (
+                    <span className="detail-said-by">
+                      {' · '}
+                      {o.beforeConsent ? STRINGS.detailBeforeConsent : STRINGS.detailAfterConsent}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

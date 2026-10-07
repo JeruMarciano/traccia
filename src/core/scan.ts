@@ -233,7 +233,13 @@ export function ingestScan(
     fresh.push({
       domain: h.host,
       requestCount: latestCountByKey.get(key) ?? h.requestCount,
-      beforeConsent: h.phase !== 'after',
+      // Unknown phase: before for a v0.3 payload (no consent record, today's reading), otherwise
+      // left out -- a blank beats a guess.
+      ...(h.phase !== undefined
+        ? { beforeConsent: h.phase === 'before' }
+        : result.consent === undefined
+          ? { beforeConsent: true }
+          : {}),
       ...(h.paths?.length ? { paths: h.paths } : {}),
     })
   }

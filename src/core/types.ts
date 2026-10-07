@@ -73,7 +73,8 @@ export interface Gap {
 export interface Observation {
   domain: string
   requestCount: number
-  beforeConsent: boolean
+  /** Absent when the scan had a consent record but could not place the host before or after it. */
+  beforeConsent?: boolean
   /** First path segments seen for this domain; lets the panel recompute the place name. */
   paths?: string[]
 }

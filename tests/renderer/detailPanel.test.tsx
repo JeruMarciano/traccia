@@ -94,6 +94,11 @@ describe('DetailPanel', () => {
     expect(show(placeId, project)).toContain(STRINGS.detailBeforeConsent)
     o.beforeConsent = false
     expect(show(placeId, project)).toContain(STRINGS.detailAfterConsent)
+    delete o.beforeConsent
+    const unknown = show(placeId, project)
+    expect(unknown).toContain(o.domain)
+    expect(unknown).not.toContain(STRINGS.detailBeforeConsent)
+    expect(unknown).not.toContain(STRINGS.detailAfterConsent)
   })
 
   it('shows a door’s kind and pages, and a destination only when it has one', () => {
@@ -101,7 +106,15 @@ describe('DetailPanel', () => {
     const markup = show('door:cp:cp-1', project)
     expect(markup).toContain(STRINGS.doorKind.form)
     expect(markup).toContain(STRINGS.doorPages(1))
-    expect(markup).not.toContain('Sends data to')
+    const sendsTo = STRINGS.doorSendsTo('')
+    expect(markup).not.toContain(sendsTo)
+    for (const kind of ['form', 'newsletter', 'booking', 'chat', 'embed'] as const) {
+      const p = rossiEditore()
+      const door = p.collectionPoints?.[0]
+      if (door === undefined) throw new Error('fixture changed')
+      door.kind = kind
+      expect(show('door:cp:cp-1', p)).toContain(STRINGS.doorKind[kind])
+    }
     const cp = project.collectionPoints?.[0]
     if (cp === undefined) throw new Error('fixture changed')
     cp.destination = 'pl-4'

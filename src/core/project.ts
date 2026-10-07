@@ -136,6 +136,9 @@ export function validateProject(value: unknown): ValidationResult {
     // must not smuggle in a huge array or an arbitrary string). paths: at most 8 first segments.
     ;(v.observations as unknown[]).forEach((o, i) => {
       const paths = isRecord(o) ? o.paths : undefined
+      if (isRecord(o) && o.beforeConsent !== undefined && typeof o.beforeConsent !== 'boolean') {
+        errors.push(`observations[${i}].beforeConsent must be true or false when present.`)
+      }
       if (
         paths !== undefined &&
         !(Array.isArray(paths) && paths.length <= 8 && paths.every((s) => typeof s === 'string' && /^[a-z0-9_-]{1,32}$/.test(s)))
