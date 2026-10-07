@@ -703,6 +703,7 @@ impl HostAccumulator {
         }
         if let Some(segment) = first_segment(url) {
             let set = self.segments.entry(host.clone()).or_default();
+            // The first eight distinct segments seen are kept; later ones are ignored.
             if set.len() < MAX_SEGMENTS_PER_HOST {
                 set.insert(segment);
             }
@@ -745,16 +746,17 @@ impl HostAccumulator {
 }
 
 /// The first path segment of an absolute `http(s)` URL, lowercased, only when it is
-/// `[a-z0-9-_]` after lowercasing; sliced to 32 characters. Anything else (empty, dots,
-/// percent-escapes, `@`, non-ASCII) is dropped: a segment is a name hint, never a value.
+/// `[a-z0-9-_]` after lowercasing and at most 32 characters. Anything else (empty, longer than
+/// 32, dots, percent-escapes, `@`, non-ASCII) is dropped, not cut: a 32-character prefix of a
+/// token is still a token, and a segment is a name hint, never a value.
 fn first_segment(url: &str) -> Option<String> {
     let rest = url.split_once("://")?.1;
     let path = rest.split(['?', '#']).next()?.split_once('/')?.1;
     let segment = path.split('/').next()?.to_ascii_lowercase();
-    if segment.is_empty() || !segment.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_')) {
+    if segment.is_empty() || segment.len() > 32 || !segment.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_')) {
         return None;
     }
-    Some(segment.chars().take(32).collect())
+    Some(segment)
 }
 
 /// The host of an absolute `http(s)` URL, lowercased, without userinfo, port
@@ -2794,9 +2796,10 @@ mod tests {
     }
 
     #[test]
-    fn a_segment_is_sliced_to_32_and_dropped_when_outside_the_plain_alphabet() {
+    fn a_segment_over_32_or_outside_the_plain_alphabet_is_dropped() {
         let mut acc = HostAccumulator::new();
-        acc.record(&format!("https://a.example/{}/x", "Ab".repeat(20)), Phase::Before);
+        acc.record(&format!("https://a.example/{}/x", "Ab".repeat(16)), Phase::Before);
+        acc.record(&format!("https://a.example/{}/x", "cd".repeat(20)), Phase::Before);
         for bad in ["/a.b", "/a%20b", "/ab@c", "/caf\u{e9}", "/", "/?q=1"] {
             acc.record(&format!("https://b.example{bad}"), Phase::Before);
         }

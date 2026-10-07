@@ -1234,11 +1234,6 @@
     "category": "delivery",
     "purposeGroup": "Delivery"
   },
-  "google.it": {
-    "owner": "Google",
-    "category": "ads",
-    "purposeGroup": "Marketing"
-  },
   "www.google.com/recaptcha": {
     "owner": "Google",
     "category": "captcha",
@@ -1436,5 +1431,25 @@
     "category": "video",
     "purposeGroup": "Systems",
     "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
+  },
+  "www.google.it/ads": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "www.google.it/pagead": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "www.google.com/ads": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "www.google.com/pagead": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
   }
 }

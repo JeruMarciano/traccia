@@ -54,6 +54,12 @@ describe('cookiePlatform', () => {
     expect(cookiePlatform('_fbp', T)?.platform).toBe('Meta')
     expect(cookiePlatform('_ga', T)?.platform).toBe('Google Analytics')
   })
+  it('an exact row beats a wildcard row, and the longest wildcard prefix wins', () => {
+    const W: CookiePlatformRow[] = [['_gaxx_', 'Short', 'Analytics', 1], ['_gaxx_long_', 'Long', 'Analytics', 1], ['_gaxx_long_1', 'Exact', 'Analytics', 0]]
+    expect(cookiePlatform('_gaxx_long_1', W)?.platform).toBe('Exact')
+    expect(cookiePlatform('_gaxx_long_2', W)?.platform).toBe('Long')
+    expect(cookiePlatform('_gaxx_other', W)?.platform).toBe('Short')
+  })
   it('a name two platforms claim is not matched: a blank beats a guess', () => {
     expect(cookiePlatform('_fbp', [...T, ['_fbp', 'Other', 'Marketing', 0]])).toBeNull()
   })
