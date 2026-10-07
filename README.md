@@ -125,6 +125,6 @@ because an app that never contacts a server cannot update itself.
 
 ## License
 
-[MIT](LICENSE). Traccia's dependencies include five MPL-2.0 licensed Rust crates, pulled in
-unmodified by Tauri; their licences apply to those files only. They are named, with their
+[MIT](LICENSE). Traccia's dependencies include six MPL-2.0 licensed components: five Rust crates pulled in
+unmodified by Tauri, and the vendored `@duckduckgo/autoconsent`; their licences apply to those files only. They are named, with their
 upstream sources, in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
