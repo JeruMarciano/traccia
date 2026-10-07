@@ -74,6 +74,8 @@ for (const f of fs.readdirSync(D + 'runs').filter((f) => f.endsWith('.meta.json'
   r.fieldsPages = (ref.pages ?? []).reduce((s, p) => s + vf(p.fields).length, 0);
   const ifr = new Set([...(ref.home?.iframes ?? []), ...(ref.pages ?? []).flatMap((p) => p.iframes ?? [])].map((u) => { try { return reg(new URL(u).hostname); } catch { return null; } }).filter((h) => h && h !== site));
   r.embeds = [...ifr];
+  // Spec §7 calls an iframe a door only in these categories; a consent manager's own frame is not one.
+  r.embedsEligible = [...new Set([...(ref.home?.iframes ?? []), ...(ref.pages ?? []).flatMap((p) => p.iframes ?? [])].map((u) => { try { const x = new URL(u); return reg(x.hostname) !== site && ['maps', 'video', 'captcha', 'payments'].includes(identify(x.hostname, dict, x.pathname.split('/')[1] ?? '')?.category) ? x.hostname : null; } catch { return null; } }).filter(Boolean))];
   const doors = classifyDoors({ formFields: [], hosts: [], scannedHost: '', ...scan }, dict);
   r.doorsByKind = {};
   for (const d of doors) r.doorsByKind[d.kind] = (r.doorsByKind[d.kind] ?? 0) + 1;
@@ -103,5 +105,5 @@ console.log(`form fields: scanner ${sum('fieldsScan')}, ref home ${sum('fieldsHo
 console.log(`form pages missed ${ok.reduce((n, r) => n + r.formPagesMissed.length, 0)} of ${ok.reduce((n, r) => n + r.pagesWithForms.length, 0)}; contacts ${ok.reduce((n, r) => n + r.contactsMissed.length, 0)}`);
 console.log(`form pages missed with a field seen nowhere on the site: ${ok.reduce((n, r) => n + r.formPagesMissedUnseen.length, 0)}`);
 console.log(`embeds: ${ok.filter((r) => r.embeds.length).length} sites`);
-console.log(`sites with an embed door ${ok.filter((r) => r.embedDoor).length} of ${ok.filter((r) => r.embeds.length).length}`);
+console.log(`sites with an embed door: ${ok.filter((r) => r.embedDoor && r.embeds.length).length} of the ${ok.filter((r) => r.embeds.length).length} where the reference saw any third-party iframe; ${ok.filter((r) => r.embedDoor && r.embedsEligible.length).length} of the ${ok.filter((r) => r.embedsEligible.length).length} where it saw a maps/video/captcha/payments iframe (embed doors in all: ${ok.filter((r) => r.embedDoor).length})`);
 console.log('top unnamed orgs:', [...unnamed].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => `${k}(${v})`).join(' '));
