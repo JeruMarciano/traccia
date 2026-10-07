@@ -86,6 +86,8 @@ export interface VendorEntry {
   category: string
   /** Which purpose group the place belongs to, e.g. "Marketing". */
   purposeGroup: string
+  /** Why this entry's purpose group differs from the owner's other entries. Exempts it from the one-purpose-per-owner test. */
+  note?: string
 }
 
 export type VendorDictionary = Readonly<Record<string, VendorEntry>>

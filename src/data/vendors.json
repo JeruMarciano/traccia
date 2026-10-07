@@ -62,77 +62,92 @@
   "fonts.googleapis.com": {
     "owner": "Google",
     "category": "fonts",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "fonts.gstatic.com": {
     "owner": "Google",
     "category": "fonts",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "gstatic.com": {
     "owner": "Google",
     "category": "cdn",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "www.gstatic.com": {
     "owner": "Google",
     "category": "cdn",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "www.recaptcha.net": {
     "owner": "Google",
     "category": "captcha",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "recaptcha.net": {
     "owner": "Google",
     "category": "captcha",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "maps.googleapis.com": {
     "owner": "Google",
     "category": "maps",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "maps.google.com": {
     "owner": "Google",
     "category": "maps",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "apis.google.com": {
     "owner": "Google",
     "category": "infrastructure",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "googleapis.com": {
     "owner": "Google",
     "category": "infrastructure",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "youtube.com": {
     "owner": "Google",
     "category": "video",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "www.youtube.com": {
     "owner": "Google",
     "category": "video",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "youtube-nocookie.com": {
     "owner": "Google",
     "category": "video",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "ytimg.com": {
     "owner": "Google",
     "category": "video",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "i.ytimg.com": {
     "owner": "Google",
     "category": "video",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
   },
   "connect.facebook.net": {
     "owner": "Meta",
@@ -157,7 +172,8 @@
   "fbcdn.net": {
     "owner": "Meta",
     "category": "cdn",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "A content delivery network, apart from the advertising and social products"
   },
   "instagram.com": {
     "owner": "Meta",
@@ -202,7 +218,8 @@
   "licdn.com": {
     "owner": "Microsoft",
     "category": "cdn",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "A content delivery network, apart from the advertising and analytics products"
   },
   "snap.licdn.com": {
     "owner": "Microsoft",
@@ -232,7 +249,8 @@
   "ibytedtos.com": {
     "owner": "TikTok",
     "category": "cdn",
-    "purposeGroup": "Systems"
+    "purposeGroup": "Systems",
+    "note": "A content delivery network, apart from the advertising and social products"
   },
   "cloudflare.com": {
     "owner": "Cloudflare",
@@ -242,7 +260,8 @@
   "cloudflareinsights.com": {
     "owner": "Cloudflare",
     "category": "analytics",
-    "purposeGroup": "Marketing"
+    "purposeGroup": "Marketing",
+    "note": "Web analytics, apart from Cloudflare's infrastructure products"
   },
   "cdnjs.cloudflare.com": {
     "owner": "Cloudflare",
@@ -267,7 +286,8 @@
   "amazon-adsystem.com": {
     "owner": "Amazon",
     "category": "ads",
-    "purposeGroup": "Marketing"
+    "purposeGroup": "Marketing",
+    "note": "Amazon's advertising system, apart from its hosting and delivery infrastructure"
   },
   "s3.amazonaws.com": {
     "owner": "Amazon",
@@ -547,12 +567,14 @@
   "hsforms.com": {
     "owner": "HubSpot",
     "category": "forms",
-    "purposeGroup": "Marketing"
+    "purposeGroup": "Marketing",
+    "note": "Forms and analytics, apart from the HubSpot CRM"
   },
   "hsforms.net": {
     "owner": "HubSpot",
     "category": "forms",
-    "purposeGroup": "Marketing"
+    "purposeGroup": "Marketing",
+    "note": "Forms and analytics, apart from the HubSpot CRM"
   },
   "hubspotusercontent.net": {
     "owner": "HubSpot",
@@ -567,7 +589,8 @@
   "hs-analytics.net": {
     "owner": "HubSpot",
     "category": "analytics",
-    "purposeGroup": "Marketing"
+    "purposeGroup": "Marketing",
+    "note": "Forms and analytics, apart from the HubSpot CRM"
   },
   "intercom.io": {
     "owner": "Intercom",
@@ -642,7 +665,8 @@
   "woocommerce.com": {
     "owner": "Automattic",
     "category": "ecommerce",
-    "purposeGroup": "Sales"
+    "purposeGroup": "Sales",
+    "note": "WooCommerce and stats are separate products from WordPress hosting"
   },
   "jetpack.com": {
     "owner": "Automattic",
@@ -652,7 +676,8 @@
   "stats.wp.com": {
     "owner": "Automattic",
     "category": "analytics",
-    "purposeGroup": "Marketing"
+    "purposeGroup": "Marketing",
+    "note": "WooCommerce and stats are separate products from WordPress hosting"
   },
   "wix.com": {
     "owner": "Wix",
@@ -1208,5 +1233,134 @@
     "owner": "SDA Express Courier",
     "category": "delivery",
     "purposeGroup": "Delivery"
+  },
+  "google.it": {
+    "owner": "Google",
+    "category": "ads",
+    "purposeGroup": "Marketing"
+  },
+  "www.google.com/recaptcha": {
+    "owner": "Google",
+    "category": "captcha",
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
+  },
+  "www.gstatic.com/recaptcha": {
+    "owner": "Google",
+    "category": "captcha",
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
+  },
+  "www.google.com/maps": {
+    "owner": "Google",
+    "category": "maps",
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
+  },
+  "sibautomation.com": {
+    "owner": "Brevo",
+    "category": "email-marketing",
+    "purposeGroup": "Marketing"
+  },
+  "trustindex.io": {
+    "owner": "Trustindex",
+    "category": "reviews",
+    "purposeGroup": "Marketing"
+  },
+  "simplebooking.it": {
+    "owner": "Simplebooking",
+    "category": "scheduling",
+    "purposeGroup": "Sales"
+  },
+  "mapbox.com": {
+    "owner": "Mapbox",
+    "category": "maps",
+    "purposeGroup": "Systems"
+  },
+  "jimdo.com": {
+    "owner": "Jimdo",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "jimstatic.com": {
+    "owner": "Jimdo",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "wixapps.net": {
+    "owner": "Wix",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "cdn-website.com": {
+    "owner": "Duda",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "multiscreensite.com": {
+    "owner": "Duda",
+    "category": "hosting",
+    "purposeGroup": "Systems"
+  },
+  "cookieyes.com": {
+    "owner": "CookieYes",
+    "category": "consent",
+    "purposeGroup": "Systems"
+  },
+  "cdn-cookieyes.com": {
+    "owner": "CookieYes",
+    "category": "consent",
+    "purposeGroup": "Systems"
+  },
+  "s.w.org": {
+    "owner": "WordPress.org",
+    "category": "cdn",
+    "purposeGroup": "Systems"
+  },
+  "lottie.host": {
+    "owner": "LottieFiles",
+    "category": "cdn",
+    "purposeGroup": "Systems"
+  },
+  "piwik.pro": {
+    "owner": "Piwik PRO",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "gaug.es": {
+    "owner": "Fathom Analytics",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "shinystat.com": {
+    "owner": "ShinyStat",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "pinimg.com": {
+    "owner": "Pinterest",
+    "category": "social",
+    "purposeGroup": "Marketing"
+  },
+  "googleusercontent.com": {
+    "owner": "Google",
+    "category": "cdn",
+    "purposeGroup": "Systems",
+    "note": "Maps, fonts, video and captcha are Google products apart from its advertising and analytics business"
+  },
+  "trustyou.com": {
+    "owner": "TrustYou",
+    "category": "reviews",
+    "purposeGroup": "Marketing"
+  },
+  "leadfeeder.com": {
+    "owner": "Leadfeeder",
+    "category": "analytics",
+    "purposeGroup": "Marketing"
+  },
+  "plyr.io": {
+    "owner": "Plyr",
+    "category": "video",
+    "purposeGroup": "Systems"
   }
 }

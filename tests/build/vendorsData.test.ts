@@ -28,11 +28,9 @@ describe('the shipped vendor dictionary', () => {
     }
   })
 
-  it('keys every entry by a bare lowercase host with no scheme, port or path', () => {
+  it('keys every entry by a lowercase host, optionally with one plain first path segment', () => {
     for (const host of Object.keys(dict)) {
-      expect(host, host).toBe(host.toLowerCase())
-      expect(host, host).not.toMatch(/[:/?#]/)
-      expect(host, host).toContain('.')
+      expect(host, host).toMatch(/^[a-z0-9.-]+\.[a-z0-9-]+(\/[a-z0-9_-]{1,32})?$/)
     }
   })
 
@@ -52,5 +50,22 @@ describe('the shipped vendor dictionary', () => {
     ]) {
       expect(identify(host, dict), host).not.toBeNull()
     }
+  })
+
+  it('entries for one owner agree on purpose group unless a note says why', () => {
+    const clashes = (d: VendorDictionary): string[] => {
+      const byOwner = new Map<string, Set<string>>()
+      for (const e of Object.values(d)) {
+        if (e.note) continue
+        if (!byOwner.has(e.owner)) byOwner.set(e.owner, new Set())
+        byOwner.get(e.owner)!.add(e.purposeGroup)
+      }
+      return [...byOwner].filter(([, g]) => g.size > 1).map(([o, g]) => `${o}: ${[...g].join('/')}`)
+    }
+    // The check can fail: a disagreeing pair with no note is reported, one with a note is not.
+    const bad = { ...dict, 'one.example': { owner: 'X', category: 'ads', purposeGroup: 'Marketing' }, 'two.example': { owner: 'X', category: 'cdn', purposeGroup: 'Systems' } }
+    expect(clashes(bad)).toEqual(['X: Marketing/Systems'])
+    expect(clashes({ ...bad, 'two.example': { ...bad['two.example'], note: 'a CDN, not the ads product' } })).toEqual([])
+    expect(clashes(dict)).toEqual([])
   })
 })
