@@ -124,3 +124,42 @@ not make (44, 53):
 Not clicked: 20 (the reference's button was outside the banner — correct refusal), 35 (above), 46
 (CookieYes "Accetta tutti i cookies": the label is outside the vocabulary and the rule is refused
 by the guard).
+
+## R3 (after Task 8, 2026-10-07)
+
+Two passes on the 55 sites, reference reused: `scanner-upgrade-R3-2026-10-07` (commit 2151dc6) and
+`scanner-upgrade-R3b-2026-10-07` (commit aef7b82, after the review round).
+
+| Gate | Target | R3 | R3b |
+|---|---|---|---|
+| contact pages with a form missed | ≤ 3 | 1 | **0** |
+| scan time p90 | ≤ 2 min | 83 s | **78 s** |
+| key pages with a form missed | ≤ 15 | 50 of 153 | 38 of 144 |
+| …of which hold a field seen nowhere on the site | ≤ 15 (gate from 2026-10-07) | — | **10** |
+
+Reported: median `recallAll` 0.96, cookies at end 557/587, accept clicked 42, no `SCAN_FAILED`
+after one re-run (site 28 timed out once on `Page.navigate` in the observe stage, then scanned in
+54 s; a key page that hangs still fails the whole scan — proposed follow-up, it should be a gap).
+
+**What R3 found.**
+
+- A real defect: the scan-wide cap of 256 form fields ran out after five to seven pages on four
+  shops (12, 13, 49, 51), so later key pages, though visited, returned no fields. The cap is now
+  64 per page × 13 pages.
+- Two measuring errors in `compare.mjs`: the reference lists the same page with and without a
+  trailing slash, and both sides were cut at 40 characters. Paths are now normalised.
+- The rest is a difference of choice, not a loss. The reference takes the first twelve links whose
+  address or text starts with one of its words, which include `privacy`, `cookie`, `prodott`,
+  `iscri`. The picker follows spec §6. On a site with forty product pages each visits a different
+  dozen, all carrying the same form. Of the 38 pages still "missed", 28 hold only fields the scan
+  captured elsewhere on the same site; the other 10 are course pages of one site (38) with the
+  job-application form already captured, differing by one checkbox name.
+
+**Decided with the user (2026-10-07).** The gate "key pages with a form missed ≤ 15" cannot be met
+without making the picker copy the reference's words and order. The gate now counts only missed
+pages holding at least one visible field the scan saw nowhere on that site (`formPagesMissedUnseen`
+in `compare.json`), same thresholds. The old figure stays printed beside it.
+
+**Accepted with Task 8's audit.** A key link that leaves the site is not probed and everything
+that visit contacted is rolled back, with one gap note per page; cookies such a page set stay in
+the jar. Pages not linked from the home page are not reached (sitemap.xml is the spec's follow-up).
