@@ -440,6 +440,9 @@ pub struct Observation {
     /// (`Driver::visit` returned `false`) contributes nothing here, the same
     /// rule as [`Self::form_fields`].
     pub storage_keys: Vec<StorageKey>,
+    /// The key pages that were loaded (not the home page), with the purpose
+    /// their link was picked for. An off-site redirect is not here.
+    pub pages: Vec<VisitedPage>,
 }
 
 /// The most distinct gap keys tracked before the ledger stops deduplicating.
@@ -567,7 +570,7 @@ const MAX_HOSTS: usize = 4096;
 /// name rather than by arrival order because arrival order is network timing,
 /// and a map that reorders itself between two runs of the same scan is not
 /// something a user can trust.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct HostAccumulator {
     counts: BTreeMap<String, (u32, Phase)>,
     overflowed: bool,
@@ -715,38 +718,163 @@ fn strip_port(host_port: &str) -> &str {
     }
 }
 
-/// The links on `entry_url`'s page that are worth loading next: same scheme
-/// and same host as the entry URL, absolute, not the entry page itself, in the
-/// order the page listed them, deduplicated, truncated to `limit`.
+/// What a key page is for. Spec §6.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Purpose {
+    Contacts,
+    Careers,
+    Shop,
+    Booking,
+    Newsletter,
+    Account,
+}
+
+/// Spec §6, verbatim. A keyword with a `-` is a sequence of whole words.
+const PURPOSES: [(Purpose, &[&str]); 6] = [
+    (
+        Purpose::Contacts,
+        &["contatti", "contatto", "contattaci", "contact", "contacts", "dove-siamo"],
+    ),
+    (
+        Purpose::Careers,
+        &["lavora-con-noi", "carriere", "careers", "jobs", "candidature", "posizioni-aperte"],
+    ),
+    (
+        Purpose::Shop,
+        &["shop", "negozio", "store", "carrello", "cart", "checkout", "prodotti"],
+    ),
+    (
+        Purpose::Booking,
+        &[
+            "prenota",
+            "prenotazione",
+            "prenotazioni",
+            "booking",
+            "book",
+            "appuntamento",
+            "reservation",
+        ],
+    ),
+    (Purpose::Newsletter, &["newsletter", "iscriviti", "subscribe"]),
+    (
+        Purpose::Account,
+        &["login", "accedi", "registrati", "area-riservata", "account"],
+    ),
+];
+
+/// Extensions of files that are not pages.
+const SKIPPED_EXTENSIONS: [&str; 12] = [
+    "pdf", "doc", "docx", "xls", "xlsx", "zip", "jpg", "jpeg", "png", "gif", "webp", "svg",
+];
+
+/// Lowercase words: everything that is not `[a-z0-9àèéìòù]` separates, so
+/// `facebook` is one word and `lavora-con-noi` is three.
+fn words(s: &str) -> Vec<String> {
+    s.to_lowercase()
+        .split(|c: char| !(c.is_ascii_alphanumeric() || "àèéìòù".contains(c)))
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// True when `keyword`'s words appear contiguously, in order, in `words`.
+fn has_keyword(words: &[String], keyword: &str) -> bool {
+    let kw: Vec<&str> = keyword.split('-').collect();
+    words
+        .windows(kw.len())
+        .any(|w| w.iter().zip(&kw).all(|(a, b)| a == b))
+}
+
+/// The purpose a link serves and how strongly: 2 for a keyword in the path
+/// plus 1 for one in the anchor text. The strongest purpose wins; a tie goes
+/// to the earlier row of [`PURPOSES`]. `None` when nothing matches.
+pub fn purpose_of(path: &str, text: &str) -> Option<(Purpose, u8)> {
+    let (path, text) = (words(path), words(text));
+    let mut best: Option<(Purpose, u8)> = None;
+    for (purpose, keywords) in PURPOSES {
+        let score = 2 * keywords.iter().any(|k| has_keyword(&path, k)) as u8
+            + keywords.iter().any(|k| has_keyword(&text, k)) as u8;
+        if score > best.map_or(0, |b| b.1) {
+            best = Some((purpose, score));
+        }
+    }
+    best
+}
+
+/// The path and the query of an absolute `http(s)` URL.
+fn path_and_query(url: &str) -> (&str, &str) {
+    let rest = url.split_once("//").map_or("", |(_, r)| r);
+    let rest = rest.find(['/', '?']).map_or("", |i| &rest[i..]);
+    rest.split_once('?').unwrap_or((rest, ""))
+}
+
+/// The pages worth loading next, `(url, purpose)`: same scheme and host as
+/// `entry_url` (compared exactly: `www.` is another host), absolute, not the
+/// entry page, no files and no print views, deduplicated.
 ///
-/// Scheme and host are compared exactly. `www.rossi-editore.it` is a different
-/// host from `rossi-editore.it` and is not followed — they are frequently
-/// different servers, and guessing that they are the same site would take the
-/// scan somewhere the user did not ask for.
-pub fn same_origin_links(entry_url: &str, links: &[&str], limit: usize) -> Vec<String> {
+/// Order: the best-scoring link per purpose (table order), then every other
+/// link with a purpose by score, then the rest in document order; truncated
+/// to `limit`.
+pub fn pick_pages(
+    entry_url: &str,
+    links: &[(&str, &str)],
+    limit: usize,
+) -> Vec<(String, Option<Purpose>)> {
     let Some(entry_origin) = origin(entry_url) else {
         return Vec::new();
     };
     let entry_key = canonical(entry_url);
-    let mut out: Vec<String> = Vec::new();
-    for link in links {
+    // (url, purpose, score) in document order.
+    let mut found: Vec<(String, Option<Purpose>, u8)> = Vec::new();
+    for (link, text) in links {
         let link = link.split('#').next().unwrap_or("");
         if link.is_empty() || origin(link).as_ref() != Some(&entry_origin) {
             continue;
         }
-        let key = canonical(link);
-        if key == entry_key || out.iter().any(|seen| canonical(seen) == key) {
+        let (path, query) = path_and_query(link);
+        let extension = path.rsplit('/').next().and_then(|f| f.rsplit_once('.')).map(|e| e.1);
+        if extension.is_some_and(|e| SKIPPED_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+            || words(&format!("{path} {query}")).iter().any(|w| w == "print")
+        {
             continue;
         }
-        // Tested *before* the push, not after: testing after returns one link
-        // for a limit of zero, which contradicts this function's own contract
-        // and would be a trap for a caller passing a computed budget.
-        if out.len() >= limit {
-            break;
+        let key = canonical(link);
+        if key == entry_key || found.iter().any(|(seen, ..)| canonical(seen) == key) {
+            continue;
         }
-        out.push(link.to_string());
+        let (purpose, score) = purpose_of(path, text).map_or((None, 0), |(p, s)| (Some(p), s));
+        found.push((link.to_string(), purpose, score));
     }
-    out
+    let mut taken = vec![false; found.len()];
+    let mut out: Vec<usize> = Vec::new();
+    for (purpose, _) in PURPOSES {
+        let best = found
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.1 == Some(purpose))
+            .max_by_key(|(i, f)| (f.2, std::cmp::Reverse(*i)))
+            .map(|(i, _)| i);
+        if let Some(i) = best {
+            taken[i] = true;
+            out.push(i);
+        }
+    }
+    let mut more: Vec<usize> = (0..found.len()).filter(|&i| !taken[i] && found[i].1.is_some()).collect();
+    more.sort_by_key(|&i| (std::cmp::Reverse(found[i].2), i));
+    out.extend(more);
+    out.extend((0..found.len()).filter(|&i| found[i].1.is_none()));
+    out.into_iter()
+        .take(limit)
+        .map(|i| (found[i].0.clone(), found[i].1))
+        .collect()
+}
+
+/// A page the walk visited, and what it is for when its link said so.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct VisitedPage {
+    pub page: String,
+    pub purpose: Option<Purpose>,
 }
 
 /// `(scheme, host-and-port)` of an absolute `http(s)` URL, lowercased, with
@@ -909,6 +1037,12 @@ const MAX_LINKS_READ: usize = 500;
 /// any real URL and past IE's old 2,083-character limit; the point is that
 /// `MAX_LINKS_READ` bounds the count and this bounds the bytes.
 const MAX_LINK_LEN: usize = 4096;
+/// The longest anchor text kept, in [`LINKS_PROBE`] and again in Rust.
+const MAX_LINK_TEXT: usize = 64;
+/// Read once per scan, on the home page. Fixed: nothing in it is built from
+/// anything the page said. Its three numbers are [`MAX_LINKS_READ`],
+/// [`MAX_LINK_LEN`] and [`MAX_LINK_TEXT`]; a test keeps them equal.
+const LINKS_PROBE: &str = "JSON.stringify([...document.querySelectorAll('a[href]')].slice(0, 500).map(a => [String(a.href).slice(0, 4096), String(a.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 64)]))";
 
 // ---------------------------------------------------------------------------
 // Transport
@@ -1200,6 +1334,8 @@ struct Driver<T: CdpTransport> {
     /// home page before any click. `None` when that snapshot never ran, failed,
     /// or came back with a gap: then which cookies came first is not known.
     before_cookies: Option<HashSet<(String, String)>>,
+    /// Key pages loaded on the entry's own origin, see [`Observation::pages`].
+    pages: Vec<VisitedPage>,
 }
 
 impl<T: CdpTransport> Driver<T> {
@@ -1220,6 +1356,7 @@ impl<T: CdpTransport> Driver<T> {
             phase: Phase::Before,
             attempt_known: None,
             before_cookies: None,
+            pages: Vec::new(),
         }
     }
 
@@ -1588,21 +1725,17 @@ impl<T: CdpTransport> Driver<T> {
         Ok(true)
     }
 
-    /// The `href`s of the page's own anchors, already resolved to absolute
-    /// URLs by the DOM.
-    async fn links(&mut self, session: &SessionId) -> Result<Vec<String>, CdpError> {
-        // The length filter runs **in the page**, before any of this becomes a
-        // WebSocket frame. It has to: chromiumoxide's `Connection` is built
+    /// `(href, text)` of the page's own anchors, `href` already resolved to
+    /// an absolute URL by the DOM, `text` the anchor's whitespace-collapsed
+    /// text.
+    async fn links(&mut self, session: &SessionId) -> Result<Vec<(String, String)>, CdpError> {
+        // The caps run **in the page**, before any of this becomes a
+        // WebSocket frame. They have to: chromiumoxide's `Connection` is built
         // with `max_message_size: None, max_frame_size: None` (conn.rs:43-46),
         // so 500 anchors carrying a megabyte of `href` each would be one
         // ~500 MB frame buffered whole and then re-allocated again by
         // `serde_json`. Capping the count alone does not bound the bytes.
-        let mut params = EvaluateParams::new(format!(
-            "JSON.stringify(Array.from(document.querySelectorAll('a[href]'))\
-             .map(function (a) {{ return String(a.href); }})\
-             .filter(function (h) {{ return h.length <= {MAX_LINK_LEN}; }})\
-             .slice(0, {MAX_LINKS_READ}))"
-        ));
+        let mut params = EvaluateParams::new(LINKS_PROBE.to_string());
         // [B2] The call contract every probe (`Runtime.evaluate`) follows:
         // read the value back rather than a remote object handle, never pause
         // the page on an uncaught throw, never wait on a promise this probe
@@ -1646,7 +1779,15 @@ impl<T: CdpTransport> Driver<T> {
         else {
             return Ok(Vec::new());
         };
-        Ok(serde_json::from_str::<Vec<String>>(json).unwrap_or_default())
+        // Capped again here: the page is not trusted to have run its own
+        // caps. An href at the in-page cap was cut off, so it is not a URL.
+        let links = serde_json::from_str::<Vec<(String, String)>>(json).unwrap_or_default();
+        Ok(links
+            .into_iter()
+            .filter(|(href, _)| href.chars().count() < MAX_LINK_LEN)
+            .take(MAX_LINKS_READ)
+            .map(|(href, text)| (href, tame(&text, MAX_LINK_TEXT)))
+            .collect())
     }
 
     /// Evaluates `expression` on `session` under the fixed [B2] contract —
@@ -2189,15 +2330,27 @@ impl<T: CdpTransport> Driver<T> {
         if cancel.is_cancelled() || max_pages <= 1 {
             return self.finish(pages_visited, cancel.is_cancelled()).await;
         }
-        let hrefs = self.links(&session).await?;
-        let refs: Vec<&str> = hrefs.iter().map(|s| s.as_str()).collect();
-        let follow = same_origin_links(entry_url, &refs, (max_pages - 1) as usize);
-        for url in follow {
+        let links = self.links(&session).await?;
+        let refs: Vec<(&str, &str)> = links.iter().map(|(h, t)| (h.as_str(), t.as_str())).collect();
+        let follow = pick_pages(entry_url, &refs, (max_pages - 1) as usize);
+        let entry_origin = origin(entry_url);
+        for (url, purpose) in follow {
             if cancel.is_cancelled() {
                 break;
             }
+            let before = self.acc.clone();
             if self.visit(&session, &url, SETTLE_AFTER_LOAD, cancel).await? {
+                // A same-origin link can redirect away. Where the page ended
+                // up decides: an off-site page is not probed, not counted, and
+                // the hosts first seen while on it are given back.
+                let landed = self.current_url(&session).await?;
+                if landed.is_some_and(|u| origin(&u) != entry_origin) {
+                    self.acc = before;
+                    self.gaps.note("page:offsite");
+                    continue;
+                }
                 pages_visited += 1;
+                self.pages.push(VisitedPage { page: page_identity(&url), purpose });
                 if !cancel.is_cancelled() {
                     let fields = self.probe_form_fields(&session, &url).await?;
                     self.form_fields.extend(fields);
@@ -2230,6 +2383,7 @@ impl<T: CdpTransport> Driver<T> {
             consent: std::mem::take(&mut self.consent),
             form_fields: std::mem::take(&mut self.form_fields),
             storage_keys: std::mem::take(&mut self.storage_keys),
+            pages: std::mem::take(&mut self.pages),
         }
     }
 
@@ -2474,23 +2628,61 @@ mod tests {
         assert_eq!(names_a, names_b);
     }
 
+    fn pick(entry: &str, links: &[&str], limit: usize) -> Vec<String> {
+        let pairs: Vec<(&str, &str)> = links.iter().map(|l| (*l, "")).collect();
+        pick_pages(entry, &pairs, limit).into_iter().map(|p| p.0).collect()
+    }
+
+    #[test]
+    fn facebook_is_not_booking() {
+        assert_eq!(purpose_of("/facebook", "Facebook"), None);
+        assert_eq!(purpose_of("/book-a-table", ""), Some((Purpose::Booking, 2)));
+    }
+
+    #[test]
+    fn multi_word_keywords_match_as_a_sequence_in_path_or_text() {
+        assert_eq!(purpose_of("/lavora-con-noi/", "").map(|p| p.0), Some(Purpose::Careers));
+        assert_eq!(purpose_of("/pagina-7", "Lavora con noi").map(|p| p.0), Some(Purpose::Careers));
+        assert_eq!(purpose_of("/noi", "Chi siamo"), None);
+    }
+
+    #[test]
+    fn picks_best_per_purpose_then_more_matches_then_document_order() {
+        let site = concat!("https", "://site.it");
+        let l = |p: &str| format!("{site}{p}");
+        let links = [
+            (l("/chi-siamo"), "Chi siamo"),
+            (l("/contatti"), "Contatti"),
+            (l("/blog"), "Blog"),
+            (l("/prenota"), "Prenota ora"),
+            (l("/facebook"), "Facebook"),
+            (l("/listino.pdf"), "Listino"),
+            (l("/contatti?print=1"), "Stampa"),
+            ("mailto:a@site.it".to_string(), "Scrivici"),
+            (concat!("https", "://other.it/contact").to_string(), "Contact"),
+        ];
+        let refs: Vec<(&str, &str)> = links.iter().map(|(a, b)| (a.as_str(), *b)).collect();
+        let got: Vec<String> = pick_pages(&l("/"), &refs, 4).into_iter().map(|p| p.0).collect();
+        assert_eq!(got, vec![l("/contatti"), l("/prenota"), l("/chi-siamo"), l("/blog")]);
+    }
+
     #[test]
     fn same_origin_links_are_followed_and_others_are_not() {
         let links = [
             "https://rossi-editore.it/about",
-            "https://rossi-editore.it/contact",
+            "https://rossi-editore.it/news",
             "https://www.rossi-editore.it/other",
             "https://facebook.com/rossi",
             "mailto:info@rossi-editore.it",
             "javascript:void(0)",
             "#anchor",
         ];
-        let next = same_origin_links("https://rossi-editore.it/", &links, 10);
+        let next = pick("https://rossi-editore.it/", &links, 10);
         assert_eq!(
             next,
             vec![
                 "https://rossi-editore.it/about",
-                "https://rossi-editore.it/contact"
+                "https://rossi-editore.it/news"
             ]
         );
     }
@@ -2502,14 +2694,14 @@ mod tests {
             .collect();
         let refs: Vec<&str> = links.iter().map(|s| s.as_str()).collect();
         assert_eq!(
-            same_origin_links("https://rossi-editore.it/", &refs, 10).len(),
+            pick("https://rossi-editore.it/", &refs, 10).len(),
             10
         );
     }
 
     #[test]
     fn does_not_follow_the_entry_page_again() {
-        let next = same_origin_links(
+        let next = pick(
             "https://rossi-editore.it/",
             &["https://rossi-editore.it/", "https://rossi-editore.it/a"],
             10,
@@ -3221,12 +3413,16 @@ mod tests {
             .and_then(|e| e.as_str())
             .expect("an expression was submitted");
         assert!(
-            expression.contains(&format!("h.length <= {MAX_LINK_LEN}")),
-            "the per-href length filter is gone: {expression}"
+            expression.contains(&format!("slice(0, {MAX_LINK_LEN})")),
+            "the per-href length cap is gone: {expression}"
+        );
+        assert!(
+            expression.contains(&format!("slice(0, {MAX_LINK_TEXT})")),
+            "the anchor text cap is gone: {expression}"
         );
         assert!(
             expression.contains(&format!("slice(0, {MAX_LINKS_READ})")),
-            "the href count cap is gone: {expression}"
+            "the link count cap is gone: {expression}"
         );
     }
 
@@ -3317,7 +3513,7 @@ mod tests {
         // M-1. Unreachable from `run` today, but the function's contract says
         // "truncated to limit" and a caller passing a computed budget must be
         // able to trust it.
-        assert!(same_origin_links(
+        assert!(pick(
             "https://rossi-editore.it/",
             &["https://rossi-editore.it/a"],
             0
@@ -3328,7 +3524,7 @@ mod tests {
     #[test]
     fn a_default_port_does_not_make_a_second_origin() {
         // M-4. https://x.example:443/b is the same origin as https://x.example/b.
-        let next = same_origin_links(
+        let next = pick(
             "https://rossi-editore.it/",
             &[
                 "https://rossi-editore.it:443/b",
@@ -3347,7 +3543,7 @@ mod tests {
             ]
         );
         // And a genuinely different port is still a different origin.
-        assert!(same_origin_links(
+        assert!(pick(
             "https://rossi-editore.it/",
             &["https://rossi-editore.it:8443/b"],
             10
@@ -3418,7 +3614,7 @@ mod tests {
     fn does_not_spend_two_pages_on_one_document() {
         // A page that links the same URL twice, or links both the bare origin
         // and its root, would otherwise burn the page budget on one document.
-        let next = same_origin_links(
+        let next = pick(
             "https://rossi-editore.it/entry",
             &[
                 "https://rossi-editore.it/a",
@@ -3458,6 +3654,7 @@ mod tests {
             consent: Consent::default(),
             form_fields: Vec::new(),
             storage_keys: Vec::new(),
+            pages: Vec::new(),
         };
         assert_eq!(
             serde_json::to_value(&observation).expect("json"),
@@ -3470,7 +3667,8 @@ mod tests {
                 "consent": {"cmp": null, "clicked": false, "rule": null, "ruleName": "",
                             "matchedText": "", "clickNavigated": false},
                 "formFields": [],
-                "storageKeys": []
+                "storageKeys": [],
+                "pages": []
             })
         );
     }

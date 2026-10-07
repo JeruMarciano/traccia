@@ -44,7 +44,7 @@ pub const SCAN_BUSY: &str = "SCAN_BUSY";
 pub const SCAN_NO_BROWSER: &str = "SCAN_NO_BROWSER";
 
 /// How many pages one scan visits. The cap is the product's, not a defence.
-const MAX_PAGES: u32 = 10;
+const MAX_PAGES: u32 = 13;
 /// Long enough for any address a user pastes; short enough that nothing
 /// pathological is ever parsed.
 const MAX_URL_LEN: usize = 2048;
@@ -80,6 +80,9 @@ pub struct ScanOutput {
     /// see `cdp::Observation::storage_keys`. Never a value, only the key's
     /// own name and size.
     pub storage_keys: Vec<cdp::StorageKey>,
+    /// The key pages visited and what each is for — see
+    /// `cdp::Observation::pages`.
+    pub pages: Vec<cdp::VisitedPage>,
     /// When the cookie jar was captured — `SystemTime::now()` taken as close
     /// as this module can get to the moment `cdp::observe` actually sent
     /// `Storage.getCookies`, deliberately not `profile_dir_path()` time,
@@ -501,6 +504,7 @@ async fn run_pipeline(
             consent: observation.consent,
             form_fields: observation.form_fields,
             storage_keys: observation.storage_keys,
+            pages: observation.pages,
             captured_at_epoch_seconds,
         })
     })();
@@ -823,6 +827,10 @@ mod tests {
                 key: "auth_token".into(),
                 bytes: 42,
             }],
+            pages: vec![cdp::VisitedPage {
+                page: "https://rossi-editore.it/contatti".into(),
+                purpose: Some(cdp::Purpose::Contacts),
+            }],
             captured_at_epoch_seconds: 1_700_000_000,
         })
         .expect("serialise");
@@ -843,6 +851,7 @@ mod tests {
         assert!(json.contains("\"storageKeys\""));
         assert!(json.contains("\"bytes\""));
         assert!(json.contains("\"capturedAtEpochSeconds\""));
+        assert!(json.contains("\"purpose\":\"contacts\""));
     }
 
     #[test]

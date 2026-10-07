@@ -62,6 +62,9 @@ for (const f of fs.readdirSync(D + 'runs').filter((f) => f.endsWith('.meta.json'
   r.scanFormPages = scan.formFields ? [...new Set(scan.formFields.filter((x) => x.type !== 'hidden').map((x) => new URL(x.page).pathname.slice(0, 40)))] : [];
   r.fieldsHome = vf(ref.home?.fields).length;
   r.pagesWithForms = (ref.pages ?? []).filter((p) => vf(p.fields).length).map((p) => new URL(p.url).pathname.slice(0, 40));
+  const scanPaths = new Set(r.scanFormPages);
+  r.formPagesMissed = r.pagesWithForms.filter((p) => !scanPaths.has(p));
+  r.contactsMissed = r.formPagesMissed.filter((p) => /(^|[^a-z])(contatt[a-z]*|contact[a-z]*|dove-siamo)([^a-z]|$)/.test(p));
   r.fieldsPages = (ref.pages ?? []).reduce((s, p) => s + vf(p.fields).length, 0);
   const ifr = new Set([...(ref.home?.iframes ?? []), ...(ref.pages ?? []).flatMap((p) => p.iframes ?? [])].map((u) => { try { return reg(new URL(u).hostname); } catch { return null; } }).filter((h) => h && h !== site));
   r.embeds = [...ifr];
@@ -87,5 +90,6 @@ console.log(`cookies matched at end ${sum('cookiesFinalMatched')}/${sum('cookies
 console.log(`scanner third parties by phase: before ${sum('scanPre3')}, after ${sum('scanAfter3')}; ref pre-consent hosts not tagged before: ${sum('scanMissPreByPhase')}`);
 console.log(`scan p90 ${p90('scanMs') ?? 'n/a'}${p90('scanMs') == null ? '' : ' ms'}`);
 console.log(`form fields: scanner ${sum('fieldsScan')}, ref home ${sum('fieldsHome')}, ref key pages ${sum('fieldsPages')}; sites with forms only off-home: ${ok.filter((r) => !r.fieldsHome && r.fieldsPages).length}`);
+console.log(`form pages missed ${ok.reduce((n, r) => n + r.formPagesMissed.length, 0)} of ${ok.reduce((n, r) => n + r.pagesWithForms.length, 0)}; contacts ${ok.reduce((n, r) => n + r.contactsMissed.length, 0)}`);
 console.log(`embeds: ${ok.filter((r) => r.embeds.length).length} sites`);
 console.log('top unnamed orgs:', [...unnamed].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => `${k}(${v})`).join(' '));

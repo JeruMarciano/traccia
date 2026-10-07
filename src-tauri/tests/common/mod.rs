@@ -72,6 +72,9 @@ impl Site {
             let dial = match (h.as_str(), p) {
                 (h, 80) if h == host => Some(origin_port),
                 (THIRD_PARTY_HOST, 80) => Some(third_party_port),
+                // The off-site host a `302 http://offsite-{port}.invalid/..`
+                // fixture sends the browser to: same listener, other name.
+                (h, 80) if h == format!("offsite-{origin_port}.invalid") => Some(origin_port),
                 _ => None,
             };
             Box::pin(async move {
@@ -93,7 +96,8 @@ pub async fn fixture_site() -> Site {
 
 /// Starts the loopback fixture server and returns the `Site` describing it.
 /// Each `(path, html)` pair is served on an exact path match (`/` = home);
-/// any other path is a 404; an `html` of `"302 <location>"` is that redirect.
+/// any other path is a 404; an `html` of `"302 <location>"` is that redirect
+/// (`{port}` in the location is this listener's port).
 /// A fresh listener and a fresh, port-derived host
 /// per call, so concurrent tests never share one scan's admitted origin with
 /// another's.
@@ -119,7 +123,7 @@ async fn serve(pages: Vec<(&'static str, String)>) -> SocketAddr {
             let Ok((stream, _peer)) = listener.accept().await else {
                 break;
             };
-            tokio::spawn(serve_fixture_page(stream, Arc::clone(&pages)));
+            tokio::spawn(serve_fixture_page(stream, Arc::clone(&pages), addr.port()));
         }
     });
     addr
@@ -146,7 +150,11 @@ pub async fn scan(site: &Site) -> ScanOutput {
 /// request has arrived. Carried risk (a) from the task brief — whether a
 /// *real* origin server would instead treat the early FIN as an abort — is
 /// a property of servers this suite does not control and remains open.
-async fn serve_fixture_page(mut stream: TcpStream, pages: Arc<Vec<(&'static str, String)>>) {
+async fn serve_fixture_page(
+    mut stream: TcpStream,
+    pages: Arc<Vec<(&'static str, String)>>,
+    port: u16,
+) {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 1024];
     loop {
@@ -160,7 +168,7 @@ async fn serve_fixture_page(mut stream: TcpStream, pages: Arc<Vec<(&'static str,
         // A page registered as "302 <location>" is a redirect.
         Some((_, html)) if html.starts_with("302 ") => format!(
             "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            &html[4..],
+            html[4..].replace("{port}", &port.to_string()),
         ),
         Some((_, html)) => format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
