@@ -265,7 +265,7 @@ normal-looking result. That is Task 14.
 - Task 10: PASS.
 - Task 14: PASS. One Important fixed: a failed navigation no longer erases what the live page
   contacted.
-- Task 15: gate BLOCK, then <<CONTROLLER FILLS: round-2 verdict>> (the download policy lapsed
+- Task 15: gate BLOCK, then PASS on the second round (the download policy lapsed
   between connection close and kill; download directory now seeded inside the throw-away profile).
 
 **Accepted risks, in plain terms.**
@@ -315,7 +315,51 @@ Found by the re-measures and audits; decided with the user 2026-10-07 to run bef
   are refused by exact name. The egress test that was red on this machine (Chrome's updater) is
   green.
 - These landed after R5. They were checked by their own tests and by a spot re-scan of ten sites
-  plus a non-existent address: <<CONTROLLER FILLS: spot result>>. R5 itself was not re-run.
+  plus a non-existent address: seven of the ten sites could be scanned with the final code (05, 10,
+  13, 28, 38, 46, 53) and agree with R5 — same pages visited, cookies, fields and click on each;
+  hosts within ±3; site 46 now reads `no-button` instead of `click-failed`, as the final review
+  asked. Sites 00, 22 and 24 did not resolve on this machine during the check (the same DNS fault as
+  in §2) and were not compared. The non-existent https address, and every site while it did not
+  resolve, returned in about 10 s with zero pages, no hosts, a blank consent record and one gap —
+  the HTTPS path of Task 14, which no local test exercises, seen live. Site 13's gap count moved
+  between 0 and 9 over five runs of the same build (it carries about 30 frames; a frame that
+  attaches late is a counted gap), so a gap count is not comparable run to run. No file reached the
+  Downloads folder. R5 itself was not re-run.
+
+## 6b. The final whole-branch review (2026-10-07)
+
+One review of the whole range (`e0c2bd9..be836ba`) on the most capable model, pointed at the
+ledger's deferred minors. No Critical finding; none of the deferred minors had to be fixed before
+merge. It found three places, invisible to any per-task review, where the app could say an untrue
+thing about consent. All three were fixed in one wave (`d03ad79`, `47ba2e2`), re-reviewed and
+audited (PASS):
+
+- **A rescan kept the old consent phase.** For a service already in the project only the request
+  count was refreshed, so a tracker first recorded "before consent" — every observation in a v0.3
+  project — kept that label after a rescan saw it only after the accept click. The latest scan now
+  wins, blank included.
+- **"The click did not complete" when no click was tried.** A consent manager whose rule the click
+  guard refuses, with no label to press, is now `no-button` (site 46).
+- **An unknown click outcome was shown as "before consent" and "No consent was given".** When a
+  click was sent and never answered, the phase of everything since the attempt is now blank (host
+  and cookie phase omitted, reason blank) and the notice says "Whether consent was given could not
+  be established." Services seen before the attempt stay "before".
+
+The same wave fixed the doc comments later tasks had left stale, capped the matched label at 64 in
+the renderer as in Rust, removed the profile on a failed Preferences seed, and pinned the seed call
+with a test.
+
+Left open by ruling (one fix wave, no second), both small and neither load-bearing — the first two
+entries of §10:
+
+- the opt-in budget running out blanks the phases without counting a gap;
+- a text click that answers "clicked" with a label outside the fixed vocabulary still reads as "not
+  clicked, before" (unreachable unless the isolated world is compromised).
+
+Accepted limits from the same review: when the consent engine answers "failed" after the first
+click of a multi-step rule has landed, the result is "click failed" and "before"; a page can stall
+the consent engine for its 10 s budget and so blank the phase of what loads afterwards (information
+is lost; services seen before the attempt are untouched).
 
 ## 7. Known limits
 
@@ -344,8 +388,9 @@ Transport and scan driver (Tasks 1, 4, 5)
   test covers the top-page session only. The typed filter was re-verified live on the four sites
   (fixed).
 - Task 4: M2, `HOME_WAIT` placement untested (R1 covers it); N1, `compare.mjs` read a missing cookie
-  phase as "before", inflating pre-consent from R2 (to be fixed in Task 6/7); N2, `types.ts:195`
-  comment; M5 `dead_code` attributes (Task 6 was to remove them).
+  phase as "before", inflating pre-consent from R2 (fixed: it reads "unknown"; the same for a host
+  phase since the final review); N2, `types.ts:195` comment (accurate today); M5 `dead_code`
+  attributes (removed with Task 6).
 - Task 5: `Runtime.enable` never disabled; raw rule names in the old notice (until Task 6); vendor
   CRLF on Windows; context-filter unit test missing.
 - Task 6: M1 queued `optInResult` before opt-in counts; M2 reload untested; 50 generated rule names
@@ -398,7 +443,7 @@ Map and screens (Tasks 11, 12)
   a hidden selection is not isolation-dimmed (accepted, spec §12); renderer tests walk `MapView` as
   a plain function (breaks if it gains hooks).
 - Task 12: the scan-visitor line has no CSS (judged at the show-it step; the layout was fixed in
-  cb996f2); stale comment at `scan.ts:199`; no test pins severity 2 for the unknown-phase
+  cb996f2); stale comment at `scan.ts:199` (fixed by the final review's wave); no test pins severity 2 for the unknown-phase
   contradiction gap; the notice door count could exceed the map if two candidates share a kind and
   provider name (untraced); no notice test with a vendor dictionary and a non-form door; the
   scan-visitor test pins source order only.
@@ -418,14 +463,78 @@ Downloads and service hosts (Task 15)
   and panics if `HOME` is unset; a `USERPROFILE` fallback was added in the fix round); `possible_gaps
   >= 1` is loose; the egress denied-half is conditional and its assertions are vacuous when the host
   is never attempted; the name `KNOWN_DENIED_BROWSER_SERVICE_HOSTS` is now misleading (3 admitted,
-  3 denied); removing only the seed call from launch fails no test; a seed failure leaves an empty
-  profile dir and makes the comment at `scan.rs:424` false; a non-UTF-8 profile path panics in
-  `json!` (fails closed); the `egress.rs` module header still carries the old wording.
+  3 denied); removing only the seed call from launch failed no test (pinned by the final review's wave); a seed failure left an
+  empty profile dir and made the comment at `scan.rs:424` false (fixed by the same wave; untested); a non-UTF-8 profile path panics in
+  `json!` (fails closed); the `egress.rs` module header carried the old wording (fixed).
 
 ## 8. Bytes
 
-<<CONTROLLER FILLS: table>>
+Measured 2026-10-07 on macOS aarch64 with `npm run tauri build`, v0.3.0 (tag) and this branch
+(`4939655`) built on the same machine, one after the other. The published v0.3.0 `.dmg` is a
+universal build (5,414,002 bytes) and is not the comparison.
+
+| Artefact | v0.3.0 | this branch | Delta |
+|---|---|---|---|
+| macOS `.dmg`, aarch64 | 2,762,251 | 2,948,209 | **+185,958 (+6.7%)** |
+| release binary, aarch64 | 4,822,560 | 5,797,296 | +974,736 (+20.2%) |
+
+Spec §11 expected +120–140 KB (+5–6%). The `.dmg` grew by 186 KB: **above the estimate**. The data
+files account for 128 KB of it at `gzip -9`; the rest is code (the consent bridge, the page picker,
+the probes, the phases) and the `.dmg`'s own compression of the same files.
+
+| §11 item | Estimate (gz) | Measured (`gzip -9`) |
+|---|---|---|
+| autoconsent engine, unmodified (`autoconsent.playwright.js`, 142,886 raw) | 35 KB | 35,292 |
+| autoconsent rules, unmodified (`rules.json`, 719,973 raw — the full file; compact was refused, §4) | 56 KB, 75 KB if compact is refused | 73,823 |
+| Open Cookie Database, slimmed (`cookie-platforms.json`, 96,185 raw) | ~25 KB | 18,515 |
+| `vendors.json` additions (34,720 raw; 2,602 → 3,280 gz) | < 5 KB | 678 |
+| code | small | not separated |
+| **data total** | | **128,308** |
+
+No new crate and no new npm runtime dependency. Windows: to be read from the `report the shipped
+size` step of `bundle (windows-latest)` on this branch's CI run once it is pushed. Not estimated
+here.
 
 ## 9. Test counts at the end
 
-<<CONTROLLER FILLS: counts>>
+At `4939655` (2026-10-07), each suite run on that tree:
+
+| Suite | At the branch point (`e0c2bd9`) | At the end |
+|---|---|---|
+| Rust unit (`cargo test --lib`) | 234 | **295** |
+| Rust `scan_pages` (real Chrome, local fixtures) | — (created by Task 2) | **15** |
+| Rust `egress` (real Chrome) | 8 integration in all, 1 ignored | **5** + 1 ignored |
+| `tests/core` | 366 | **413** |
+| all Vitest | 520 (515 passed + 5 skipped) | **597 passed** with `dist/` built (594 + 5 skipped without it: the bundle checks need a build) |
+
+`cargo clippy --all-targets -- -D warnings` and `npm run typecheck` are clean. The egress test
+`the_browsers_own_background_traffic_never_becomes_a_site_host`, red on this machine since before
+batch 3 (Chrome's updater), is green since Task 15.
+
+`tests/core` by task: 366 at the branch point; 368 after batch 2 (phases); 380 after batch 3
+(doors); 406 after batch 4 (names +11 and +3, map caps +9, notices +1, two live-app fixes +2);
+409 after Task 14 (a scan that saw no page adds nothing; history); 413 after the final review
+(rescan phase).
+
+## 10. Follow-ups, in order
+
+Not done here; each is small. From the final review's triage and the audits:
+
+1. Count a gap when the opt-in budget runs out (`consent:timeout`).
+2. A text click answering "clicked" with an off-vocabulary label → unknown, not "before".
+3. When the consent engine answers "failed", treat the phase as unknown rather than "before".
+4. The seed-failure path and a non-UTF-8 profile path in `browser::launch` (tests).
+5. Remove what only tests feed: `consentMarkers` and the v0.3-payload paths; the cookie phase the
+   renderer never reads (or show it).
+6. One shared source for the caps Rust and TypeScript both hold (13 pages, 12 visited, 416
+   iframes, 64 characters, the segment pattern in three places).
+7. `removePlace` would leave a door's `destination` dangling (no caller yet).
+8. Read the session id on CDP events (own event type), so the consent binding is filtered by
+   session.
+9. Tests: weak label without a policy link is not clicked; `HOME_WAIT` placement; HttpOnly and
+   session cookies; history and off-site branches of the page walk; the 13-page boundary.
+10. Rename `KNOWN_DENIED_BROWSER_SERVICE_HOSTS`; a `.gitattributes` rule so the vendored files are
+    not rewritten with CRLF on Windows.
+11. Scroll before probing, if lazy iframes turn out to matter (2 of 34 sites) — reopens the "one
+    interaction" rule, so it is a spec decision, not a patch.
+12. Edge as the fallback browser: list and observe its own service hosts.
