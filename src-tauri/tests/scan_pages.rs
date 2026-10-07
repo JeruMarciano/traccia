@@ -50,7 +50,7 @@ async fn an_iubenda_banner_is_accepted_by_its_rule_and_what_follows_is_after() {
     assert_eq!(consent["clicked"], true, "{consent}");
     assert_eq!(consent["rule"], "cmp", "{consent}");
     assert_eq!(consent["ruleName"], "iubenda", "{consent}");
-    let phase = |host: &str| out.hosts.iter().find(|h| h.host == host).map(|h| h.phase);
+    let phase = |host: &str| out.hosts.iter().find(|h| h.host == host).and_then(|h| h.phase);
     let after_host = site.host.replace("scan-fixture-", "after-");
     assert_eq!(phase(&after_host), Some(Phase::After), "{:?}", out.hosts);
     assert_eq!(phase(&site.host), Some(Phase::Before), "{:?}", out.hosts);

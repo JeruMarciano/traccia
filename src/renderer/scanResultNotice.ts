@@ -42,8 +42,8 @@ function joinAll(...parts: (string | null)[]): string {
 }
 
 /**
- * What the scan did about consent, when it can say: the click and what it showed, or that none was
- * given and why. Null when `consent` is absent (a v0.3 payload) or says too little, so the older
+ * What the scan did about consent, when it can say: the click and what it showed, that none was
+ * given and why, or that a click's outcome is not known. Null when `consent` is absent (a v0.3 payload) or says too little, so the older
  * sentence applies. Counts are third-party hosts with a known phase only; none is counted for a
  * scan that gave no consent, and a count of nothing is not stated.
  */
@@ -66,8 +66,9 @@ function consentDone(result: ScanResult): string | null {
   }
   if (c.clicked || result.stoppedEarly) return null
   if (c.reason !== undefined) return STRINGS.consentNotGiven(c.reason)
-  // Detected but no reason: the scan could not tell why. Nothing detected either is a blank.
-  return c.cmp ? STRINGS.consentNotGivenNoReason : null
+  // Detected but no reason: a click was sent and never answered, so neither "given" nor "not
+  // given" is said. Nothing detected either is a blank.
+  return c.cmp ? joinAll(STRINGS.consentBannerDetected(c.cmp), STRINGS.consentOutcomeUnknown) : null
 }
 
 /**

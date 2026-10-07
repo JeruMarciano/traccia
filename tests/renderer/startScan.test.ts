@@ -127,21 +127,39 @@ describe('startScan', () => {
     await expect(startScan('https://rossi-editore.it')).rejects.toThrow()
   })
 
-  it('rejects a consent whose names fall outside the rule-name shape, or whose matched text is over 128', async () => {
+  it('rejects a consent whose names fall outside the rule-name shape, or whose matched text is over 64', async () => {
     const { startScan } = await import('../../src/renderer/bridge')
     for (const bad of [
       { cmp: 'iubenda<script>' },
       { ruleName: 'x'.repeat(65) },
       { ruleName: 'a\u202eb' },
-      { matchedText: 'x'.repeat(129) },
+      { matchedText: 'x'.repeat(65) },
     ]) {
       invoke.mockResolvedValueOnce(JSON.stringify({ ...validPayload(), consent: { ...consent, ...bad } }))
       await expect(startScan('https://rossi-editore.it'), JSON.stringify(bad)).rejects.toThrow()
     }
     invoke.mockResolvedValueOnce(
-      JSON.stringify({ ...validPayload(), consent: { ...consent, cmp: null, matchedText: 'x'.repeat(128) } }),
+      JSON.stringify({ ...validPayload(), consent: { ...consent, cmp: null, matchedText: 'x'.repeat(64) } }),
     )
     await expect(startScan('https://rossi-editore.it')).resolves.toBeDefined()
+  })
+
+  it('accepts a host and a cookie without a phase next to a consent record with no reason', async () => {
+    const { startScan } = await import('../../src/renderer/bridge')
+    const { consentMarkers: _, ...current } = validPayload()
+    const unknown = { cmp: 'iubenda', clicked: false, rule: null, ruleName: '', matchedText: '', clickNavigated: false }
+    invoke.mockResolvedValueOnce(
+      JSON.stringify({
+        ...current,
+        consent: unknown,
+        hosts: [{ host: 'rossi-editore.it', requestCount: 1, phase: 'before' }, { host: 'later.example', requestCount: 1 }],
+        cookies: [{ name: 'B', domain: 'ads.example', session: true, expiresEpochSeconds: -1 }],
+      }),
+    )
+    const result = await startScan('https://rossi-editore.it')
+    expect(result.hosts.map((h) => h.phase)).toEqual(['before', undefined])
+    expect(result.cookies[0]?.phase).toBeUndefined()
+    expect(result.consent?.reason).toBeUndefined()
   })
 
   it('accepts a generated rule name with a +, as rules.json ships it', async () => {

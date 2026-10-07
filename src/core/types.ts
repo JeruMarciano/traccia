@@ -183,7 +183,10 @@ export type Candidate = PlaceCandidate | SubjectGroupCandidate
 export interface ObservedHost {
   host: string
   requestCount: number
-  /** The consent phase the host was first seen in. Absent in a v0.3 payload: read as 'before'. */
+  /**
+   * The consent phase the host was first seen in. Absent in a v0.3 payload (no `consent`): read as
+   * 'before'. Absent next to a `consent` record: not known, and it stays unknown.
+   */
   phase?: 'before' | 'after'
   /** Up to 8 distinct first path segments requested from the host (lowercase `[a-z0-9-_]{1,32}`). */
   paths?: string[]
@@ -199,7 +202,7 @@ export interface RawScanCookie {
   session: boolean
   /** Seconds since epoch; meaningless when session is true. */
   expiresEpochSeconds: number
-  /** The consent phase the cookie was first seen in. Absent in a v0.3 payload. */
+  /** The consent phase the cookie was first seen in. Absent in a v0.3 payload, or when not known. */
   phase?: 'before' | 'after'
 }
 
@@ -326,7 +329,10 @@ export interface ScanConsent {
   ruleName: string
   matchedText: string
   clickNavigated: boolean
-  /** Why nothing was clicked. Absent when detection did not run to its end, or a click happened. */
+  /**
+   * Why nothing was clicked. Absent when detection did not run to its end, a click happened, or a
+   * click was sent and never answered (whether consent was given is then not known).
+   */
   reason?: 'no-banner' | 'no-button' | 'click-failed'
 }
 

@@ -138,9 +138,12 @@ async fn run_scan_and_return_profile_path(site: &Site) -> PathBuf {
 /// failure (the run not finishing) rather than a silent one.
 async fn run_scan_and_cancel_midway(site: &Site) -> (PathBuf, u32) {
     let state = Arc::new(ScanState::default());
-    let (tx, rx) = tokio::sync::oneshot::channel::<(u32, PathBuf)>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<(u32, PathBuf, bool)>();
     let hook: scan::LaunchHook = Box::new(move |pid, path| {
-        let _ = tx.send((pid, path.to_path_buf()));
+        // Read here, while the profile exists; asserted below, once the browser is torn down.
+        let seeded = std::fs::read_to_string(path.join("Default").join("Preferences"))
+            .is_ok_and(|prefs| prefs.contains("default_directory"));
+        let _ = tx.send((pid, path.to_path_buf(), seeded));
     });
 
     let handle = tokio::spawn(scan::run_scan_for_test_with_launch_hook(
@@ -155,7 +158,7 @@ async fn run_scan_and_cancel_midway(site: &Site) -> (PathBuf, u32) {
     // "browser launched before the scan finished" for it sends the reader looking at cancel
     // when the truth is usually that no browser could be started on this machine. Wait for the
     // task and report what actually went wrong.
-    let (pid, profile) = match rx.await {
+    let (pid, profile, seeded) = match rx.await {
         Ok(launched) => launched,
         Err(_) => match handle.await.expect("scan task panicked") {
             Err(e) => panic!("the scan ended before launching a browser: {e}"),
@@ -174,6 +177,7 @@ async fn run_scan_and_cancel_midway(site: &Site) -> (PathBuf, u32) {
         .expect("a cancelled scan did not finish within 30s — stop did not stop it")
         .expect("scan task panicked");
 
+    assert!(seeded, "the download Preferences were not in the profile when Chrome was launched");
     (profile, pid)
 }
 
