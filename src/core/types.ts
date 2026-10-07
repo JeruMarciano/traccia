@@ -297,6 +297,8 @@ export interface ScanResult {
   cookies: RawScanCookie[]
   formFields: RawFormField[]
   storageKeys: RawStorageKey[]
+  /** Key pages the scan visited (not the home page) and what each is for, when its link said so. */
+  pages?: { page: string; purpose: 'contacts' | 'careers' | 'shop' | 'booking' | 'newsletter' | 'account' | null }[]
   /** v0.3 payloads only: fixed marker names of consent managers detected. Never persisted. */
   consentMarkers?: string[]
   consent?: ScanConsent

@@ -5,7 +5,7 @@
 
 mod common;
 
-use traccia_lib::cdp::Phase;
+use traccia_lib::cdp::{Phase, Purpose};
 
 #[tokio::test]
 async fn a_cookie_the_page_sets_is_captured() {
@@ -135,4 +135,32 @@ async fn a_centred_camel_case_cookiebot_dialog_is_a_consent_container() {
     assert_eq!(consent["clicked"], true, "{consent}");
     assert_eq!(consent["rule"], "text", "{consent}");
     assert_eq!(consent["matchedText"], "allow all", "{consent}");
+}
+
+// --- Task 8: the page picker ---
+
+#[tokio::test]
+async fn a_contacts_page_linked_last_is_picked_and_an_offsite_redirect_is_dropped() {
+    let form = "<!doctype html><form><input name=\"email\" type=\"email\"></form>";
+    let site = common::fixture_site_serving(vec![
+        ("/", include_str!("fixtures/pages/picker-home.html").into()),
+        ("/contatti", form.into()),
+        ("/esterno", "302 http://offsite-{port}.invalid/offsite-form".into()),
+        ("/offsite-form", form.replace("email", "offsite_field")),
+    ])
+    .await;
+    let out = common::scan(&site).await;
+    let contacts = format!("http://{}/contatti", site.host);
+    assert!(
+        out.pages.iter().any(|p| p.page == contacts && p.purpose == Some(Purpose::Contacts)),
+        "{:?}",
+        out.pages
+    );
+    assert!(out.form_fields.iter().any(|f| f.page == contacts && f.name == "email"));
+    assert!(out.pages.len() <= 12, "{:?}", out.pages);
+    // The off-site page: no fields, no host, not a visited page.
+    assert!(!out.form_fields.iter().any(|f| f.name == "offsite_field"), "{:?}", out.form_fields);
+    let offsite = site.host.replace("scan-fixture-", "offsite-");
+    assert!(!out.hosts.iter().any(|h| h.host == offsite), "{:?}", out.hosts);
+    assert!(!out.pages.iter().any(|p| p.page.contains("esterno")), "{:?}", out.pages);
 }

@@ -98,6 +98,17 @@ function isScanConsent(v: unknown): boolean {
   )
 }
 
+const PAGE_PURPOSES = ['contacts', 'careers', 'shop', 'booking', 'newsletter', 'account']
+
+function isVisitedPage(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const p = v as Record<string, unknown>
+  return (
+    typeof p.page === 'string' &&
+    (p.purpose === null || (typeof p.purpose === 'string' && PAGE_PURPOSES.includes(p.purpose)))
+  )
+}
+
 function isRawStorageKey(v: unknown): boolean {
   if (typeof v !== 'object' || v === null) return false
   const s = v as Record<string, unknown>
@@ -130,6 +141,7 @@ function isScanResult(v: unknown): v is ScanResult {
     r.formFields.every(isRawFormField) &&
     Array.isArray(r.storageKeys) &&
     r.storageKeys.every(isRawStorageKey) &&
+    (r.pages === undefined || (Array.isArray(r.pages) && r.pages.every(isVisitedPage))) &&
     // `consentMarkers` is the v0.3 shape; since Task 6 Rust sends `consent`.
     (r.consentMarkers === undefined ||
       (Array.isArray(r.consentMarkers) && r.consentMarkers.every((m: unknown) => typeof m === 'string'))) &&
