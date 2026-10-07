@@ -23,7 +23,8 @@
 //! connector is ever asked about them.
 //!
 //! During a scan `admission::decide` admits any named host on 80/443, as a
-//! visitor's browser would reach it; in the product the guard on those is
+//! visitor's browser would reach it (Chrome's own service hosts excepted: three named ones are
+//! refused as `DenyReason::BrowserService`); in the product the guard on those is
 //! `proxy::is_permitted_upstream` on every resolved address. Here the guard is
 //! the test connector: it dials only the two fixture names and refuses every
 //! other admitted host, so nothing a test scan admits leaves the machine.
@@ -323,13 +324,14 @@ const FIXTURE_IP_LITERALS: [&str; 3] = ["192.0.2.10", "198.51.100.20", "203.0.11
 /// list for the round that closed this residual set out).
 ///
 /// This is an **allowlist of known, documented exceptions** — not a claim that any
-/// of it is acceptable to leave unsuppressed forever. The name predates spec §13:
-/// these were denied by admission while it admitted only the scan target. They are
-/// now admitted like any named host on 80/443, which in the product means they
-/// reach the network (only ever at a permitted address), and in this suite means
-/// the test connector refuses them. A host the proxy sees during a scan that is
-/// **not** in this list is the finding this test exists to catch.
-const KNOWN_DENIED_BROWSER_SERVICE_HOSTS: [(&str, &str); 5] = [
+/// of it is acceptable to leave unsuppressed forever. Since spec §13 admission
+/// admits any named host on 80/443, so www.gstatic.com, accounts.google.com and
+/// www.google.com are admitted like a visitor's third party (in the product they reach
+/// the network at a permitted address; here the test connector refuses them). The
+/// other three — `admission::BROWSER_SERVICE_HOSTS` — are denied by name
+/// (`DenyReason::BrowserService`) and must never be admitted. A host the proxy sees
+/// during a scan that is **not** in this list is the finding this test exists to catch.
+const KNOWN_DENIED_BROWSER_SERVICE_HOSTS: [(&str, &str); 6] = [
     (
         "safebrowsingohttpgateway.googleapis.com",
         "Safe Browsing hash-prefix lookups routed through Google's Oblivious HTTP \
@@ -375,6 +377,19 @@ const KNOWN_DENIED_BROWSER_SERVICE_HOSTS: [(&str, &str); 5] = [
          GCMUseDedicatedNetworkThread, are metrics/tuning parameters, not an on/off \
          feature)",
     ),
+    (
+        "update.googleapis.com",
+        "Chrome's updater — observed on Chrome 151+ on macOS with \
+         --disable-component-update set; no switch found that suppresses the \
+         attempt (intermittent); now denied by admission::decide",
+    ),
+];
+
+/// Chrome's own hosts that admission refuses by name; never in the allowed ledger.
+const REFUSED_BROWSER_SERVICE_HOSTS: [&str; 3] = [
+    "safebrowsingohttpgateway.googleapis.com",
+    "android.clients.google.com",
+    "update.googleapis.com",
 ];
 
 #[tokio::test]
@@ -442,6 +457,17 @@ async fn the_browsers_own_background_traffic_never_becomes_a_site_host() {
         assert!(
             !attempted.contains(&forbidden),
             "{forbidden} was attempted — a flag verified to silence this host has regressed"
+        );
+    }
+
+    for refused in REFUSED_BROWSER_SERVICE_HOSTS {
+        assert!(
+            !allowed.iter().any(|(h, _)| h == refused),
+            "{refused} was admitted — admission must refuse Chrome's own service hosts"
+        );
+        assert!(
+            denied.iter().filter(|(h, _, _)| h == refused).all(|(_, _, r)| *r == DenyReason::BrowserService),
+            "{refused} was denied for a reason other than BrowserService"
         );
     }
 

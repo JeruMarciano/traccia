@@ -353,14 +353,17 @@ const PROFILE_REMOVE_RETRY_DELAY: Duration = Duration::from_millis(100);
 /// (`www.gstatic.com`, `accounts.google.com`, `www.google.com`,
 /// `android.clients.google.com`) are *attempted* — distinct from
 /// *unverified*. Since spec §13 they are admitted on 80/443 during a scan like
-/// any host a visitor's browser reaches, so in the product they may reach the
-/// network (only ever at an address `proxy::is_permitted_upstream` permits);
+/// any host a visitor's browser reaches (except `android.clients.google.com`, refused by
+/// name), so in the product they may reach the network (only ever at an address `proxy::is_permitted_upstream` permits);
 /// in tests the connector refuses to dial them. They never become a host the
 /// site contacted: `ScanOutput.hosts` comes from the pages' own CDP events.
 /// What remains unsuppressed, after two genuine, evidence-based search
 /// rounds, is the *attempt itself*.
+/// `android.clients.google.com` is now refused by name in `admission::decide`
+/// (`BROWSER_SERVICE_HOSTS`, with `update.googleapis.com` and the Safe Browsing gateway), so it
+/// never reaches the network; the other three remain admitted like a visitor's third party.
 /// `tests/egress.rs`'s `KNOWN_DENIED_BROWSER_SERVICE_HOSTS` carries the
-/// same four hosts with the same per-host reasoning, asserted as the
+/// same hosts with the same per-host reasoning, asserted as the
 /// exhaustive documented-exception list rather than silently tolerated.
 pub fn launch_flags(profile_dir: &Path, proxy_port: u16) -> Vec<String> {
     vec![
