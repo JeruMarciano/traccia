@@ -113,4 +113,14 @@ describe('validateProject', () => {
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.project.cookies).toEqual(p.cookies)
   })
+
+  it('loads a collection point with no kind or pages, and refuses a malformed new field', () => {
+    const cp = { id: 'cp-1', page: 'https://x.it/', fields: [], sources: [], confidence: 'observed' }
+    const withCp = (extra: object) => ({ ...makeProject(), collectionPoints: [{ ...cp, ...extra }] })
+    expect(validateProject(withCp({})).ok).toBe(true)
+    expect(validateProject(withCp({ kind: 'booking', provider: 'X', pages: ['/'], destination: 'pl-1' })).ok).toBe(true)
+    for (const bad of [{ kind: 'spy' }, { provider: 3 }, { pages: [1] }, { destination: {} }]) {
+      expect(validateProject(withCp(bad)).ok).toBe(false)
+    }
+  })
 })

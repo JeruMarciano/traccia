@@ -428,11 +428,12 @@ describe('ingestScan', () => {
     it('a page with collecting fields becomes one collection point', () => {
       const result = scanResultWith({ formFields: [
         { page: 'https://rossi-editore.it/contatti', name: 'email', type: 'email', autocomplete: '', label: '' },
+        { page: 'https://rossi-editore.it/contatti', name: 'nome', type: 'text', autocomplete: '', label: '' },
         { page: 'https://rossi-editore.it/contatti', name: 'csrf', type: 'hidden', autocomplete: '', label: '' },
       ]})
       const after = ingestScan(emptyProject(), result, DICT, { prefix: 's1' })
       expect(after.collectionPoints).toEqual([
-        { id: 's1-cp-1', page: 'https://rossi-editore.it/contatti', fields: [{ name: 'email', kind: 'email' }], sources: [], confidence: 'observed' },
+        { id: 's1-cp-1', page: 'https://rossi-editore.it/contatti', fields: [{ name: 'email', kind: 'email' }, { name: 'nome', kind: 'name' }], sources: [], confidence: 'observed' },
       ])
     })
     it('a page with only non-collecting fields creates no door', () => {
@@ -454,13 +455,18 @@ describe('ingestScan', () => {
       expect(twice.collectionPoints?.[0]?.id).toBe(once.collectionPoints?.[0]?.id)
     })
     it('a page seen again takes the fresh capture’s fields', () => {
-      const first = scanResultWith({ formFields: [{ page: 'https://x.it/c', name: 'email', type: 'email', autocomplete: '', label: '' }] })
+      // Two fields from the start: a lone email field is a newsletter door, not this form's.
+      const first = scanResultWith({ formFields: [
+        { page: 'https://x.it/c', name: 'email', type: 'email', autocomplete: '', label: '' },
+        { page: 'https://x.it/c', name: 'nome', type: 'text', autocomplete: '', label: '' },
+      ] })
       const second = scanResultWith({ formFields: [
         { page: 'https://x.it/c', name: 'email', type: 'email', autocomplete: '', label: '' },
+        { page: 'https://x.it/c', name: 'nome', type: 'text', autocomplete: '', label: '' },
         { page: 'https://x.it/c', name: 'tel', type: 'tel', autocomplete: '', label: '' },
       ]})
       const twice = ingestScan(ingestScan(emptyProject(), first, DICT, { prefix: 's1' }), second, DICT, { prefix: 's2' })
-      expect(twice.collectionPoints?.[0]?.fields.map((f) => f.name)).toEqual(['email', 'tel'])
+      expect(twice.collectionPoints?.[0]?.fields.map((f) => f.name)).toEqual(['email', 'nome', 'tel'])
     })
   })
 
@@ -502,5 +508,42 @@ describe('ingestScan consent phase', () => {
       { host: 'old.example', requestCount: 1 },
     ] }, DICT, { prefix: 's1' })
     expect(p.observations.find((o) => o.domain === 'old.example')?.beforeConsent).toBe(true)
+  })
+})
+
+describe('ingestScan doors', () => {
+  const DOORS_DICT: VendorDictionary = {
+    'sibforms.com': { owner: 'Brevo', category: 'email-marketing', purposeGroup: 'Marketing' },
+  }
+  const newsletter = (): ScanResult =>
+    result({
+      formFields: [
+        { page: 'https://rossi-editore.it/', name: 'EMAIL', type: 'email', autocomplete: '', label: '', form: 0, actionHost: 'sibforms.com' },
+      ],
+      offsiteLinks: [{ page: 'https://rossi-editore.it/', host: 'www.simplebooking.it', purpose: 'booking' }],
+    })
+
+  it('creates the doors, creates the provider place and points the door at it', () => {
+    const p = ingestScan(emptyProject(), newsletter(), DOORS_DICT, IDS)
+    const place = (name: string) => p.places.find((x) => x.name === name)
+    const booking = p.collectionPoints?.find((c) => c.kind === 'booking')
+    expect(booking).toMatchObject({ provider: 'www.simplebooking.it', pages: ['https://rossi-editore.it/'] })
+    expect(booking?.destination).toBe(place('www.simplebooking.it')?.id)
+    const news = p.collectionPoints?.find((c) => c.kind === 'newsletter')
+    expect(news?.provider).toBe('Brevo Email Marketing')
+    expect(news?.destination).toBe(place('Brevo Email Marketing')?.id)
+    expect(p.places.filter((x) => x.name === 'Brevo Email Marketing')).toHaveLength(1)
+  })
+
+  it('a rescanned door keeps its id: a form by page, the others by kind and provider', () => {
+    const forms = (): ScanResult =>
+      result({
+        formFields: [{ page: 'https://rossi-editore.it/c', name: 'nome', type: 'text', autocomplete: '', label: '', form: 0, actionHost: '' }],
+        offsiteLinks: [{ page: 'https://rossi-editore.it/', host: 'www.simplebooking.it', purpose: 'booking' }],
+      })
+    const once = ingestScan(emptyProject(), forms(), DOORS_DICT, IDS)
+    const twice = ingestScan(once, forms(), DOORS_DICT, { prefix: 'scan2' })
+    expect(twice.collectionPoints).toEqual(once.collectionPoints)
+    expect(twice.collectionPoints).toHaveLength(2)
   })
 })

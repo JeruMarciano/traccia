@@ -5,6 +5,7 @@ const D = process.env.DATA.replace(/\/?$/, '/'); // data dir outside the repo: s
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const REPO = process.argv[2];
 const { identify, classifyHost } = await import(REPO + '/src/core/vendors.ts');
+const { classifyDoors } = await import(REPO + '/src/core/doors.ts');
 const { isSameSite } = await import(REPO + '/src/core/scan.ts').catch(() => ({}));
 const dict = JSON.parse(fs.readFileSync(REPO + '/src/data/vendors.json', 'utf8'));
 
@@ -71,6 +72,10 @@ for (const f of fs.readdirSync(D + 'runs').filter((f) => f.endsWith('.meta.json'
   r.fieldsPages = (ref.pages ?? []).reduce((s, p) => s + vf(p.fields).length, 0);
   const ifr = new Set([...(ref.home?.iframes ?? []), ...(ref.pages ?? []).flatMap((p) => p.iframes ?? [])].map((u) => { try { return reg(new URL(u).hostname); } catch { return null; } }).filter((h) => h && h !== site));
   r.embeds = [...ifr];
+  const doors = classifyDoors({ formFields: [], hosts: [], scannedHost: '', ...scan }, dict);
+  r.doorsByKind = {};
+  for (const d of doors) r.doorsByKind[d.kind] = (r.doorsByKind[d.kind] ?? 0) + 1;
+  r.embedDoor = doors.some((d) => d.kind === 'embed');
   r.keyPages = (ref.pages ?? []).length; r.internalLinks = ref.homeInternalLinks; r.sitemap = ref.sitemapLocs;
   rows.push(r);
 }
@@ -96,4 +101,5 @@ console.log(`form fields: scanner ${sum('fieldsScan')}, ref home ${sum('fieldsHo
 console.log(`form pages missed ${ok.reduce((n, r) => n + r.formPagesMissed.length, 0)} of ${ok.reduce((n, r) => n + r.pagesWithForms.length, 0)}; contacts ${ok.reduce((n, r) => n + r.contactsMissed.length, 0)}`);
 console.log(`form pages missed with a field seen nowhere on the site: ${ok.reduce((n, r) => n + r.formPagesMissedUnseen.length, 0)}`);
 console.log(`embeds: ${ok.filter((r) => r.embeds.length).length} sites`);
+console.log(`sites with an embed door ${ok.filter((r) => r.embedDoor).length} of ${ok.filter((r) => r.embeds.length).length}`);
 console.log('top unnamed orgs:', [...unnamed].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => `${k}(${v})`).join(' '));

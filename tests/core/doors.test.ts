@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { deriveDoors, tracePaths } from '../../src/core/doors'
+import { classifyDoors, deriveDoors, tracePaths } from '../../src/core/doors'
 import { ingestScan } from '../../src/core/scan'
-import type { ScanResult } from '../../src/core/types'
+import type { RawFormField, ScanResult, VendorDictionary } from '../../src/core/types'
 import { rossiEditore } from '../fixtures/rossiEditore'
 import { emptyProject } from '../fixtures/projects'
 
@@ -133,13 +133,11 @@ describe('door colour across a rescan', () => {
     possibleGaps: 0,
     stoppedEarly: false,
     cookies: [],
-    formFields: pages.map((page) => ({
-      page,
-      name: 'email',
-      type: 'email',
-      autocomplete: 'email',
-      label: 'Email',
-    })),
+    // Two fields per page: a lone email field would be a newsletter door, merged across pages.
+    formFields: pages.flatMap((page) => [
+      { page, name: 'email', type: 'email', autocomplete: 'email', label: 'Email' },
+      { page, name: 'nome', type: 'text', autocomplete: '', label: 'Nome' },
+    ]),
     storageKeys: [],
     consentMarkers: [],
     capturedAtEpochSeconds: 1_770_000_000,
@@ -170,5 +168,72 @@ describe('door colour across a rescan', () => {
     const was = before.find((d) => d.label === 'https://rossi-editore.it/contatti')
     expect(kept?.id).toBe(was?.id)
     expect(kept?.colourIndex).toBe(was?.colourIndex)
+  })
+})
+
+describe('classifyDoors', () => {
+  const DICT: VendorDictionary = {
+    'sibforms.com': { owner: 'Brevo', category: 'email-marketing', purposeGroup: 'Marketing' },
+    'tawk.to': { owner: 'Tawk.to', category: 'live-chat', purposeGroup: 'Support' },
+    'www.google.com': { owner: 'Google', category: 'maps', purposeGroup: 'Systems' },
+  }
+  const f = (page: string, name: string, type: string, form: number, actionHost = ''): RawFormField => ({
+    page, name, type, autocomplete: '', label: '', form, actionHost,
+  })
+  const result = (over: Partial<ScanResult> = {}): ScanResult => ({
+    scannedHost: 'rossi-editore.it',
+    hosts: [{ host: 'rossi-editore.it', requestCount: 1 }],
+    pagesVisited: 1,
+    possibleGaps: 0,
+    stoppedEarly: false,
+    cookies: [],
+    formFields: [],
+    storageKeys: [],
+    capturedAtEpochSeconds: 0,
+    ...over,
+  })
+
+  it('a lone search box is not a door', () => {
+    expect(classifyDoors(result({ formFields: [f('/cerca', 'q', 'search', 0)] }), DICT)).toEqual([])
+  })
+  it('email + password is a form, not a newsletter', () => {
+    const d = classifyDoors(result({ formFields: [f('/login', 'email', 'email', 0), f('/login', 'pw', 'password', 0)] }), DICT)
+    expect(d.map((x) => x.kind)).toEqual(['form'])
+    // Even when the action is a mailing vendor, asking for a password keeps it a form.
+    const hosted = classifyDoors(
+      result({ formFields: [f('/login', 'email', 'email', 0, 'sibforms.com'), f('/login', 'pw', 'password', 0, 'sibforms.com')] }),
+      DICT,
+    )
+    expect(hosted.map((x) => x.kind)).toEqual(['form'])
+  })
+  it('a lone email field posting to a mailing vendor is a newsletter with that provider', () => {
+    const d = classifyDoors(result({ formFields: [f('/', 'EMAIL', 'email', 1, 'sibforms.com')] }), DICT)
+    expect(d).toMatchObject([{ kind: 'newsletter', provider: 'sibforms.com' }])
+  })
+  it('an off-site booking link is a booking door with that provider', () => {
+    const d = classifyDoors(result({ offsiteLinks: [{ page: '/', host: 'www.simplebooking.it', purpose: 'booking' }] }), DICT)
+    expect(d).toMatchObject([{ kind: 'booking', provider: 'www.simplebooking.it', pages: ['/'] }])
+  })
+  it('a maps embed on six pages is one door listing six pages', () => {
+    const iframes = [1, 2, 3, 4, 5, 6].map((n) => ({ page: `/p${n}`, host: 'www.google.com', segment: 'maps' }))
+    const d = classifyDoors(result({ iframes }), DICT)
+    expect(d).toHaveLength(1)
+    expect(d[0]).toMatchObject({ kind: 'embed', provider: 'www.google.com' })
+    expect(d[0]?.pages).toHaveLength(6)
+  })
+  it('a same-site iframe is not an embed door', () => {
+    const iframes = [{ page: '/', host: 'www.rossi-editore.it', segment: 'maps' }]
+    expect(classifyDoors(result({ iframes }), { ...DICT, 'rossi-editore.it': DICT['www.google.com']! })).toEqual([])
+  })
+  it('a chat vendor host seen anywhere is a chat door', () => {
+    const d = classifyDoors(result({ hosts: [{ host: 'embed.tawk.to', requestCount: 1 }] }), DICT)
+    expect(d).toMatchObject([{ kind: 'chat', provider: 'embed.tawk.to' }])
+  })
+  it('a contact form on two pages is two form doors', () => {
+    const d = classifyDoors(
+      result({ formFields: [f('/a', 'nome', 'text', 0), f('/b', 'nome', 'text', 0)] }),
+      DICT,
+    )
+    expect(d.map((x) => [x.kind, x.page])).toEqual([['form', '/a'], ['form', '/b']])
   })
 })

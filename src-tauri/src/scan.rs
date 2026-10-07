@@ -83,6 +83,11 @@ pub struct ScanOutput {
     /// The key pages visited and what each is for — see
     /// `cdp::Observation::pages`.
     pub pages: Vec<cdp::VisitedPage>,
+    /// Iframe hosts per page — see `cdp::Observation::iframes`.
+    pub iframes: Vec<cdp::IframeSeen>,
+    /// Off-site booking/newsletter/account links — see
+    /// `cdp::Observation::offsite_links`.
+    pub offsite_links: Vec<cdp::OffsiteLink>,
     /// When the cookie jar was captured — `SystemTime::now()` taken as close
     /// as this module can get to the moment `cdp::observe` actually sent
     /// `Storage.getCookies`, deliberately not `profile_dir_path()` time,
@@ -505,6 +510,8 @@ async fn run_pipeline(
             form_fields: observation.form_fields,
             storage_keys: observation.storage_keys,
             pages: observation.pages,
+            iframes: observation.iframes,
+            offsite_links: observation.offsite_links,
             captured_at_epoch_seconds,
         })
     })();
@@ -821,6 +828,8 @@ mod tests {
                 r#type: "email".into(),
                 autocomplete: "email".into(),
                 label: "Email".into(),
+                form: 0,
+                action_host: String::new(),
             }],
             storage_keys: vec![cdp::StorageKey {
                 scope: "local".into(),
@@ -831,6 +840,8 @@ mod tests {
                 page: "https://rossi-editore.it/contatti".into(),
                 purpose: Some(cdp::Purpose::Contacts),
             }],
+            iframes: Vec::new(),
+            offsite_links: Vec::new(),
             captured_at_epoch_seconds: 1_700_000_000,
         })
         .expect("serialise");

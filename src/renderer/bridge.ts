@@ -73,7 +73,9 @@ function isRawFormField(v: unknown): boolean {
     typeof f.name === 'string' &&
     typeof f.type === 'string' &&
     typeof f.autocomplete === 'string' &&
-    typeof f.label === 'string'
+    typeof f.label === 'string' &&
+    (f.form === undefined || (Number.isInteger(f.form) && (f.form as number) >= -1 && (f.form as number) < 4096)) &&
+    (f.actionHost === undefined || (typeof f.actionHost === 'string' && (f.actionHost === '' || HOSTNAME.test(f.actionHost))))
   )
 }
 
@@ -95,6 +97,34 @@ function isScanConsent(v: unknown): boolean {
     c.matchedText.length <= MAX_MATCHED_TEXT &&
     typeof c.clickNavigated === 'boolean' &&
     (c.reason === undefined || c.reason === 'no-banner' || c.reason === 'no-button' || c.reason === 'click-failed')
+  )
+}
+
+/** A hostname as Rust vets it: lowercase `[a-z0-9.-]`, at most 253 characters. */
+const HOSTNAME = /^[a-z0-9.-]{1,253}$/
+
+function isIframe(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const f = v as Record<string, unknown>
+  return (
+    typeof f.page === 'string' &&
+    f.page.length <= 2048 &&
+    typeof f.host === 'string' &&
+    HOSTNAME.test(f.host) &&
+    typeof f.segment === 'string' &&
+    /^[a-z0-9_-]{0,32}$/.test(f.segment)
+  )
+}
+
+function isOffsiteLink(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const l = v as Record<string, unknown>
+  return (
+    typeof l.page === 'string' &&
+    l.page.length <= 2048 &&
+    typeof l.host === 'string' &&
+    HOSTNAME.test(l.host) &&
+    (l.purpose === 'booking' || l.purpose === 'newsletter' || l.purpose === 'account')
   )
 }
 
@@ -144,6 +174,10 @@ function isScanResult(v: unknown): v is ScanResult {
     Array.isArray(r.storageKeys) &&
     r.storageKeys.every(isRawStorageKey) &&
     (r.pages === undefined || (Array.isArray(r.pages) && r.pages.length <= 12 && r.pages.every(isVisitedPage))) &&
+    // 13 pages at 32 each, and 32 off-site links: the same bounds Rust enforces.
+    (r.iframes === undefined || (Array.isArray(r.iframes) && r.iframes.length <= 416 && r.iframes.every(isIframe))) &&
+    (r.offsiteLinks === undefined ||
+      (Array.isArray(r.offsiteLinks) && r.offsiteLinks.length <= 32 && r.offsiteLinks.every(isOffsiteLink))) &&
     // `consentMarkers` is the v0.3 shape; since Task 6 Rust sends `consent`.
     (r.consentMarkers === undefined ||
       (Array.isArray(r.consentMarkers) && r.consentMarkers.every((m: unknown) => typeof m === 'string'))) &&

@@ -7,6 +7,7 @@ import { identify } from './vendors'
 import type {
   Confidence,
   CookieLifetime,
+  DoorKind,
   DoorOrigin,
   HandEnteredField,
   Place,
@@ -80,6 +81,12 @@ export interface DoorPanel {
   id: string
   label: string
   origin: DoorOrigin
+  /** 'form' for a declared door and for one found before kinds existed. */
+  kind: DoorKind
+  /** Every page the door was seen on; empty for a declared door. */
+  pages: string[]
+  /** The name of the place this door sends data to, when it is a third party. */
+  destinationName: string | null
   /** Subject group names that come through, in project order. */
   whoComesThrough: string[]
   fields: string[]
@@ -249,6 +256,9 @@ export function panelFor(
       id: door.id,
       label: door.label,
       origin: door.origin,
+      kind: door.kind ?? 'form',
+      pages: door.pages ?? [],
+      destinationName: project.places.find((p) => p.id === door.destination)?.name ?? null,
       whoComesThrough: project.subjectGroups.filter((s) => subjects.includes(s.id)).map((s) => s.name),
       fields: door.fields,
       // A declared door is a place and can carry gaps of its own; a discovered one is not, and

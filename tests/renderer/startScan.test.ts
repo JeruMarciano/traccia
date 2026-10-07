@@ -177,4 +177,26 @@ describe('startScan', () => {
     await expect(attempt([{ ...ok, page: 'javascript:alert(1)' }])).rejects.toThrow()
     await expect(attempt(Array(13).fill(ok))).rejects.toThrow()
   })
+
+  it('accepts valid iframes, offsite links and form shapes and rejects malformed or oversized ones', async () => {
+    const { startScan } = await import('../../src/renderer/bridge')
+    const attempt = (over: Record<string, unknown>) => {
+      invoke.mockResolvedValueOnce(JSON.stringify({ ...validPayload(), ...over }))
+      return startScan('https://rossi-editore.it')
+    }
+    const frame = { page: 'https://rossi-editore.it/', host: 'www.google.com', segment: 'maps' }
+    const link = { page: 'https://rossi-editore.it/', host: 'www.simplebooking.it', purpose: 'booking' }
+    const field = { page: 'https://rossi-editore.it/', name: 'e', type: 'email', autocomplete: '', label: '' }
+    await expect(attempt({ iframes: [frame], offsiteLinks: [link], formFields: [{ ...field, form: 0, actionHost: 'sibforms.com' }] })).resolves.toBeTruthy()
+    for (const bad of [{ ...frame, host: 'a b' }, { ...frame, segment: 'A/b' }, { ...frame, segment: 'a'.repeat(33) }, { ...frame, page: 5 }]) {
+      await expect(attempt({ iframes: [bad] })).rejects.toThrow()
+    }
+    await expect(attempt({ iframes: Array(417).fill(frame) })).rejects.toThrow()
+    await expect(attempt({ offsiteLinks: [{ ...link, purpose: 'shop' }] })).rejects.toThrow()
+    await expect(attempt({ offsiteLinks: [{ ...link, host: 'javascript:x' }] })).rejects.toThrow()
+    await expect(attempt({ offsiteLinks: Array(33).fill(link) })).rejects.toThrow()
+    await expect(attempt({ formFields: [{ ...field, form: 1.5 }] })).rejects.toThrow()
+    await expect(attempt({ formFields: [{ ...field, form: 99999 }] })).rejects.toThrow()
+    await expect(attempt({ formFields: [{ ...field, actionHost: 'x/y?z=1' }] })).rejects.toThrow()
+  })
 })
