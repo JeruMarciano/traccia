@@ -210,7 +210,12 @@ export interface CapturedCookie {
   lifetime: CookieLifetime
   /** The Place this cookie belongs to, when the vendor dictionary recognises its domain. */
   placeId?: string
+  /** The platform the Open Cookie Database names for this cookie's name, when it does. */
+  platform?: string
 }
+
+/** One slimmed Open Cookie Database row: [cookie name, platform, category, wildcard flag]. */
+export type CookiePlatformRow = readonly [name: string, platform: string, category: string, wildcard: 0 | 1]
 
 /** One form field as Rust hands it over, untrusted and unclassified. */
 export interface RawFormField {

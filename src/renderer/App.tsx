@@ -7,6 +7,7 @@ import { answerByHand } from '../core/answers'
 import { extractCandidates, ingestDocument } from '../core/documents'
 import type {
   Candidate,
+  CookiePlatformRow,
   HandEnteredField,
   DataCategoryDictionary,
   InternalSystemDictionary,
@@ -14,6 +15,7 @@ import type {
   VendorDictionary,
 } from '../core/types'
 import vendorsJson from '../data/vendors.json'
+import cookiePlatformsJson from '../data/cookie-platforms.json'
 import internalSystemsJson from '../data/internalSystems.json'
 import subjectGroupsJson from '../data/subjectGroups.json'
 import dataCategoriesJson from '../data/dataCategories.json'
@@ -37,6 +39,7 @@ import { STRINGS } from './strings'
 import { STYLESHEET } from './theme'
 
 const VENDORS = vendorsJson as VendorDictionary
+const COOKIE_PLATFORMS = cookiePlatformsJson as unknown as readonly CookiePlatformRow[]
 const INTERNAL_SYSTEMS = internalSystemsJson as InternalSystemDictionary
 const SUBJECT_GROUPS = subjectGroupsJson as SubjectGroupDictionary
 const DATA_CATEGORIES = dataCategoriesJson as DataCategoryDictionary
@@ -105,7 +108,7 @@ export function App() {
     setScanning(true)
     try {
       const result = await startScan(url)
-      setHistory((h) => push(h, ingestScan(h.present, result, VENDORS, { prefix: `scan${h.past.length + 1}` })))
+      setHistory((h) => push(h, ingestScan(h.present, result, VENDORS, { prefix: `scan${h.past.length + 1}` }, COOKIE_PLATFORMS)))
       setNotice(scanResultNotice(result))
       setLastScan({ possibleGaps: result.possibleGaps, stoppedEarly: result.stoppedEarly })
     } catch (e) {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { ingestScan } from '../../src/core/scan'
 import { emptyProject } from '../fixtures/projects'
-import type { ScanResult, VendorDictionary } from '../../src/core/types'
+import type { CookiePlatformRow, ScanResult, VendorDictionary } from '../../src/core/types'
 
 const DICT: VendorDictionary = {
   'google-analytics.com': { owner: 'Google', category: 'analytics', purposeGroup: 'Marketing' },
@@ -504,6 +504,19 @@ describe('ingestScan names by host and segment', () => {
     const three = ingestScan(emptyProject(), scan(['maps', 'search']), D, IDS)
     expect(three.places.map((p) => p.name).sort()).toEqual(['Google Maps', 'rossi-editore.it', 'www.google.com'])
     expect(three.observations.find((o) => o.domain === 'www.google.com')?.paths).toEqual(['maps', 'search'])
+  })
+})
+
+describe('ingestScan names cookies by platform', () => {
+  const TABLE: CookiePlatformRow[] = [['_ga', 'Google Analytics', 'Analytics', 0], ['_fbp', 'Meta Pixel', 'Marketing', 0]]
+  const cookie = (name: string) => ({ name, domain: 'rossi-editore.it', session: false, expiresEpochSeconds: CAPTURED_AT + 86_400 * 400 })
+  it('attaches to a place of that name, and invents no place when there is none', () => {
+    const scan = scanResultWith({ hosts: [{ host: 'www.google-analytics.com', requestCount: 1 }], cookies: [cookie('_ga'), cookie('_fbp')] })
+    const p = ingestScan(emptyProject(), scan, DICT, IDS, TABLE)
+    const ga = p.places.find((pl) => pl.name === 'Google Analytics')
+    expect(p.cookies?.find((c) => c.name === '_ga')).toMatchObject({ platform: 'Google Analytics', placeId: ga?.id })
+    expect(p.cookies?.find((c) => c.name === '_fbp')).toMatchObject({ platform: 'Meta Pixel', placeId: undefined })
+    expect(p.places.map((pl) => pl.name).sort()).toEqual(['Google Analytics', 'rossi-editore.it'])
   })
 })
 

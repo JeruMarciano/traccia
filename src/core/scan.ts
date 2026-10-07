@@ -1,10 +1,11 @@
-import { bucketLifetime, cookieOwnerName, isThirdPartyCookie } from './cookies'
+import { bucketLifetime, cookieOwnerName, cookiePlatform, isThirdPartyCookie } from './cookies'
 import { classifyDoors } from './doors'
 import { addFlow, addPlace } from './graph'
 import { classifyHost, identify } from './vendors'
 import type {
   CapturedCookie,
   CollectionPoint,
+  CookiePlatformRow,
   Flow,
   Observation,
   Place,
@@ -111,6 +112,7 @@ export function ingestScan(
   result: ScanResult,
   dictionary: VendorDictionary,
   ids: IngestIds,
+  cookieTable: readonly CookiePlatformRow[] = [],
 ): Project {
   let working = project
 
@@ -255,13 +257,19 @@ export function ingestScan(
   const latestCookieByKey = new Map<string, CapturedCookie>()
   for (const raw of result.cookies) {
     const ownerName = cookieOwnerName(raw.domain, dictionary)
-    const place = ownerName === null ? undefined : findPlaceByName(working, ownerName)
+    // A cookie only ever attaches to a place that exists: first by the domain's owner, then by a
+    // place carrying the platform's name. No place is created from a cookie.
+    const platform = cookiePlatform(raw.name, cookieTable)?.platform
+    const place =
+      (ownerName === null ? undefined : findPlaceByName(working, ownerName)) ??
+      (platform === undefined ? undefined : findPlaceByName(working, platform))
     latestCookieByKey.set(cookieKey(raw.name, raw.domain), {
       name: raw.name,
       domain: raw.domain,
       thirdParty: isThirdPartyCookie(raw.domain, result.scannedHost),
       lifetime: bucketLifetime(raw, result.capturedAtEpochSeconds),
       placeId: place?.id,
+      ...(platform === undefined ? {} : { platform }),
     })
   }
 
