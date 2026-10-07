@@ -10,7 +10,7 @@
 //! this view missing 15 of 37 hosts the proxy saw, which is why the proxy's
 //! ledger and not this module is the source of truth for what was contacted.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::future::poll_fn;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -50,6 +50,10 @@ pub struct ObservedHost {
     pub host: String,
     pub request_count: u32,
     pub phase: Phase,
+    /// Up to [`MAX_SEGMENTS_PER_HOST`] distinct first path segments requested from this host,
+    /// lowercased `[a-z0-9-_]{1,32}` only. Never a value, never a query.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
 }
 
 /// One cookie the browser held when the scan ended, capped and sanitised —
@@ -661,6 +665,9 @@ const MAX_HOST_LEN: usize = 253;
 /// see [`HostAccumulator::overflowed`].
 const MAX_HOSTS: usize = 4096;
 
+/// The most distinct first path segments kept per host (see [`first_segment`]).
+const MAX_SEGMENTS_PER_HOST: usize = 8;
+
 /// Counts requests per host.
 ///
 /// Pure: it is handed URL strings and returns a sorted list. Sorted by host
@@ -670,6 +677,7 @@ const MAX_HOSTS: usize = 4096;
 #[derive(Debug, Default, Clone)]
 pub struct HostAccumulator {
     counts: BTreeMap<String, (u32, Phase)>,
+    segments: BTreeMap<String, BTreeSet<String>>,
     overflowed: bool,
 }
 
@@ -692,6 +700,12 @@ impl HostAccumulator {
             // known to be incomplete.
             self.overflowed = true;
             return;
+        }
+        if let Some(segment) = first_segment(url) {
+            let set = self.segments.entry(host.clone()).or_default();
+            if set.len() < MAX_SEGMENTS_PER_HOST {
+                set.insert(segment);
+            }
         }
         let (count, _) = self.counts.entry(host).or_insert((0, phase));
         *count = count.saturating_add(1);
@@ -717,16 +731,30 @@ impl HostAccumulator {
         self.overflowed
     }
 
-    pub fn finish(self) -> Vec<ObservedHost> {
+    pub fn finish(mut self) -> Vec<ObservedHost> {
         self.counts
             .into_iter()
             .map(|(host, (request_count, phase))| ObservedHost {
+                paths: self.segments.remove(&host).map(|s| s.into_iter().collect()).unwrap_or_default(),
                 host,
                 request_count,
                 phase,
             })
             .collect()
     }
+}
+
+/// The first path segment of an absolute `http(s)` URL, lowercased, only when it is
+/// `[a-z0-9-_]` after lowercasing; sliced to 32 characters. Anything else (empty, dots,
+/// percent-escapes, `@`, non-ASCII) is dropped: a segment is a name hint, never a value.
+fn first_segment(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    let path = rest.split(['?', '#']).next()?.split_once('/')?.1;
+    let segment = path.split('/').next()?.to_ascii_lowercase();
+    if segment.is_empty() || !segment.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_')) {
+        return None;
+    }
+    Some(segment.chars().take(32).collect())
 }
 
 /// The host of an absolute `http(s)` URL, lowercased, without userinfo, port
@@ -2754,6 +2782,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn keeps_at_most_eight_distinct_first_segments_per_host() {
+        let mut acc = HostAccumulator::new();
+        for i in 0..12 {
+            acc.record(&format!("https://www.google.com/seg{i}/x?q=1"), Phase::Before);
+        }
+        acc.record("https://www.google.com/seg0/again", Phase::Before);
+        let hosts = acc.finish();
+        assert_eq!(hosts[0].paths.len(), 8);
+        assert_eq!(hosts[0].request_count, 13);
+    }
+
+    #[test]
+    fn a_segment_is_sliced_to_32_and_dropped_when_outside_the_plain_alphabet() {
+        let mut acc = HostAccumulator::new();
+        acc.record(&format!("https://a.example/{}/x", "Ab".repeat(20)), Phase::Before);
+        for bad in ["/a.b", "/a%20b", "/ab@c", "/caf\u{e9}", "/", "/?q=1"] {
+            acc.record(&format!("https://b.example{bad}"), Phase::Before);
+        }
+        let hosts = acc.finish();
+        assert_eq!(hosts[0].paths, vec!["ab".repeat(16)]);
+        assert!(hosts[1].paths.is_empty());
+    }
+
+    #[test]
     fn counts_repeat_requests_to_one_host_once_as_a_host() {
         let mut acc = HostAccumulator::new();
         acc.record("https://www.google-analytics.com/collect?v=1", Phase::Before);
@@ -3884,6 +3936,7 @@ mod tests {
                 host: "doubleclick.net".to_string(),
                 request_count: 3,
                 phase: Phase::Before,
+                paths: Vec::new(),
             }],
             pages_visited: 4,
             possible_gaps: 0,

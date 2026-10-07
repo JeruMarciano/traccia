@@ -43,13 +43,22 @@ function isPhase(v: unknown): boolean {
   return v === undefined || v === 'before' || v === 'after'
 }
 
+/** First path segments per host: Rust keeps at most 8, each `[a-z0-9_-]{1,32}`. Bounded again here. */
+function isPaths(v: unknown): boolean {
+  return (
+    v === undefined ||
+    (Array.isArray(v) && v.length <= 8 && v.every((s) => typeof s === 'string' && /^[a-z0-9_-]{1,32}$/.test(s)))
+  )
+}
+
 function isObservedHost(v: unknown): v is ObservedHost {
   return (
     typeof v === 'object' &&
     v !== null &&
     typeof (v as Record<string, unknown>).host === 'string' &&
     typeof (v as Record<string, unknown>).requestCount === 'number' &&
-    isPhase((v as Record<string, unknown>).phase)
+    isPhase((v as Record<string, unknown>).phase) &&
+    isPaths((v as Record<string, unknown>).paths)
   )
 }
 

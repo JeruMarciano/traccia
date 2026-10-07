@@ -74,6 +74,8 @@ export interface Observation {
   domain: string
   requestCount: number
   beforeConsent: boolean
+  /** First path segments seen for this domain; lets the panel recompute the place name. */
+  paths?: string[]
 }
 
 /** One entry in the bundled vendor dictionary. Data only; never fetched. */
@@ -180,6 +182,8 @@ export interface ObservedHost {
   requestCount: number
   /** The consent phase the host was first seen in. Absent in a v0.3 payload: read as 'before'. */
   phase?: 'before' | 'after'
+  /** Up to 8 distinct first path segments requested from the host (lowercase `[a-z0-9-_]{1,32}`). */
+  paths?: string[]
 }
 
 export type CookieLifetime = 'session' | 'under-a-day' | 'under-a-year' | 'a-year-or-more'
@@ -246,6 +250,8 @@ export type DoorKind = 'form' | 'newsletter' | 'booking' | 'chat' | 'embed'
 /** What classifyDoors finds: one candidate per page for a form, one per provider otherwise. */
 export interface DoorCandidate {
   kind: DoorKind
+  /** First path segment of the provider's iframe, when the door is an embed. */
+  segment?: string
   page: string
   pages: string[]
   /** The host as scanned, never a guessed name. Null when there is no third party. */

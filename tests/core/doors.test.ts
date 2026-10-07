@@ -221,6 +221,17 @@ describe('classifyDoors', () => {
     expect(d[0]).toMatchObject({ kind: 'embed', provider: 'www.google.com' })
     expect(d[0]?.pages).toHaveLength(6)
   })
+  it('an embed is classified by host and segment: maps is an embed, a bare search host is not', () => {
+    const dict: VendorDictionary = {
+      'google.com': { owner: 'Google', category: 'search', purposeGroup: 'Systems' },
+      'www.google.com/maps': { owner: 'Google', category: 'maps', purposeGroup: 'Systems' },
+      'www.google.com/recaptcha': { owner: 'Google', category: 'captcha', purposeGroup: 'Systems' },
+    }
+    const iframe = (segment: string) => ({ page: '/', host: 'www.google.com', segment })
+    expect(classifyDoors(result({ iframes: [iframe('maps')] }), dict)).toMatchObject([{ kind: 'embed', segment: 'maps' }])
+    expect(classifyDoors(result({ iframes: [iframe('recaptcha')] }), dict)).toMatchObject([{ kind: 'embed', segment: 'recaptcha' }])
+    expect(classifyDoors(result({ iframes: [iframe('search')] }), dict)).toEqual([])
+  })
   it('a same-site iframe is not an embed door', () => {
     const iframes = [{ page: '/', host: 'www.rossi-editore.it', segment: 'maps' }]
     expect(classifyDoors(result({ iframes }), { ...DICT, 'rossi-editore.it': DICT['www.google.com']! })).toEqual([])

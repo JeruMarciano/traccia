@@ -48,7 +48,7 @@ for (const f of fs.readdirSync(D + 'runs').filter((f) => f.endsWith('.meta.json'
   r.recallAll = all.size ? +(scan3.filter((h) => all.has(h)).length / all.size).toFixed(2) : null;
   // Naming by owning organisation (registrable domain), not per host.
   const orgs = new Map();
-  for (const h of all) { const k = reg(h); const hit = identify(h, dict); orgs.set(k, orgs.get(k) || (hit ? 'named' : classifyHost(h) ? 'hint' : 'none')); }
+  for (const h of all) { const k = reg(h); const hit = identify(h, dict) || (ref.paths?.[h.replace(/^ws:/, '')] ?? []).some((seg) => identify(h, dict, seg)); orgs.set(k, orgs.get(k) || (hit ? 'named' : classifyHost(h) ? 'hint' : 'none')); }
   r.orgs = orgs.size; r.orgsNamed = [...orgs.values()].filter((v) => v === 'named').length; r.orgsHint = [...orgs.values()].filter((v) => v === 'hint').length;
   for (const [k, v] of orgs) if (v !== 'named') unnamed.set(k, (unnamed.get(k) || 0) + 1);
   r.cmpRef = (ref.cmp ?? []).filter((c) => c !== 'TCF').join('+') || (ref.cmp?.includes('TCF') ? 'TCF' : '');

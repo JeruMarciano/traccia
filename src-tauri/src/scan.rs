@@ -804,6 +804,7 @@ mod tests {
                 host: "doubleclick.net".into(),
                 request_count: 3,
                 phase: cdp::Phase::Before,
+                paths: Vec::new(),
             }],
             pages_visited: 4,
             possible_gaps: 2,

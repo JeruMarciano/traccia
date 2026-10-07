@@ -122,13 +122,14 @@ export function classifyDoors(result: ScanResult, dictionary: VendorDictionary):
     page: string,
     provider: string | null,
     fields: CollectionPointField[] = [],
+    segment?: string,
   ): void => {
     // One vendor can have many hosts: the owner and category join them when the dictionary knows it.
-    const hit = provider === null ? null : identify(provider, dictionary)
+    const hit = provider === null ? null : identify(provider, dictionary, segment)
     const key = `${kind}|${hit === null ? (provider ?? '') : `${hit.owner}|${hit.category}`}`
     const door = shared.get(key)
     if (door === undefined) {
-      const created = { kind, page, pages: page === '' ? [] : [page], provider, fields }
+      const created = { kind, page, pages: page === '' ? [] : [page], provider, fields, ...(segment ? { segment } : {}) }
       shared.set(key, created)
       doors.push(created)
       return
@@ -178,8 +179,10 @@ export function classifyDoors(result: ScanResult, dictionary: VendorDictionary):
     }
   }
   for (const frame of result.iframes ?? []) {
-    const category = thirdParty(frame.host) ? identify(frame.host, dictionary)?.category : undefined
-    if (category !== undefined && EMBED_CATEGORIES.has(category)) addShared('embed', frame.page, frame.host)
+    const category = thirdParty(frame.host) ? identify(frame.host, dictionary, frame.segment)?.category : undefined
+    if (category !== undefined && EMBED_CATEGORIES.has(category)) {
+      addShared('embed', frame.page, frame.host, [], frame.segment)
+    }
   }
   return doors
 }

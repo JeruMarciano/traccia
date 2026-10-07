@@ -178,6 +178,18 @@ describe('startScan', () => {
     await expect(attempt(Array(13).fill(ok))).rejects.toThrow()
   })
 
+  it('accepts host paths and rejects an unclean, overlong or too many segment', async () => {
+    const { startScan } = await import('../../src/renderer/bridge')
+    const attempt = (paths: unknown) => {
+      invoke.mockResolvedValueOnce(JSON.stringify({ ...validPayload(), hosts: [{ host: 'www.google.com', requestCount: 1, phase: 'before', paths }] }))
+      return startScan('https://rossi-editore.it')
+    }
+    await expect(attempt(['maps', 'a_b-1'])).resolves.toBeTruthy()
+    for (const bad of [['A/b'], ['a'.repeat(33)], [''], [5], 'maps', Array.from({ length: 9 }, (_, i) => `s${i}`)]) {
+      await expect(attempt(bad)).rejects.toThrow()
+    }
+  })
+
   it('accepts valid iframes, offsite links and form shapes and rejects malformed or oversized ones', async () => {
     const { startScan } = await import('../../src/renderer/bridge')
     const attempt = (over: Record<string, unknown>) => {

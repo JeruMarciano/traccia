@@ -46,8 +46,15 @@ const send = (method, params = {}, sessionId) => new Promise((res) => {
 let phase = 'pre';
 const hosts = { pre: new Set(), post: new Set(), pages: new Set() };
 const hostOf = (u) => { try { const x = new URL(u); return /^(https?|wss?):$/.test(x.protocol) ? x.hostname : null; } catch { return null; } };
+// First path segment per host, as the app records it: [a-z0-9-_]{1,32}, at most 8 distinct per host.
+const paths = {};
+const noteSegment = (u, h) => {
+  const seg = (new URL(u).pathname.split('/')[1] ?? '').toLowerCase();
+  const set = (paths[h] ??= new Set());
+  if (/^[a-z0-9_-]{1,32}$/.test(seg) && set.size < 8) set.add(seg);
+};
 handlers.push((m) => {
-  if (m.method === 'Network.requestWillBeSent') { const h = hostOf(m.params.request.url); if (h) hosts[phase].add(h); }
+  if (m.method === 'Network.requestWillBeSent') { const h = hostOf(m.params.request.url); if (h) { hosts[phase].add(h); noteSegment(m.params.request.url, h); } }
   if (m.method === 'Network.webSocketCreated') { const h = hostOf(m.params.url); if (h) hosts[phase].add('ws:' + h); }
   if (m.method === 'Target.attachedToTarget') {
     const s = m.params.sessionId;
@@ -155,6 +162,7 @@ try {
 } catch (e) { result.error = String(e); }
 delete hosts.page;
 result.hosts = Object.fromEntries(Object.entries(hosts).map(([k, v]) => [k, [...v].sort()]));
+result.paths = Object.fromEntries(Object.entries(paths).map(([k, v]) => [k, [...v].sort()]));
 fs.writeFileSync(out, JSON.stringify(result, null, 1));
 chrome.kill('SIGKILL');
 await sleep(500);

@@ -12,20 +12,27 @@ import type { VendorDictionary, VendorEntry } from './types'
  *
  * The dictionary is a parameter so that `src/core/` holds no bundled data and
  * so these tests run against three entries instead of several thousand.
+ *
+ * With a first path `segment`, each suffix is tried as `suffix/segment` before the bare
+ * `suffix`, so `www.google.com` + `maps` is a different vendor from `www.google.com` +
+ * `recaptcha`. A segment nobody listed falls back to the host entry, or to null: it is never
+ * guessed into a name.
  */
-export function identify(host: string, dictionary: VendorDictionary): VendorEntry | null {
+export function identify(host: string, dictionary: VendorDictionary, segment?: string): VendorEntry | null {
   const normalised = host.toLowerCase().replace(/\.$/, '')
   if (normalised === '') return null
 
   const labels = normalised.split('.')
   for (let i = 0; i < labels.length; i += 1) {
-    const candidate = labels.slice(i).join('.')
+    const suffix = labels.slice(i).join('.')
     // A plain `dictionary[candidate]` reads the prototype chain, so
     // `__proto__` and `constructor` would otherwise come back as an
     // "identified" vendor with an undefined owner. Only own properties count.
-    if (Object.prototype.hasOwnProperty.call(dictionary, candidate)) {
-      const hit = dictionary[candidate]
-      if (hit !== undefined) return hit
+    for (const candidate of segment ? [`${suffix}/${segment.toLowerCase()}`, suffix] : [suffix]) {
+      if (Object.prototype.hasOwnProperty.call(dictionary, candidate)) {
+        const hit = dictionary[candidate]
+        if (hit !== undefined) return hit
+      }
     }
   }
   return null
