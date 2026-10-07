@@ -117,6 +117,9 @@ function consentNotice(result: ScanResult): string | null {
  * stated wrongly (see `consentNotice`).
  */
 export function scanResultNotice(result: ScanResult, dictionary: VendorDictionary): string {
+  // No page was seen, so nothing else may be said: not a cookie count, not a door, and above all
+  // not "no consent banner", which would be a claim about a page nobody looked at.
+  if (result.pagesVisited === 0 && !result.stoppedEarly) return STRINGS.scanPageNotLoaded
   const cookies = cookieNotice(result)
   const collectionPoints = collectionPointsNotice(result, dictionary)
   const storageKeys = storageKeysNotice(result)

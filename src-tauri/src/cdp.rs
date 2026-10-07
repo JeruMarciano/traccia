@@ -1194,6 +1194,15 @@ const DEVTOOLS_FILE_POLL: Duration = Duration::from_millis(50);
 /// Bound on any single command's response. A browser that stops answering
 /// must fail the scan, not hang the app.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `Page.navigate`'s `errorText` when an HTTP error status arrived with an
+/// empty body: some server answered, and the browser drew its own error page.
+const HTTP_ERROR_STATUS: &str = "net::ERR_HTTP_RESPONSE_CODE_FAILURE";
+
+/// `Page.navigate` itself was not answered inside `COMMAND_TIMEOUT`.
+fn navigation_timed_out(error: &CdpError) -> bool {
+    matches!(error, CdpError::Timeout(m) if m.as_ref() == NavigateParams::IDENTIFIER)
+}
 /// Bound on waiting for the page target to attach after `Target.createTarget`.
 const ATTACH_TIMEOUT: Duration = Duration::from_secs(15);
 /// Bound on waiting for `Page.loadEventFired` after a navigation.
@@ -1514,6 +1523,9 @@ struct Driver<T: CdpTransport> {
     pages: Vec<VisitedPage>,
     iframes: Vec<IframeSeen>,
     offsite_links: Vec<OffsiteLink>,
+    /// The scan's own proxy ledger: the one witness that can tell the proxy's
+    /// 502 from the site's. `None` in unit tests, which have no proxy.
+    ledger: Option<Arc<crate::proxy::Ledger>>,
 }
 
 impl<T: CdpTransport> Driver<T> {
@@ -1537,6 +1549,7 @@ impl<T: CdpTransport> Driver<T> {
             pages: Vec::new(),
             iframes: Vec::new(),
             offsite_links: Vec::new(),
+            ledger: None,
         }
     }
 
@@ -1865,6 +1878,13 @@ impl<T: CdpTransport> Driver<T> {
     /// quiet. A navigation the browser refuses is not fatal — the proxy may
     /// have denied it, which is the proxy doing its job — so the error is
     /// reported to the caller as `false` rather than failing the scan.
+    ///
+    /// `false` as well for a navigation that ended on the browser's own error
+    /// page (`errorText`), with one exception: [`HTTP_ERROR_STATUS`] means an
+    /// HTTP error status came back with an empty body, and a site that
+    /// answers 404 itself *did* answer. The proxy's own 502 for a host it
+    /// could not reach reads exactly the same to the browser, so there the
+    /// proxy's ledger decides, not the status.
     async fn visit(
         &mut self,
         session: &SessionId,
@@ -1874,7 +1894,7 @@ impl<T: CdpTransport> Driver<T> {
     ) -> Result<bool, CdpError> {
         self.load_fired = false;
         let params = to_params(&NavigateParams::new(url.to_string()))?;
-        match self
+        let result = match self
             .call(
                 Some(session.clone()),
                 MethodId::from(NavigateParams::IDENTIFIER),
@@ -1882,10 +1902,15 @@ impl<T: CdpTransport> Driver<T> {
             )
             .await
         {
-            Ok(_) => {}
+            Ok(result) => result,
             Err(CdpError::Protocol { .. }) => return Ok(false),
             Err(e) => return Err(e),
-        }
+        };
+        let error = result
+            .get("errorText")
+            .and_then(|e| e.as_str())
+            .unwrap_or("")
+            .to_string();
         // Arming gets the whole load window, not one 100 ms read of it. A page
         // that attaches a burst of out-of-process iframes needs more than four
         // round trips' worth of budget, and a target left unarmed here is a
@@ -1902,7 +1927,23 @@ impl<T: CdpTransport> Driver<T> {
             Instant::now() + ARM_DRAIN_BUDGET,
         )
         .await?;
-        Ok(true)
+        // Decided only now, after the wait: whatever the browser fetched for
+        // its own error page falls inside the window the caller rolls back.
+        match error.as_str() {
+            "" => Ok(true),
+            HTTP_ERROR_STATUS => {
+                // Where it ended up, not where it was sent: a redirect to a
+                // host the proxy could not reach is that host's failure.
+                let landed = self.current_url(session).await?;
+                let host = http_host(landed.as_deref().unwrap_or(url));
+                let unreachable = match (&self.ledger, host) {
+                    (Some(ledger), Some(host)) => ledger.unreachable(&host),
+                    _ => false,
+                };
+                Ok(!unreachable)
+            }
+            _ => Ok(false),
+        }
     }
 
     /// `(href, text)` of the page's own anchors, `href` already resolved to
@@ -2504,39 +2545,50 @@ impl<T: CdpTransport> Driver<T> {
         if cancel.is_cancelled() || max_pages == 0 {
             return self.finish(pages_visited, cancel.is_cancelled()).await;
         }
-        if self.visit(&session, entry_url, HOME_WAIT, cancel).await? {
-            pages_visited += 1;
-            // [B4] Only for a page this walk actually loaded, only on the
-            // page's own top-level session, and attributed to `entry_url` as
-            // the walk itself knows it — never to anything the page's own
-            // `location` might report.
-            if !cancel.is_cancelled() {
-                let fields = self.probe_form_fields(&session, entry_url).await?;
-                self.form_fields.extend(fields);
-                let frames = self.probe_iframes(&session, entry_url).await?;
-                self.iframes.extend(frames);
-            }
-            // [B4] Same discipline as the form-field probe above: only a page
-            // this walk actually loaded, only on the page's own top-level
-            // session.
-            if !cancel.is_cancelled() {
-                let keys = self.probe_storage_keys(&session).await?;
-                self.storage_keys.extend(keys);
-            }
-            if !cancel.is_cancelled() {
-                self.snapshot_before_cookies().await?;
-            }
-            // Once, on the entry page's own session — the banner is a
-            // site-level fact, not a per-page one.
-            if !cancel.is_cancelled() {
-                let detection = self.detect_consent(&session, cancel).await?;
-                self.consent = self.consent_step(&session, cancel, entry_url, detection).await?;
-                self.end_consent(&session).await?;
-                // Reloaded so the tags that wait for consent load. Not a new
-                // page: not counted, not probed again.
-                if self.consent.clicked && !cancel.is_cancelled() {
-                    self.visit(&session, entry_url, SETTLE_AFTER_LOAD, cancel).await?;
-                }
+        let before = self.acc.clone();
+        let home_loaded = match self.visit(&session, entry_url, HOME_WAIT, cancel).await {
+            Err(e) if navigation_timed_out(&e) => false,
+            loaded => loaded?,
+        };
+        if !home_loaded {
+            // Nothing was seen: no probe, no consent claim, no key pages, and
+            // what the browser fetched for its own error page is not the
+            // site's.
+            self.acc = before;
+            self.gaps.note("home:not-loaded");
+            return self.finish(pages_visited, cancel.is_cancelled()).await;
+        }
+        pages_visited += 1;
+        // [B4] Only for a page this walk actually loaded, only on the
+        // page's own top-level session, and attributed to `entry_url` as
+        // the walk itself knows it — never to anything the page's own
+        // `location` might report.
+        if !cancel.is_cancelled() {
+            let fields = self.probe_form_fields(&session, entry_url).await?;
+            self.form_fields.extend(fields);
+            let frames = self.probe_iframes(&session, entry_url).await?;
+            self.iframes.extend(frames);
+        }
+        // [B4] Same discipline as the form-field probe above: only a page
+        // this walk actually loaded, only on the page's own top-level
+        // session.
+        if !cancel.is_cancelled() {
+            let keys = self.probe_storage_keys(&session).await?;
+            self.storage_keys.extend(keys);
+        }
+        if !cancel.is_cancelled() {
+            self.snapshot_before_cookies().await?;
+        }
+        // Once, on the entry page's own session — the banner is a
+        // site-level fact, not a per-page one.
+        if !cancel.is_cancelled() {
+            let detection = self.detect_consent(&session, cancel).await?;
+            self.consent = self.consent_step(&session, cancel, entry_url, detection).await?;
+            self.end_consent(&session).await?;
+            // Reloaded so the tags that wait for consent load. Not a new
+            // page: not counted, not probed again.
+            if self.consent.clicked && !cancel.is_cancelled() {
+                self.visit(&session, entry_url, SETTLE_AFTER_LOAD, cancel).await?;
             }
         }
 
@@ -2557,33 +2609,48 @@ impl<T: CdpTransport> Driver<T> {
                 break;
             }
             let before = self.acc.clone();
-            if self.visit(&session, &url, SETTLE_AFTER_LOAD, cancel).await? {
-                // A same-origin link can redirect away. Where the page ended
-                // up decides: an off-site page is not probed, not counted, and
-                // the hosts first seen while on it are given back.
-                let landed = self.current_url(&session).await?;
-                // Unreadable history is the same: a blank beats a guess.
-                match landed {
-                    Some(u) if origin(&u) == entry_origin => {}
-                    other => {
-                        self.acc = before;
-                        let kind = if other.is_some() { "offsite" } else { "history" };
-                        self.gaps.note(format!("page:{kind}:{n}"));
-                        continue;
-                    }
+            let loaded = match self.visit(&session, &url, SETTLE_AFTER_LOAD, cancel).await {
+                Err(e) if navigation_timed_out(&e) => {
+                    self.acc = before;
+                    self.gaps.note(format!("page:timeout:{n}"));
+                    // ponytail: the walk stops at the first navigation
+                    // timeout, so later pages are never tried — a browser that
+                    // stopped answering would cost 30 s for each of them.
+                    // Upgrade path: retry once on a fresh target.
+                    break;
                 }
-                pages_visited += 1;
-                self.pages.push(VisitedPage { page: page_identity(&url), purpose });
-                if !cancel.is_cancelled() {
-                    let fields = self.probe_form_fields(&session, &url).await?;
-                    self.form_fields.extend(fields);
-                    let frames = self.probe_iframes(&session, &url).await?;
-                    self.iframes.extend(frames);
+                loaded => loaded?,
+            };
+            if !loaded {
+                self.acc = before;
+                self.gaps.note(format!("page:not-loaded:{n}"));
+                continue;
+            }
+            // A same-origin link can redirect away. Where the page ended
+            // up decides: an off-site page is not probed, not counted, and
+            // the hosts first seen while on it are given back.
+            let landed = self.current_url(&session).await?;
+            // Unreadable history is the same: a blank beats a guess.
+            match landed {
+                Some(u) if origin(&u) == entry_origin => {}
+                other => {
+                    self.acc = before;
+                    let kind = if other.is_some() { "offsite" } else { "history" };
+                    self.gaps.note(format!("page:{kind}:{n}"));
+                    continue;
                 }
-                if !cancel.is_cancelled() {
-                    let keys = self.probe_storage_keys(&session).await?;
-                    self.storage_keys.extend(keys);
-                }
+            }
+            pages_visited += 1;
+            self.pages.push(VisitedPage { page: page_identity(&url), purpose });
+            if !cancel.is_cancelled() {
+                let fields = self.probe_form_fields(&session, &url).await?;
+                self.form_fields.extend(fields);
+                let frames = self.probe_iframes(&session, &url).await?;
+                self.iframes.extend(frames);
+            }
+            if !cancel.is_cancelled() {
+                let keys = self.probe_storage_keys(&session).await?;
+                self.storage_keys.extend(keys);
             }
         }
         self.finish(pages_visited, cancel.is_cancelled()).await
@@ -2712,12 +2779,14 @@ pub async fn observe(
     entry_url: &str,
     max_pages: u32,
     cancel: CancellationToken,
+    ledger: Arc<crate::proxy::Ledger>,
 ) -> Result<Observation, CdpError> {
     let ws_url = browser_ws_url(launched).await?;
     let connection = Connection::<CdpJsonEventMessage>::connect(&ws_url)
         .await
         .map_err(|e| CdpError::Connect(e.to_string()))?;
     let mut driver = Driver::new(connection);
+    driver.ledger = Some(ledger);
     driver.run(entry_url, max_pages, &cancel).await
 }
 
@@ -3032,6 +3101,13 @@ mod tests {
         /// Events emitted immediately before the response to a matching
         /// (method, session) submit — i.e. while that command is in flight.
         inject: Vec<(String, Option<String>, CdpJsonEventMessage)>,
+        /// As `inject`, but emitted on every matching submit, never used up.
+        inject_always: Vec<(String, Option<String>, CdpJsonEventMessage)>,
+        /// The (method, nth) submit, counted from zero, that is never
+        /// answered: `recv` yields the `CdpError::Timeout` that `call` reaches
+        /// after `COMMAND_TIMEOUT`, without the test waiting 30 s for it.
+        time_out: Option<(String, usize)>,
+        timed_out: Option<MethodId>,
         /// (method, session) pairs answered with a CDP error rather than a
         /// result — a browser refusing a command.
         refuse: Vec<(String, Option<String>)>,
@@ -3054,6 +3130,9 @@ mod tests {
                 results: HashMap::new(),
                 queued: HashMap::new(),
                 inject: Vec::new(),
+                inject_always: Vec::new(),
+                time_out: None,
+                timed_out: None,
                 refuse: Vec::new(),
                 answers: true,
                 hang_when_empty: false,
@@ -3117,6 +3196,18 @@ mod tests {
             if !self.answers {
                 return Ok(id);
             }
+            if let Some((m, nth)) = &self.time_out {
+                let earlier = self.sent.iter().filter(|(sent, ..)| sent == m).count();
+                if m == method.as_ref() && earlier == nth + 1 {
+                    self.timed_out = Some(method);
+                    return Ok(id);
+                }
+            }
+            for (m, s, event) in &self.inject_always {
+                if m == method.as_ref() && *s == session_str {
+                    self.inbox.push_back(Message::Event(event.clone()));
+                }
+            }
             let mut remaining = Vec::new();
             for (m, s, event) in std::mem::take(&mut self.inject) {
                 if m == method.as_ref() && s == session_str {
@@ -3154,6 +3245,9 @@ mod tests {
         }
 
         async fn recv(&mut self) -> Option<Result<Message<CdpJsonEventMessage>, CdpError>> {
+            if let Some(method) = self.timed_out.take() {
+                return Some(Err(CdpError::Timeout(method)));
+            }
             if self.inbox.is_empty() && self.hang_when_empty {
                 std::future::pending::<()>().await;
             }
@@ -4416,6 +4510,160 @@ mod tests {
                 .methods_for(Some("SESSION-A"))
                 .contains(&"Runtime.evaluate"),
             "a page whose navigation was refused must never be probed at all"
+        );
+    }
+
+    // --- Task 14: a page that did not load ---
+
+    const T14_HOME: &str = "https://rossi-editore.it/";
+
+    /// A site whose home links `/a`, `/b` and `/c`. Every navigation fires a
+    /// load event and one request to `seen.example`; the home's first probe
+    /// (form fields) finds one field.
+    fn three_linked_pages() -> FakeTransport {
+        let mut transport = FakeTransport::new();
+        transport
+            .results
+            .insert("Target.createTarget".to_string(), json!({"targetId": "T-1"}));
+        transport.inject_on(
+            "Target.createTarget",
+            None,
+            attached_event("SESSION-A", "T-1", "page", true),
+        );
+        for (method, params) in [
+            (
+                EventRequestWillBeSent::IDENTIFIER,
+                json!({"request": {"url": "https://seen.example/x"}}),
+            ),
+            (EventLoadEventFired::IDENTIFIER, json!({"timestamp": 0.0})),
+        ] {
+            transport.inject_always.push((
+                "Page.navigate".to_string(),
+                Some("SESSION-A".to_string()),
+                CdpJsonEventMessage {
+                    method: MethodId::from(method),
+                    session_id: Some("SESSION-A".to_string()),
+                    params,
+                },
+            ));
+        }
+        transport.queued.insert(
+            "Runtime.evaluate".to_string(),
+            VecDeque::from([json!({"result": {"value": [
+                {"name": "email", "type": "email", "autocomplete": "email", "label": "Email"}
+            ]}})]),
+        );
+        let links: Vec<[String; 2]> = ["a", "b", "c"]
+            .iter()
+            .map(|p| [format!("{T14_HOME}{p}"), String::new()])
+            .collect();
+        transport.results.insert(
+            "Runtime.evaluate".to_string(),
+            json!({"result": {"value": serde_json::to_string(&links).expect("json")}}),
+        );
+        transport.results.insert(
+            "Page.getNavigationHistory".to_string(),
+            json!({"currentIndex": 0, "entries": [{"url": T14_HOME}]}),
+        );
+        transport.hang_when_empty = true;
+        transport
+    }
+
+    fn navigations(transport: &FakeTransport) -> usize {
+        transport
+            .methods_for(Some("SESSION-A"))
+            .iter()
+            .filter(|m| **m == "Page.navigate")
+            .count()
+    }
+
+    fn visited(observation: &Observation) -> Vec<&str> {
+        observation.pages.iter().map(|p| p.page.as_str()).collect()
+    }
+
+    #[tokio::test]
+    async fn a_home_whose_navigation_reports_an_error_is_no_page_and_no_claim() {
+        let mut transport = three_linked_pages();
+        transport.queued.insert(
+            "Page.navigate".to_string(),
+            VecDeque::from([json!({"errorText": "net::ERR_NAME_NOT_RESOLVED"})]),
+        );
+        let mut driver = Driver::new(transport);
+        let observation = driver
+            .run(T14_HOME, 10, &CancellationToken::new())
+            .await
+            .expect("a home that did not load is not a failed scan");
+        assert_eq!(observation.pages_visited, 0);
+        assert_eq!(observation.consent, Consent::default());
+        // What the browser fetched for its own error page is not the site's.
+        assert_eq!(observation.hosts, Vec::new());
+        assert!(driver.gaps.keys.contains("home:not-loaded"), "{:?}", driver.gaps);
+        assert!(!driver
+            .transport
+            .methods_for(Some("SESSION-A"))
+            .contains(&"Runtime.evaluate"));
+        assert_eq!(navigations(&driver.transport), 1, "no key page is walked");
+    }
+
+    #[tokio::test]
+    async fn a_home_whose_navigation_times_out_is_no_page_and_not_a_failed_scan() {
+        let mut transport = three_linked_pages();
+        transport.time_out = Some(("Page.navigate".to_string(), 0));
+        let mut driver = Driver::new(transport);
+        let observation = driver
+            .run(T14_HOME, 10, &CancellationToken::new())
+            .await
+            .expect("a home that timed out is not a failed scan");
+        assert_eq!(observation.pages_visited, 0);
+        assert_eq!(observation.consent, Consent::default());
+        assert!(driver.gaps.keys.contains("home:not-loaded"), "{:?}", driver.gaps);
+        assert_eq!(navigations(&driver.transport), 1);
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_key_page_is_a_gap_and_the_next_one_is_still_visited() {
+        let mut transport = three_linked_pages();
+        transport.queued.insert(
+            "Page.navigate".to_string(),
+            VecDeque::from([
+                json!({}),
+                json!({}),
+                json!({"errorText": "net::ERR_CONNECTION_REFUSED"}),
+            ]),
+        );
+        let mut driver = Driver::new(transport);
+        let observation = driver
+            .run(T14_HOME, 10, &CancellationToken::new())
+            .await
+            .expect("run");
+        assert_eq!(
+            visited(&observation),
+            ["https://rossi-editore.it/a", "https://rossi-editore.it/c"]
+        );
+        assert_eq!(observation.pages_visited, 3);
+        assert!(driver.gaps.keys.contains("page:not-loaded:1"), "{:?}", driver.gaps);
+        // Four navigations, three loaded: the request seen while on `/b` is
+        // given back.
+        assert_eq!(observation.hosts[0].request_count, 3, "{:?}", observation.hosts);
+    }
+
+    #[tokio::test]
+    async fn a_key_page_that_times_out_stops_the_walk_and_keeps_what_was_read() {
+        let mut transport = three_linked_pages();
+        transport.time_out = Some(("Page.navigate".to_string(), 2));
+        let mut driver = Driver::new(transport);
+        let observation = driver
+            .run(T14_HOME, 10, &CancellationToken::new())
+            .await
+            .expect("one page timing out is not a failed scan");
+        assert_eq!(visited(&observation), ["https://rossi-editore.it/a"]);
+        assert_eq!(observation.pages_visited, 2);
+        assert!(driver.gaps.keys.contains("page:timeout:1"), "{:?}", driver.gaps);
+        assert_eq!(navigations(&driver.transport), 3, "`/c` must not be requested");
+        assert!(
+            observation.form_fields.iter().any(|f| f.name == "email"),
+            "{:?}",
+            observation.form_fields
         );
     }
 

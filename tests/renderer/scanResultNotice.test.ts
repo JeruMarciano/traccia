@@ -78,6 +78,26 @@ describe('scanResultNotice', () => {
     expect(notice).toBe(STRINGS.scanStopped(2))
   })
 
+  describe('a page that did not load', () => {
+    const cookie = { name: 'sid', domain: 'rossi-editore.it', session: true, expiresEpochSeconds: 0 }
+
+    it('says only that the page did not load: no gap count, no consent sentence', () => {
+      const notice = scanResultNotice(result({ pagesVisited: 0, possibleGaps: 1, hosts: [] }), {})
+      expect(notice).toBe('The page did not load, so nothing was observed. Check the address and try again.')
+      expect(notice).toBe(STRINGS.scanPageNotLoaded)
+    })
+
+    it('stays that single sentence when a redirect set a cookie before failing', () => {
+      const notice = scanResultNotice(result({ pagesVisited: 0, possibleGaps: 1, cookies: [cookie] }), {})
+      expect(notice).toBe(STRINGS.scanPageNotLoaded)
+    })
+
+    it('keeps the stopped wording for a scan stopped before any page loaded', () => {
+      const notice = scanResultNotice(result({ pagesVisited: 0, stoppedEarly: true }), {})
+      expect(notice).toBe(STRINGS.scanStopped(0))
+    })
+  })
+
   describe('cookie count', () => {
     // scannedHost is 'rossi-editore.it': a cookie on that domain is first-party, a cookie on
     // any other domain is third-party. One of each below, so the count and the third-party

@@ -123,6 +123,9 @@ pub struct Ledger {
     /// know the difference between "nothing else happened" and "we stopped writing it down".
     dropped_records: AtomicU64,
     handler_panics: AtomicU64,
+    /// Admitted hosts whose latest upstream dial failed: the 502 the browser got for them was
+    /// this proxy's own, not the site's. Kept apart from the accounting above; names only.
+    unreachable: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl Ledger {
@@ -166,6 +169,20 @@ impl Ledger {
     }
     fn note_panic(&self) {
         self.handler_panics.fetch_add(1, Ordering::SeqCst);
+    }
+    fn note_dial(&self, host: &str, reached: bool) {
+        if let Ok(mut set) = self.unreachable.lock() {
+            if reached {
+                set.remove(host);
+            } else if set.len() < MAX_LEDGER_ENTRIES {
+                set.insert(host.to_string());
+            }
+        }
+    }
+    /// Whether the latest upstream dial to `host` failed, so that what the browser shows for it
+    /// is this proxy's 502 and not an answer from the site.
+    pub fn unreachable(&self, host: &str) -> bool {
+        self.unreachable.lock().is_ok_and(|set| set.contains(host))
     }
     pub fn allowed(&self) -> Vec<(String, u16)> {
         self.allowed.lock().map(|v| v.clone()).unwrap_or_default()
@@ -468,7 +485,10 @@ async fn handle(
             // vetted — never the raw authority off the request line: connecting to the raw string
             // would hand the resolver a name the guard never saw.
             ledger.note_allowed(approved.clone(), port);
-            match connect(approved, port).await {
+            let dialled = connect(approved.clone(), port).await;
+            // Before the 502 is written, so the scanner can never read the error page first.
+            ledger.note_dial(&approved, dialled.is_ok());
+            match dialled {
                 Err(_) => {
                     let _ = client.write_all(UPSTREAM_FAILED).await;
                 }
@@ -890,6 +910,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(p.ledger.allowed(), vec![("rossi-editore.it".to_string(), 443)]);
         assert!(p.ledger.denied().is_empty());
+        assert!(!p.ledger.unreachable("rossi-editore.it"));
         assert_sensor_alive(&p.ledger);
     }
 
@@ -1103,6 +1124,8 @@ mod tests {
         assert!(reply.starts_with("HTTP/1.1 502"), "got {reply:?}");
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(p.ledger.allowed(), vec![("rossi-editore.it".to_string(), 443)]);
+        // And known as never reached, so its 502 is not read as the site's own answer.
+        assert!(p.ledger.unreachable("rossi-editore.it"));
         assert_sensor_alive(&p.ledger);
     }
 

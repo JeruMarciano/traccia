@@ -46,6 +46,17 @@ describe('ingestScan', () => {
     expect(p.subjectGroups.map((s) => s.name)).toEqual(['Website visitors'])
   })
 
+  it('adds nothing for a scan whose page did not load: no site, no visitors, no cookie', () => {
+    const before = emptyProject()
+    const notLoaded = result({ pagesVisited: 0, possibleGaps: 1, hosts: [], cookies: [GA_COOKIE] })
+    expect(ingestScan(before, notLoaded, DICT, IDS)).toBe(before)
+  })
+
+  it('still seeds the site for a scan the user stopped before any page loaded', () => {
+    const p = ingestScan(emptyProject(), result({ pagesVisited: 0, stoppedEarly: true }), DICT, IDS)
+    expect(p.places.map((pl) => pl.name)).toEqual(['rossi-editore.it'])
+  })
+
   it('creates a place for the scanned site, held by the organisation', () => {
     const p = ingestScan(emptyProject(), result(), DICT, IDS)
     const site = p.places.find((pl) => pl.name === 'rossi-editore.it')

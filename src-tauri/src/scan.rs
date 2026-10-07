@@ -438,7 +438,14 @@ async fn run_pipeline(
         hook(child_pid, &profile_dir);
     }
 
-    let observed = cdp::observe(&launched, &target.url, MAX_PAGES, cancel_token).await;
+    let observed = cdp::observe(
+        &launched,
+        &target.url,
+        MAX_PAGES,
+        cancel_token,
+        Arc::clone(&proxy_handle.ledger),
+    )
+    .await;
     // As close as this module can get to the moment `observe` actually sent
     // `Storage.getCookies` — the call already happened, at the end of
     // `observe`'s own await, tens of seconds after `profile_dir_path()` on a

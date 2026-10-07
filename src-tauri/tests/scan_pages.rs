@@ -165,6 +165,40 @@ async fn a_contacts_page_linked_last_is_picked_and_an_offsite_redirect_is_droppe
     assert!(!out.pages.iter().any(|p| p.page.contains("esterno")), "{:?}", out.pages);
 }
 
+// --- Task 14: a page that did not load ---
+
+/// A site whose home host the connector cannot reach: nothing listens on
+/// loopback port 1, so the dial is refused.
+fn unreachable_site() -> common::Site {
+    common::Site {
+        host: "scan-fixture-unreachable.invalid".into(),
+        origin_port: 1,
+        third_party_port: 1,
+    }
+}
+
+#[tokio::test]
+async fn a_home_that_cannot_be_reached_is_no_page_and_no_claim() {
+    let site = unreachable_site();
+    let out = common::scan(&site).await;
+    assert_eq!(out.pages_visited, 0, "{out:?}");
+    // Blank: "no-banner" would be a claim about a page nobody saw.
+    assert_eq!(out.consent, Default::default(), "{:?}", out.consent);
+    assert!(out.possible_gaps >= 1, "{out:?}");
+    // Chrome's own error page reaches for Google hosts; none is the site's.
+    assert!(out.hosts.iter().all(|h| h.host == site.host), "{:?}", out.hosts);
+    assert!(out.form_fields.is_empty() && out.iframes.is_empty() && out.storage_keys.is_empty());
+}
+
+#[tokio::test]
+async fn a_home_that_answers_404_itself_is_a_loaded_page() {
+    // No page registered for `/`: the fixture server answers 404 on its own.
+    let site = common::fixture_site_serving(vec![("/altro", String::new())]).await;
+    let out = common::scan(&site).await;
+    assert_eq!(out.pages_visited, 1, "{out:?}");
+    assert_eq!(out.consent.reason, Some("no-banner"), "{:?}", out.consent);
+}
+
 // --- Task 9: probes and doors ---
 
 #[tokio::test]
