@@ -13,6 +13,9 @@ export function initHistory(project: Project): History {
 }
 
 export function push(history: History, next: Project): History {
+  // The very same project is not a change (a scan whose page did not load returns it as it was),
+  // and a step that changed nothing would be an Undo that visibly does nothing.
+  if (next === history.present) return history
   const past = [...history.past, history.present].slice(-LIMIT)
   return { past, present: next, future: [] }
 }

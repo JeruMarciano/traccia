@@ -123,9 +123,10 @@ pub struct Ledger {
     /// know the difference between "nothing else happened" and "we stopped writing it down".
     dropped_records: AtomicU64,
     handler_panics: AtomicU64,
-    /// Admitted hosts whose latest upstream dial failed: the 502 the browser got for them was
-    /// this proxy's own, not the site's. Kept apart from the accounting above; names only.
-    unreachable: Mutex<std::collections::BTreeSet<String>>,
+    /// Admitted (host, port) pairs whose latest upstream dial failed: the 502 the browser got
+    /// for them was this proxy's own, not the site's. Kept apart from the accounting above;
+    /// names and ports only. Per port, so a dead :80 and a live :443 never overwrite each other.
+    unreachable: Mutex<std::collections::BTreeSet<(String, u16)>>,
 }
 
 impl Ledger {
@@ -170,19 +171,20 @@ impl Ledger {
     fn note_panic(&self) {
         self.handler_panics.fetch_add(1, Ordering::SeqCst);
     }
-    fn note_dial(&self, host: &str, reached: bool) {
+    pub(crate) fn note_dial(&self, host: &str, port: u16, reached: bool) {
+        let key = (host.to_string(), port);
         if let Ok(mut set) = self.unreachable.lock() {
             if reached {
-                set.remove(host);
+                set.remove(&key);
             } else if set.len() < MAX_LEDGER_ENTRIES {
-                set.insert(host.to_string());
+                set.insert(key);
             }
         }
     }
-    /// Whether the latest upstream dial to `host` failed, so that what the browser shows for it
-    /// is this proxy's 502 and not an answer from the site.
-    pub fn unreachable(&self, host: &str) -> bool {
-        self.unreachable.lock().is_ok_and(|set| set.contains(host))
+    /// Whether the latest upstream dial to `host:port` failed, so that what the browser shows
+    /// for it is this proxy's 502 and not an answer from the site.
+    pub fn unreachable(&self, host: &str, port: u16) -> bool {
+        self.unreachable.lock().is_ok_and(|set| set.contains(&(host.to_string(), port)))
     }
     pub fn allowed(&self) -> Vec<(String, u16)> {
         self.allowed.lock().map(|v| v.clone()).unwrap_or_default()
@@ -487,7 +489,7 @@ async fn handle(
             ledger.note_allowed(approved.clone(), port);
             let dialled = connect(approved.clone(), port).await;
             // Before the 502 is written, so the scanner can never read the error page first.
-            ledger.note_dial(&approved, dialled.is_ok());
+            ledger.note_dial(&approved, port, dialled.is_ok());
             match dialled {
                 Err(_) => {
                     let _ = client.write_all(UPSTREAM_FAILED).await;
@@ -910,7 +912,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(p.ledger.allowed(), vec![("rossi-editore.it".to_string(), 443)]);
         assert!(p.ledger.denied().is_empty());
-        assert!(!p.ledger.unreachable("rossi-editore.it"));
+        assert!(!p.ledger.unreachable("rossi-editore.it", 443));
         assert_sensor_alive(&p.ledger);
     }
 
@@ -1125,8 +1127,30 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(p.ledger.allowed(), vec![("rossi-editore.it".to_string(), 443)]);
         // And known as never reached, so its 502 is not read as the site's own answer.
-        assert!(p.ledger.unreachable("rossi-editore.it"));
+        assert!(p.ledger.unreachable("rossi-editore.it", 443));
+        assert!(!p.ledger.unreachable("rossi-editore.it", 80));
         assert_sensor_alive(&p.ledger);
+    }
+
+    #[test]
+    fn a_dead_port_and_a_live_port_of_one_host_never_overwrite_each_other() {
+        for live_first in [true, false] {
+            let ledger = Ledger::new();
+            if live_first {
+                ledger.note_dial("rossi-editore.it", 443, true);
+                ledger.note_dial("rossi-editore.it", 80, false);
+            } else {
+                ledger.note_dial("rossi-editore.it", 80, false);
+                ledger.note_dial("rossi-editore.it", 443, true);
+            }
+            assert!(ledger.unreachable("rossi-editore.it", 80), "live first: {live_first}");
+            assert!(!ledger.unreachable("rossi-editore.it", 443), "live first: {live_first}");
+        }
+        // The latest dial to the same port is the one that counts.
+        let ledger = Ledger::new();
+        ledger.note_dial("rossi-editore.it", 80, false);
+        ledger.note_dial("rossi-editore.it", 80, true);
+        assert!(!ledger.unreachable("rossi-editore.it", 80));
     }
 
     #[tokio::test]

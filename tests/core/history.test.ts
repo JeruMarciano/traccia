@@ -6,6 +6,13 @@ import { place, projectWithPlaces } from '../fixtures/projects'
 const base = () => projectWithPlaces(place({ name: 'Newsletter' }))
 
 describe('history', () => {
+  it('does not record a step that changed nothing, so there is no empty undo', () => {
+    const h = initHistory(base())
+    const same = push(h, h.present)
+    expect(same).toBe(h)
+    expect(canUndo(same)).toBe(false)
+  })
+
   it('starts with nothing to undo or redo', () => {
     const h = initHistory(base())
     expect(canUndo(h)).toBe(false)
