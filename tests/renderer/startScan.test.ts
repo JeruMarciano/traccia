@@ -163,4 +163,18 @@ describe('startScan', () => {
     )
     await expect(startScan('https://rossi-editore.it')).rejects.toThrow()
   })
+
+  it('accepts a valid pages list and rejects malformed, overlong or too many entries', async () => {
+    const { startScan } = await import('../../src/renderer/bridge')
+    const ok = { page: 'https://rossi-editore.it/contatti', purpose: 'contacts' }
+    const attempt = (pages: unknown) => {
+      invoke.mockResolvedValueOnce(JSON.stringify({ ...validPayload(), pages }))
+      return startScan('https://rossi-editore.it')
+    }
+    await expect(attempt([ok, { page: 'https://rossi-editore.it/x', purpose: null }])).resolves.toBeTruthy()
+    await expect(attempt([{ ...ok, purpose: 'spying' }])).rejects.toThrow()
+    await expect(attempt([{ ...ok, page: 'https://x.it/' + 'a'.repeat(2048) }])).rejects.toThrow()
+    await expect(attempt([{ ...ok, page: 'javascript:alert(1)' }])).rejects.toThrow()
+    await expect(attempt(Array(13).fill(ok))).rejects.toThrow()
+  })
 })

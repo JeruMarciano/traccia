@@ -59,11 +59,14 @@ for (const f of fs.readdirSync(D + 'runs').filter((f) => f.endsWith('.meta.json'
   r.cookies3Pre = (ref.cookiesPre ?? []).filter((c) => reg(c.domain.replace(/^\./, '')) !== site).length;
   const vf = (fs_) => (fs_ ?? []).filter((x) => x.visible);
   r.fieldsScan = scan.formFields ? new Set(scan.formFields.filter((x) => !['hidden', 'submit', 'button', 'reset'].includes(x.type)).map((x) => x.page + '|' + x.name)).size : null;
-  r.scanFormPages = scan.formFields ? [...new Set(scan.formFields.filter((x) => x.type !== 'hidden').map((x) => new URL(x.page).pathname.slice(0, 40)))] : [];
+  const norm = (u) => new URL(u).pathname.replace(/\/+$/, '') || '/';
+  r.scanFormPages = scan.formFields ? [...new Set(scan.formFields.filter((x) => x.type !== 'hidden').map((x) => norm(x.page)))] : [];
   r.fieldsHome = vf(ref.home?.fields).length;
-  r.pagesWithForms = (ref.pages ?? []).filter((p) => vf(p.fields).length).map((p) => new URL(p.url).pathname.slice(0, 40));
+  r.pagesWithForms = [...new Set((ref.pages ?? []).filter((p) => vf(p.fields).length).map((p) => norm(p.url)))];
+  const scanFieldKeys = new Set((scan.formFields ?? []).filter((x) => x.type !== 'hidden').map((x) => x.type + ':' + x.name));
   const scanPaths = new Set(r.scanFormPages);
   r.formPagesMissed = r.pagesWithForms.filter((p) => !scanPaths.has(p));
+  r.formPagesMissedUnseen = r.formPagesMissed.filter((path) => (ref.pages ?? []).some((p) => norm(p.url) === path && vf(p.fields).some((f) => f.type !== 'hidden' && !scanFieldKeys.has(f.type + ':' + f.name))));
   r.contactsMissed = r.formPagesMissed.filter((p) => /(^|[^a-z])(contatt[a-z]*|contact[a-z]*|dove-siamo)([^a-z]|$)/.test(p));
   r.fieldsPages = (ref.pages ?? []).reduce((s, p) => s + vf(p.fields).length, 0);
   const ifr = new Set([...(ref.home?.iframes ?? []), ...(ref.pages ?? []).flatMap((p) => p.iframes ?? [])].map((u) => { try { return reg(new URL(u).hostname); } catch { return null; } }).filter((h) => h && h !== site));
@@ -91,5 +94,6 @@ console.log(`scanner third parties by phase: before ${sum('scanPre3')}, after ${
 console.log(`scan p90 ${p90('scanMs') ?? 'n/a'}${p90('scanMs') == null ? '' : ' ms'}`);
 console.log(`form fields: scanner ${sum('fieldsScan')}, ref home ${sum('fieldsHome')}, ref key pages ${sum('fieldsPages')}; sites with forms only off-home: ${ok.filter((r) => !r.fieldsHome && r.fieldsPages).length}`);
 console.log(`form pages missed ${ok.reduce((n, r) => n + r.formPagesMissed.length, 0)} of ${ok.reduce((n, r) => n + r.pagesWithForms.length, 0)}; contacts ${ok.reduce((n, r) => n + r.contactsMissed.length, 0)}`);
+console.log(`form pages missed with a field seen nowhere on the site: ${ok.reduce((n, r) => n + r.formPagesMissedUnseen.length, 0)}`);
 console.log(`embeds: ${ok.filter((r) => r.embeds.length).length} sites`);
 console.log('top unnamed orgs:', [...unnamed].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => `${k}(${v})`).join(' '));

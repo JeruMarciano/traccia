@@ -105,6 +105,8 @@ function isVisitedPage(v: unknown): boolean {
   const p = v as Record<string, unknown>
   return (
     typeof p.page === 'string' &&
+    p.page.length <= 2048 &&
+    /^https?:\/\//.test(p.page) &&
     (p.purpose === null || (typeof p.purpose === 'string' && PAGE_PURPOSES.includes(p.purpose)))
   )
 }
@@ -141,7 +143,7 @@ function isScanResult(v: unknown): v is ScanResult {
     r.formFields.every(isRawFormField) &&
     Array.isArray(r.storageKeys) &&
     r.storageKeys.every(isRawStorageKey) &&
-    (r.pages === undefined || (Array.isArray(r.pages) && r.pages.every(isVisitedPage))) &&
+    (r.pages === undefined || (Array.isArray(r.pages) && r.pages.length <= 12 && r.pages.every(isVisitedPage))) &&
     // `consentMarkers` is the v0.3 shape; since Task 6 Rust sends `consent`.
     (r.consentMarkers === undefined ||
       (Array.isArray(r.consentMarkers) && r.consentMarkers.every((m: unknown) => typeof m === 'string'))) &&

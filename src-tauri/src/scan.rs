@@ -44,7 +44,7 @@ pub const SCAN_BUSY: &str = "SCAN_BUSY";
 pub const SCAN_NO_BROWSER: &str = "SCAN_NO_BROWSER";
 
 /// How many pages one scan visits. The cap is the product's, not a defence.
-const MAX_PAGES: u32 = 13;
+pub const MAX_PAGES: u32 = 13;
 /// Long enough for any address a user pastes; short enough that nothing
 /// pathological is ever parsed.
 const MAX_URL_LEN: usize = 2048;

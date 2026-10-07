@@ -107,11 +107,12 @@ pub struct StorageKey {
 /// reasoning as [`MAX_HOSTS`]. Reaching it is a gap, never a silent
 /// truncation.
 const MAX_COOKIES: usize = 512;
-/// The most form fields one whole scan will record, across every page — not
-/// per page. [`FORM_PROBE`] itself already stops at 64 per page, so an
-/// ordinary ten-page walk (the [`crate::scan`] budget) can still trip this at
-/// 640; hitting it is a gap, the designed behaviour, not an accident.
-const MAX_FORM_FIELDS: usize = 256;
+/// What [`FORM_PROBE`] stops at, per page.
+const FIELDS_PER_PAGE: usize = 64;
+/// The most form fields one whole scan will record: the per-page cap for
+/// every page the scan may visit, so a shop with 64 fields on each page still
+/// reports its later key pages. Hitting it is a gap, the designed behaviour.
+const MAX_FORM_FIELDS: usize = FIELDS_PER_PAGE * crate::scan::MAX_PAGES as usize;
 /// The longest any one captured form-field string may be after [`tame`] —
 /// `name`, `type`, `autocomplete`, `label`. **Not** `page` — see
 /// [`MAX_PAGE_URL`] — a real URL routinely exceeds 128 characters, and
@@ -764,8 +765,8 @@ const PURPOSES: [(Purpose, &[&str]); 6] = [
 ];
 
 /// Extensions of files that are not pages.
-const SKIPPED_EXTENSIONS: [&str; 12] = [
-    "pdf", "doc", "docx", "xls", "xlsx", "zip", "jpg", "jpeg", "png", "gif", "webp", "svg",
+const SKIPPED_EXTENSIONS: [&str; 13] = [
+    "pdf", "doc", "docx", "xls", "xlsx", "zip", "jpg", "jpeg", "png", "gif", "webp", "svg", "mp4",
 ];
 
 /// Lowercase words: everything that is not `[a-z0-9àèéìòù]` separates, so
@@ -830,6 +831,12 @@ pub fn pick_pages(
     for (link, text) in links {
         let link = link.split('#').next().unwrap_or("");
         if link.is_empty() || origin(link).as_ref() != Some(&entry_origin) {
+            continue;
+        }
+        // A backslash is read as a slash by some parsers and not by others;
+        // userinfo would carry credentials into the recorded page identity.
+        let authority = link.split_once("//").map_or("", |(_, r)| r.split(['/', '?']).next().unwrap_or(""));
+        if link.contains('\\') || authority.contains('@') {
             continue;
         }
         let (path, query) = path_and_query(link);
@@ -2334,7 +2341,7 @@ impl<T: CdpTransport> Driver<T> {
         let refs: Vec<(&str, &str)> = links.iter().map(|(h, t)| (h.as_str(), t.as_str())).collect();
         let follow = pick_pages(entry_url, &refs, (max_pages - 1) as usize);
         let entry_origin = origin(entry_url);
-        for (url, purpose) in follow {
+        for (n, (url, purpose)) in follow.into_iter().enumerate() {
             if cancel.is_cancelled() {
                 break;
             }
@@ -2344,10 +2351,15 @@ impl<T: CdpTransport> Driver<T> {
                 // up decides: an off-site page is not probed, not counted, and
                 // the hosts first seen while on it are given back.
                 let landed = self.current_url(&session).await?;
-                if landed.is_some_and(|u| origin(&u) != entry_origin) {
-                    self.acc = before;
-                    self.gaps.note("page:offsite");
-                    continue;
+                // Unreadable history is the same: a blank beats a guess.
+                match landed {
+                    Some(u) if origin(&u) == entry_origin => {}
+                    other => {
+                        self.acc = before;
+                        let kind = if other.is_some() { "offsite" } else { "history" };
+                        self.gaps.note(format!("page:{kind}:{n}"));
+                        continue;
+                    }
                 }
                 pages_visited += 1;
                 self.pages.push(VisitedPage { page: page_identity(&url), purpose });
@@ -2631,6 +2643,47 @@ mod tests {
     fn pick(entry: &str, links: &[&str], limit: usize) -> Vec<String> {
         let pairs: Vec<(&str, &str)> = links.iter().map(|l| (*l, "")).collect();
         pick_pages(entry, &pairs, limit).into_iter().map(|p| p.0).collect()
+    }
+
+    #[test]
+    fn files_and_credentialed_or_backslashed_links_are_never_picked() {
+        let site = concat!("https", "://site.it");
+        let l = |p: &str| format!("{site}{p}");
+        let userinfo = concat!("https", "://user:pass@site.it/contatti");
+        let backslash = concat!("https", "://site.it/a\\b");
+        let links = [
+            l("/contatti.pdf"),
+            l("/film.MP4"),
+            l("/a.docx"),
+            userinfo.to_string(),
+            backslash.to_string(),
+            l("/ok"),
+        ];
+        let refs: Vec<&str> = links.iter().map(|s| s.as_str()).collect();
+        assert_eq!(pick(&l("/"), &refs, 20), vec![l("/ok")]);
+    }
+
+    #[test]
+    fn more_matches_follow_by_score_then_document_order() {
+        let site = concat!("https", "://site.it");
+        let l = |p: &str| format!("{site}{p}");
+        let links = [
+            (l("/x"), "Contatti"),
+            (l("/plain"), "Home"),
+            (l("/contatti"), ""),
+            (l("/contatto"), ""),
+            (l("/contact-us"), "Contact"),
+            (l("/prenota"), ""),
+            (l("/book"), ""),
+        ];
+        let refs: Vec<(&str, &str)> = links.iter().map(|(a, b)| (a.as_str(), *b)).collect();
+        let got: Vec<String> = pick_pages(&l("/"), &refs, 20).into_iter().map(|p| p.0).collect();
+        assert_eq!(
+            got,
+            ["/contact-us", "/prenota", "/contatti", "/contatto", "/book", "/x", "/plain"]
+                .map(l)
+                .to_vec()
+        );
     }
 
     #[test]
@@ -3994,6 +4047,8 @@ mod tests {
             sanitise_form_fields("https://x.it/", &json!(raw), MAX_FORM_FIELDS - 2);
         assert_eq!(fields.len(), 2);
         assert!(gap, "hitting the cap must surface as a gap, never a clean sheet");
+        // 64 fields on each of the 13 pages the scan can visit.
+        assert_eq!(MAX_FORM_FIELDS, 64 * 13);
     }
 
     #[test]
