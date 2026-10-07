@@ -114,6 +114,10 @@ export function ingestScan(
   ids: IngestIds,
   cookieTable: readonly CookiePlatformRow[] = [],
 ): Project {
+  // The page did not load: nothing was observed, so nothing is added — not even the site itself,
+  // whose address may simply be mistyped. A scan the user stopped keeps seeding it, as before.
+  if (result.pagesVisited === 0 && !result.stoppedEarly) return project
+
   let working = project
 
   const taken = new Set<string>([

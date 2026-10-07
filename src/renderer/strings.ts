@@ -148,6 +148,7 @@ export const STRINGS = {
     'That does not look like a website address Traccia can scan. Paste the plain address, without a port number such as ":443".',
   scanBusy: 'A scan is already running. Let it finish, or stop it, before starting another.',
   scanFailed: 'The scan could not be completed.',
+  scanPageNotLoaded: 'The page did not load, so nothing was observed. Check the address and try again.',
   scanFoundNothing: 'The scan finished without observing any third party.',
   scanIncomplete: (n: number): string =>
     `Scan complete — ${n} ${n === 1 ? 'place' : 'places'} where the map may be incomplete.`,
