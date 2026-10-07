@@ -1327,7 +1327,7 @@ fn auto_attach_params() -> Result<serde_json::Value, CdpError> {
 /// A service worker is a browser-level target the browser session already
 /// attaches. Attached a second time here, it stays paused until *both* sessions
 /// resume it, and the one-in-flight driver deadlocks on `Network.enable` until
-/// the 30 s timeout fails the scan (docs/decisions/2026-09-29-scanner-failures.md).
+/// the 30 s timeout fails the scan (docs/decisions/2026-10-07-scanner-upgrade-measurement.md).
 fn session_auto_attach_params() -> Result<serde_json::Value, CdpError> {
     use chromiumoxide::cdp::browser_protocol::target::{FilterEntry, TargetFilter};
 
@@ -3448,7 +3448,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_service_worker_is_attached_by_the_browser_session_only() {
-        // Sites 00, 21, 30, 49 (docs/decisions/2026-09-29-scanner-failures.md): a worker attached
+        // Sites 00, 21, 30, 49 (docs/decisions/2026-10-07-scanner-upgrade-measurement.md): a worker attached
         // by both the browser and a page session stays paused until both resume it, and the
         // one-in-flight driver deadlocks on `Network.enable`. The page session must exclude it;
         // the browser session must keep it, or the worker is not observed at all.
