@@ -284,7 +284,8 @@ export interface CollectionPoint {
   confidence: Confidence
 }
 
-export type DoorOrigin = 'discovered' | 'declared'
+/** 'unsourced': a collection place with no document and no scan behind it -- no caption is claimed. */
+export type DoorOrigin = 'discovered' | 'declared' | 'unsourced'
 
 /**
  * A way in. Computed by deriveDoors from places and collection points, never stored: a door is a

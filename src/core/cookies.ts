@@ -29,7 +29,11 @@ export function bucketLifetime(cookie: RawScanCookie, capturedAtEpochSeconds: nu
  */
 export function isThirdPartyCookie(cookieDomain: string, scannedHost: string): boolean {
   const domain = cookieDomain.startsWith('.') ? cookieDomain.slice(1) : cookieDomain
-  return !isSameSite(domain.toLowerCase(), scannedHost.toLowerCase())
+  const d = domain.toLowerCase()
+  const s = scannedHost.toLowerCase()
+  // First-party: the same host, a subdomain of it (isSameSite), or a parent domain of it -- a browser
+  // only lets a site set a cookie on a parent of its own host. Label boundary on both ends.
+  return !(isSameSite(d, s) || s.endsWith(`.${d}`))
 }
 
 /**

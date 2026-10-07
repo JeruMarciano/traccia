@@ -183,7 +183,7 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup }
               {n.label}
             </text>
             <text className="door-origin" x={n.x} y={n.y + DOOR_H / 2 + 26} textAnchor="middle">
-              {n.origin === 'discovered' ? STRINGS.doorDiscovered : STRINGS.doorDeclared}
+              {n.origin === 'discovered' ? STRINGS.doorDiscovered : n.origin === 'declared' ? STRINGS.doorDeclared : null}
             </text>
           </g>
         ))}

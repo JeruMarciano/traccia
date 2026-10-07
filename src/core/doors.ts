@@ -46,7 +46,9 @@ export function deriveDoors(project: Project): Door[] {
     .map((p) => ({
       id: `place:${p.id}`,
       label: p.name,
-      origin: 'declared' as DoorOrigin,
+      // A place a document names is declared; one only a scan seeded (observed, no source) is
+      // discovered; anything else cannot be told, so no origin is claimed.
+      origin: (p.sources.length > 0 ? 'declared' : p.confidence === 'observed' ? 'discovered' : 'unsourced') as DoorOrigin,
       colourIndex: 0,
       fields: [],
     }))
