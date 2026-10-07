@@ -324,7 +324,8 @@ const FIXTURE_IP_LITERALS: [&str; 3] = ["192.0.2.10", "198.51.100.20", "203.0.11
 /// list for the round that closed this residual set out).
 ///
 /// This is an **allowlist of known, documented exceptions** — not a claim that any
-/// of it is acceptable to leave unsuppressed forever. Since spec §13 admission
+/// of it is acceptable to leave unsuppressed forever. Six entries: three admitted, three denied.
+/// Since spec §13 admission
 /// admits any named host on 80/443, so www.gstatic.com, accounts.google.com and
 /// www.google.com are admitted like a visitor's third party (in the product they reach
 /// the network at a permitted address; here the test connector refuses them). The

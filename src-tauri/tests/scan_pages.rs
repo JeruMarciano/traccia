@@ -208,8 +208,10 @@ async fn a_home_that_answers_404_itself_is_a_loaded_page() {
 #[tokio::test]
 async fn a_link_that_answers_as_a_download_is_refused_and_writes_no_file() {
     let name = common::ATTACHMENT_NAME;
-    // Chrome's default download directory; the scan's own profile is deleted when it ends.
-    let downloads = std::path::Path::new(&std::env::var("HOME").expect("HOME")).join("Downloads");
+    // Outer guard: the user's real Downloads. Meaningful where Chrome's default download dir is
+    // `<home>/Downloads`; inside the scan's profile the seeded Preferences catch the rest.
+    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).expect("HOME or USERPROFILE");
+    let downloads = std::path::Path::new(&home).join("Downloads");
     let landed = || downloads.join(name).exists() || downloads.join(format!("{name}.crdownload")).exists();
     assert!(!landed(), "stale file from an earlier run");
     let home = "<!doctype html><a href=\"/contatti-download\">Contatti</a>";

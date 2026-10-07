@@ -3038,18 +3038,15 @@ mod tests {
         let userinfo = concat!("https", "://user:pass@site.it/contatti");
         let installers = [l("/setup.exe"), l("/app.dmg"), l("/setup.exe?v=2"), l("/a.TAR")];
         let backslash = concat!("https", "://site.it/a\\b");
-        let links = [
+        let mut links = vec![
             l("/contatti.pdf"),
             l("/film.MP4"),
             l("/a.docx"),
-            installers[0].clone(),
-            installers[1].clone(),
-            installers[2].clone(),
-            installers[3].clone(),
             userinfo.to_string(),
             backslash.to_string(),
             l("/ok"),
         ];
+        links.extend(installers);
         let refs: Vec<&str> = links.iter().map(|s| s.as_str()).collect();
         assert_eq!(pick(&l("/"), &refs, 20), vec![l("/ok")]);
     }

@@ -177,8 +177,8 @@ async fn serve_fixture_page(
         // A page registered as "attachment <body>" is a download.
         Some((_, body)) if body.starts_with("attachment ") => format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"{ATTACHMENT_NAME}\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len() - 11,
-            &body[11..],
+            body.strip_prefix("attachment ").unwrap_or_default().len(),
+            body.strip_prefix("attachment ").unwrap_or_default(),
         ),
         Some((_, html)) => format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
