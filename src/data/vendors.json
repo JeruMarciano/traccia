@@ -1373,12 +1373,6 @@
     "category": "hosting",
     "purposeGroup": "Systems"
   },
-  "evnt.iol.it": {
-    "owner": "Italiaonline",
-    "category": "analytics",
-    "purposeGroup": "Marketing",
-    "note": "event collection endpoint of Italiaonline's site platform"
-  },
   "dwhitelabel.com": {
     "owner": "Duda",
     "category": "hosting",
