@@ -101,4 +101,32 @@ describe('MapView', () => {
   it('says the map is empty rather than drawing an empty sheet', () => {
     expect(draw(emptyProject())).toContain(STRINGS.mapEmpty)
   })
+
+  it('draws a +N more mark beyond the cap, highlighted when the selection is hidden', () => {
+    const p = rossiEditore()
+    for (let i = 0; i < 8; i++) {
+      p.places.push({
+        id: `cap-${i}`,
+        name: `Vendor ${i}`,
+        kind: 'processor',
+        purposeGroup: 'Marketing',
+        holder: 'supplier',
+        leavesEEA: false,
+        sources: [],
+        confidence: 'declared',
+      })
+    }
+    const hidden = p.places[p.places.length - 1]!.id
+    const markup = renderToStaticMarkup(
+      <MapView
+        layout={computeLayout(p, SIZE, 'Marketing', hidden)}
+        selected={hidden}
+        onSelect={() => {}}
+        openGroup="Marketing"
+        onToggleGroup={() => {}}
+      />,
+    )
+    expect(markup).toMatch(/class="more more--highlighted"[^>]*role="button"/)
+    expect(markup).toMatch(/\+5 more/)
+  })
 })

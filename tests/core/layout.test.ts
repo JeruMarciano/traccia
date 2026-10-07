@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeLayout } from '../../src/core/layout'
+import { computeLayout, groupMembers } from '../../src/core/layout'
 import { rossiEditore } from '../fixtures/rossiEditore'
 import { emptyProject } from '../fixtures/projects'
 
@@ -284,5 +284,68 @@ describe('determinism', () => {
     expect(computeLayout(rossiEditore(), SIZE, 'Marketing')).toEqual(
       computeLayout(rossiEditore(), SIZE, 'Marketing'),
     )
+  })
+})
+
+describe('map caps', () => {
+  const projectWithMembers = (group: string, n: number) => {
+    const p = rossiEditore()
+    p.places = p.places.filter((pl) => pl.purposeGroup !== group || pl.kind === 'collection')
+    for (let i = 0; i < n; i++) {
+      p.places.push({
+        id: `cap-${i}`,
+        name: `Vendor ${i}`,
+        kind: 'processor',
+        purposeGroup: group,
+        holder: 'supplier',
+        leavesEEA: false,
+        sources: [],
+        confidence: 'declared',
+      })
+    }
+    return p
+  }
+  const projectWithDoors = (n: number) => {
+    const p = rossiEditore()
+    p.places = p.places.filter((pl) => pl.kind !== 'collection')
+    p.collectionPoints = Array.from({ length: n }, (_, i) => ({
+      id: `cp-${i + 1}`,
+      page: `https://rossi-editore.it/${i + 1}`,
+      fields: [],
+      sources: [],
+      confidence: 'observed' as const,
+    }))
+    return p
+  }
+  const members = (r: ReturnType<typeof computeLayout>) => r.nodes.filter((n) => n.kind === 'member')
+
+  it('an open ring draws at most 6 members; beyond, 5 and a +N more mark', () => {
+    const r = computeLayout(projectWithMembers('Marketing', 9), SIZE, 'Marketing')
+    expect(members(r)).toHaveLength(5)
+    expect(r.nodes.find((n) => n.id === 'more:Marketing')).toMatchObject({ label: '+4 more', count: 4 })
+  })
+
+  it('six members draw all six and no mark', () => {
+    const r = computeLayout(projectWithMembers('Marketing', 6), SIZE, 'Marketing')
+    expect(members(r)).toHaveLength(6)
+    expect(r.nodes.some((n) => n.kind === 'more')).toBe(false)
+  })
+
+  it('the door column draws at most 8; beyond, 7 and +N more', () => {
+    const r = computeLayout(projectWithDoors(10), SIZE)
+    expect(r.nodes.filter((n) => n.kind === 'door')).toHaveLength(7)
+    expect(r.nodes.find((n) => n.id === 'more:doors')).toMatchObject({ label: '+3 more', count: 3 })
+  })
+
+  it('a selected hidden member highlights the mark', () => {
+    const p = projectWithMembers('Marketing', 9)
+    const hidden = groupMembers(p, 'Marketing')[8]!.id
+    expect(computeLayout(p, SIZE, 'Marketing', hidden).nodes.find((n) => n.id === 'more:Marketing')?.highlighted).toBe(true)
+    expect(computeLayout(p, SIZE, 'Marketing').nodes.find((n) => n.id === 'more:Marketing')?.highlighted).toBeUndefined()
+  })
+
+  it('is deterministic with caps', () => {
+    const p = projectWithMembers('Marketing', 9)
+    expect(computeLayout(p, SIZE, 'Marketing', 'cap-8')).toEqual(computeLayout(p, SIZE, 'Marketing', 'cap-8'))
   })
 })

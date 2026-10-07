@@ -198,6 +198,9 @@ export const STYLESHEET = `
 .node--external .node-arc{stroke:var(--external);}
 .node-arc--open{stroke-dasharray:3 4;opacity:.75;}
 .node-count{font-size:13px;font-weight:500;fill:var(--ink);}
+.more{cursor:default;}
+.more-label{font-size:9.5px;font-weight:600;fill:var(--ink-soft);}
+.more--highlighted .more-label{fill:var(--ink);text-decoration:underline;}
 .node-label{
   font-size:9.5px;
   font-weight:500;

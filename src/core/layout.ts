@@ -11,7 +11,7 @@ import type { DoorOrigin, Place, Project } from './types'
  * here, so the same project and the same selection always draw the same sheet.
  */
 
-export type LayoutNodeKind = 'subject' | 'door' | 'controller' | 'group' | 'member'
+export type LayoutNodeKind = 'subject' | 'door' | 'controller' | 'group' | 'member' | 'more'
 
 export interface LayoutNode {
   id: string
@@ -29,6 +29,8 @@ export interface LayoutNode {
   openRadius?: number
   /** Group and member nodes: true for something the organisation runs itself (stroke colour). */
   internal?: boolean
+  /** More nodes: true when the selection is one of the hidden items, so it is never drawn nowhere. */
+  highlighted?: true
   /** Door nodes only. */
   origin?: DoorOrigin
   /** Doors and the paths that leave them: 0-5, or absent for a neutral mark. */
@@ -69,6 +71,10 @@ export function groupMembers(project: Project, group: string): Place[] {
  *  they do not crowd, and stays a layout fact rather than a drawing one. */
 const MEMBER_ORBIT = 40
 
+/** Caps: past these, all but one slot are drawn and the last slot is a '+N more' mark. */
+const MAX_OPEN_MEMBERS = 6
+const MAX_DOORS = 8
+
 /** Two decimals keeps the SVG readable and the equality tests exact. */
 function round(n: number): number {
   return Math.round(n * 100) / 100
@@ -105,6 +111,7 @@ export function computeLayout(
   project: Project,
   size: { width: number; height: number },
   openGroup: string | null = null,
+  selectedId: string | null = null,
 ): LayoutResult {
   const doors = deriveDoors(project)
   const paths = tracePaths(project, doors)
@@ -123,6 +130,7 @@ export function computeLayout(
   const edges: LayoutEdge[] = []
 
   const colourOf = new Map(doors.map((d) => [d.id, d.colourIndex]))
+  const hiddenMembers = new Map<string, string>()
   const groupOfPlace = new Map(onTheRight.map((p) => [p.id, p.purposeGroup]))
 
   // The inbound side, read left to right: the people who reach a door, then the doors. Somebody
@@ -138,8 +146,12 @@ export function computeLayout(
     nodes.push({ id: s.id, kind: 'subject', label: s.name, x: round(size.width * 0.07), y: subjectY[i] ?? 0 })
   })
 
-  const doorY = column(doors.length, size.height, 0.44)
-  doors.forEach((d, i) => {
+  const doorsCapped = doors.length > MAX_DOORS
+  const shownDoors = doorsCapped ? doors.slice(0, MAX_DOORS - 1) : doors
+  const hiddenDoors = doorsCapped ? doors.slice(MAX_DOORS - 1) : []
+  const hiddenDoorIds = new Set(hiddenDoors.map((d) => `door:${d.id}`))
+  const doorY = column(Math.min(doors.length, MAX_DOORS), size.height, 0.44)
+  shownDoors.forEach((d, i) => {
     nodes.push({
       id: `door:${d.id}`,
       kind: 'door',
@@ -150,6 +162,20 @@ export function computeLayout(
       colourIndex: d.colourIndex,
     })
   })
+
+  if (doorsCapped) {
+    nodes.push({
+      id: 'more:doors',
+      kind: 'more',
+      label: `+${hiddenDoors.length} more`,
+      x: round(size.width * 0.21),
+      y: doorY[MAX_DOORS - 1] ?? 0,
+      count: hiddenDoors.length,
+      ...(hiddenDoors.some((d) => selectedId === d.id || selectedId === `door:${d.id}`)
+        ? { highlighted: true as const }
+        : {}),
+    })
+  }
 
   // Column 3: the controller. Always exactly one once there is anything to answer for, even
   // before a document names it -- the sentence has no subject otherwise. The empty label is the
@@ -181,7 +207,8 @@ export function computeLayout(
     const angle = groupAngle(i, groups.length)
     const x = round(cx + Math.cos(angle) * rx)
     const y = round(cy + Math.sin(angle) * ry)
-    const orbit = MEMBER_ORBIT + Math.max(inGroup.length - 3, 0) * 5
+    const slots = Math.min(inGroup.length, MAX_OPEN_MEMBERS)
+    const orbit = MEMBER_ORBIT + Math.max(slots - 3, 0) * 5
     nodes.push({
       id: `group:${g}`,
       kind: 'group',
@@ -197,8 +224,28 @@ export function computeLayout(
     if (g !== open) return
     // Members set out around the centre, starting at twelve o'clock. One member sits above the
     // centre rather than on it, so the group's own count stays readable underneath.
-    inGroup.forEach((m, k) => {
-      const angle = (k / Math.max(inGroup.length, 1)) * Math.PI * 2 - Math.PI / 2
+    const capped = inGroup.length > MAX_OPEN_MEMBERS
+    const shown = capped ? inGroup.slice(0, MAX_OPEN_MEMBERS - 1) : inGroup
+    const hidden = capped ? inGroup.slice(MAX_OPEN_MEMBERS - 1) : []
+    const at = (k: number) => {
+      const angle = (k / Math.max(slots, 1)) * Math.PI * 2 - Math.PI / 2
+      return { x: round(x + Math.cos(angle) * orbit), y: round(y + Math.sin(angle) * orbit) }
+    }
+    if (capped) {
+      nodes.push({
+        id: `more:${g}`,
+        kind: 'more',
+        label: `+${hidden.length} more`,
+        ...at(MAX_OPEN_MEMBERS - 1),
+        count: hidden.length,
+        ...(hidden.some((m) => selectedId === m.id || selectedId === `member:${m.id}`)
+          ? { highlighted: true as const }
+          : {}),
+      })
+      for (const m of hidden) hiddenMembers.set(m.id, `more:${g}`)
+    }
+    shown.forEach((m, k) => {
+      const angle = (k / Math.max(slots, 1)) * Math.PI * 2 - Math.PI / 2
       nodes.push({
         id: `member:${m.id}`,
         kind: 'member',
@@ -217,20 +264,29 @@ export function computeLayout(
   const drawn = new Set(nodes.map((n) => n.id))
   for (const path of paths) {
     const colourIndex = colourOf.get(path.doorId)
-    const doorNodeId = `door:${path.doorId}`
+    const isHidden = hiddenDoorIds.has(`door:${path.doorId}`)
+    // A hidden door's lines go to the mark: neutral, and once per pair.
+    const doorNodeId = isHidden ? 'more:doors' : `door:${path.doorId}`
+    const doorColour = isHidden ? undefined : colourIndex
+    const push = (from: string, to: string, colour: number | undefined): void => {
+      if (isHidden && edges.some((e) => e.from === from && e.to === to)) return
+      edges.push({ from, to, directed: true, colourIndex: colour })
+    }
     for (const s of path.subjectIds) {
       if (!drawn.has(s)) continue
-      edges.push({ from: s, to: doorNodeId, directed: true, colourIndex })
+      push(s, doorNodeId, doorColour)
     }
     if (anything && (path.subjectIds.length > 0 || path.destinationIds.length > 0)) {
-      edges.push({ from: doorNodeId, to: 'controller', directed: true, colourIndex })
+      push(doorNodeId, 'controller', doorColour)
     }
     for (const dest of path.destinationIds) {
       const g = groupOfPlace.get(dest)
       if (g === undefined) continue
-      const to = g === open ? `member:${dest}` : `group:${g}`
+      const to = g === open ? (hiddenMembers.get(dest) ?? `member:${dest}`) : `group:${g}`
       if (!drawn.has(to)) continue
-      edges.push({ from: 'controller', to, directed: true, colourIndex })
+      if (!to.startsWith('more:') || !edges.some((e) => e.from === 'controller' && e.to === to)) {
+        edges.push({ from: 'controller', to, directed: true, colourIndex })
+      }
       reached.add(to)
     }
   }
@@ -238,7 +294,7 @@ export function computeLayout(
   // Anything no door reaches still belongs on the sheet: one neutral line from the controller.
   // Inventing a door for it, or leaving it off, would both be claims the project cannot support.
   for (const n of nodes) {
-    if (n.kind !== 'group' && n.kind !== 'member') continue
+    if (n.kind === 'subject' || n.kind === 'door' || n.kind === 'controller' || n.id === 'more:doors') continue
     if (reached.has(n.id)) continue
     edges.push({ from: 'controller', to: n.id, directed: true })
   }

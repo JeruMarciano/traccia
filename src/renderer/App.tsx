@@ -68,8 +68,8 @@ export function App() {
   } | null>(null)
 
   const layout = useMemo(
-    () => computeLayout(project, { width: 800, height: 500 }, openGroup),
-    [project, openGroup],
+    () => computeLayout(project, { width: 800, height: 500 }, openGroup, selected),
+    [project, openGroup, selected],
   )
 
   async function openProject(): Promise<void> {
