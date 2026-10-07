@@ -203,6 +203,27 @@ async fn a_home_that_answers_404_itself_is_a_loaded_page() {
     assert_eq!(out.possible_gaps, 1, "{out:?}");
 }
 
+// --- Task 15: downloads ---
+
+#[tokio::test]
+async fn a_link_that_answers_as_a_download_is_refused_and_writes_no_file() {
+    let name = common::ATTACHMENT_NAME;
+    // Chrome's default download directory; the scan's own profile is deleted when it ends.
+    let downloads = std::path::Path::new(&std::env::var("HOME").expect("HOME")).join("Downloads");
+    let landed = || downloads.join(name).exists() || downloads.join(format!("{name}.crdownload")).exists();
+    assert!(!landed(), "stale file from an earlier run");
+    let home = "<!doctype html><a href=\"/contatti-download\">Contatti</a>";
+    let site = common::fixture_site_serving(vec![
+        ("/", home.into()),
+        ("/contatti-download", format!("attachment {}", "x".repeat(2048))),
+    ])
+    .await;
+    let out = common::scan(&site).await;
+    assert_eq!(out.pages_visited, 1, "{out:?}");
+    assert!(out.possible_gaps >= 1, "{out:?}");
+    assert!(!landed());
+}
+
 // --- Task 9: probes and doors ---
 
 #[tokio::test]
