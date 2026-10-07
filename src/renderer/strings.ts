@@ -123,11 +123,23 @@ export const STRINGS = {
   detailRetention: 'Retention',
   detailDataCategories: 'What is held',
   detailObservationsHeading: 'Trackers observed',
-  detailObservation: (domain: string, requestCount: number, beforeConsent: boolean): string => {
-    const requests = `${requestCount} ${requestCount === 1 ? 'request' : 'requests'}`
-    return beforeConsent ? `${domain} — ${requests}, before consent` : `${domain} — ${requests}`
+  detailObservation: (domain: string, requestCount: number): string =>
+    `${domain} — ${requestCount} ${requestCount === 1 ? 'request' : 'requests'}`,
+  detailBeforeConsent: 'Contacted before consent',
+  detailAfterConsent: 'Only after consent',
+  doorKind: {
+    form: 'Form',
+    newsletter: 'Newsletter sign-up',
+    booking: 'Booking',
+    chat: 'Chat',
+    embed: 'Embedded content',
   },
+  doorPages: (n: number): string => `On ${n} page${n === 1 ? '' : 's'}`,
+  doorSendsTo: (name: string): string => `Sends data to ${name}`,
+  cookiesByPlatform: (platform: string): string => `Cookies named for ${platform}`,
 
+  scanVisitorLine:
+    'The scan visits the site like a real visitor: third-party services on it receive the visit too.',
   scanPlaceholder: 'Website address',
   scan: 'Scan',
   scanCancel: 'Stop',
@@ -152,4 +164,19 @@ export const STRINGS = {
   consentBannerDetected: (marker: string): string =>
     `A consent banner appears to be present (${marker}).`,
   consentBannerNotDetected: 'No consent banner was detected.',
+  consentCounts: (before: number, after: number): string =>
+    `${before} third ${before === 1 ? 'party' : 'parties'} contacted on the home page before consent, ${after} only after.`,
+  consentAcceptedByCmp: (cmp: string): string => `Consent manager: ${cmp}; accepted by the ${cmp} rule.`,
+  consentAcceptedByText: (cmp: string | null, text: string): string =>
+    `${cmp ? `Consent manager: ${cmp}; accepted` : 'Accepted'} by matching the text '${text}'.`,
+  consentNotGiven: (reason: 'no-banner' | 'no-button' | 'click-failed'): string =>
+    `No consent was given: ${
+      {
+        'no-banner': 'no consent banner was recognised',
+        'no-button': "the banner's button could not be found",
+        'click-failed': 'the click did not complete',
+      }[reason]
+    }.`,
+  consentNotGivenNoReason: 'No consent was given.',
+  consentClickLeftPage: 'The click left the page; the result is flagged.',
 } as const

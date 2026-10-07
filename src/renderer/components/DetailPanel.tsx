@@ -211,7 +211,11 @@ function PlaceView({ panel, onAnswer }: { panel: PlacePanel; onAnswer?: AnswerHa
             <ul className="detail-observations">
               {panel.observations.map((o) => (
                 <li key={o.domain}>
-                  {STRINGS.detailObservation(o.domain, o.requestCount, o.beforeConsent)}
+                  {STRINGS.detailObservation(o.domain, o.requestCount)}
+                  <span className="detail-said-by">
+                    {' · '}
+                    {o.beforeConsent ? STRINGS.detailBeforeConsent : STRINGS.detailAfterConsent}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -252,6 +256,9 @@ function DoorView({ panel }: { panel: DoorPanel }) {
         <p className="detail-said-by">
           {panel.origin === 'discovered' ? STRINGS.doorDiscovered : STRINGS.doorDeclared}
         </p>
+        <p>{STRINGS.doorKind[panel.kind]}</p>
+        {panel.pages.length === 0 ? null : <p>{STRINGS.doorPages(panel.pages.length)}</p>}
+        {panel.destinationName === null ? null : <p>{STRINGS.doorSendsTo(panel.destinationName)}</p>}
         {panel.whoComesThrough.length === 0 ? null : (
           <>
             <h4 className="detail-sub">{STRINGS.detailDoorWhoComesThrough}</h4>
@@ -297,6 +304,16 @@ function ControllerView({ panel }: { panel: ControllerPanel }) {
             panel.totals.flows,
           )}
         </p>
+        {panel.platformCookies.map((g) => (
+          <div key={g.platform}>
+            <h4 className="detail-sub">{STRINGS.cookiesByPlatform(g.platform)}</h4>
+            <ul className="detail-observations">
+              {g.names.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
         <Unknowns unknowns={panel.unknowns} />
       </article>
     </>

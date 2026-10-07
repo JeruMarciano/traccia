@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { scanNotice } from '../../src/renderer/bridge'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { ScanBar } from '../../src/renderer/components/ScanBar'
 import { STRINGS } from '../../src/renderer/strings'
 
 describe('scanNotice', () => {
@@ -29,5 +32,10 @@ describe('scanNotice', () => {
     // already does, so nothing out of the rejection reaches the screen.
     const notice = scanNotice(new Error('/Users/someone/secret/path failed'))
     expect(notice).not.toContain('/Users/someone')
+  })
+
+  it('says the scan is a real visit, as text, before any scan starts', () => {
+    const markup = renderToStaticMarkup(createElement(ScanBar, { scanning: false, onScan: () => {}, onCancel: () => {} }))
+    expect(markup).toContain(STRINGS.scanVisitorLine)
   })
 })

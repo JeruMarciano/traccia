@@ -41,6 +41,7 @@ export function ScanBar({ scanning, onScan, onCancel }: Props) {
           {STRINGS.scan}
         </button>
       )}
+      <p className="scan-visitor">{STRINGS.scanVisitorLine}</p>
     </form>
   )
 }

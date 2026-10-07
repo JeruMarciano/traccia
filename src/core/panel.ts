@@ -99,6 +99,8 @@ export interface ControllerPanel {
   name: string | null
   sourceNames: string[]
   totals: { places: number; doors: number; subjectGroups: number; flows: number }
+  /** Cookies a platform is named for that belong to no place, grouped by platform. */
+  platformCookies: { platform: string; names: string[] }[]
   unknowns: PanelUnknowns
 }
 
@@ -189,6 +191,15 @@ function factsFor(place: Place): PanelFact[] {
   return facts
 }
 
+function platformCookies(project: Project): { platform: string; names: string[] }[] {
+  const by = new Map<string, string[]>()
+  for (const c of project.cookies ?? []) {
+    if (c.placeId !== undefined || c.platform === undefined) continue
+    by.set(c.platform, [...(by.get(c.platform) ?? []), c.name])
+  }
+  return [...by].map(([platform, names]) => ({ platform, names }))
+}
+
 function placePanel(project: Project, place: Place, dictionary: VendorDictionary): PlacePanel {
   const doors = deriveDoors(project)
   const colourOf = new Map(doors.map((d) => [d.id, d.colourIndex]))
@@ -243,6 +254,7 @@ export function panelFor(
         subjectGroups: project.subjectGroups.length,
         flows: project.flows.length,
       },
+      platformCookies: platformCookies(project),
       // The questions that are about the project rather than about one place -- "who processes
       // payroll?" belongs to the organisation, and the centre is where the organisation is.
       unknowns: unknownsFor(project, null),
