@@ -2,6 +2,7 @@ import type {
   CapturedCookie,
   CollectionPoint,
   CookieLifetime,
+  DoorKind,
   FormFieldKind,
   Place,
   Project,
@@ -23,6 +24,8 @@ const FORM_FIELD_KINDS: readonly FormFieldKind[] = [
   'payment',
   'free-text',
 ]
+
+const DOOR_KINDS: readonly DoorKind[] = ['form', 'newsletter', 'booking', 'chat', 'embed']
 
 export const DEFAULT_PURPOSE_GROUPS = [
   'Sales',
@@ -164,6 +167,16 @@ export function validateProject(value: unknown): ValidationResult {
           fieldsOk = false
         }
       })
+      const isStrings = (a: unknown): boolean => Array.isArray(a) && a.every((e) => typeof e === 'string')
+      if (
+        (x.kind !== undefined && !DOOR_KINDS.includes(x.kind as DoorKind)) ||
+        (x.provider !== undefined && typeof x.provider !== 'string') ||
+        (x.destination !== undefined && typeof x.destination !== 'string') ||
+        (x.pages !== undefined && !isStrings(x.pages))
+      ) {
+        errors.push(`collectionPoints[${i}] has a malformed kind, provider, pages or destination.`)
+        return
+      }
       if (!fieldsOk) return
       validCollectionPoints.push(x as unknown as CollectionPoint)
     })

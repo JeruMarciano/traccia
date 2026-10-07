@@ -164,3 +164,36 @@ async fn a_contacts_page_linked_last_is_picked_and_an_offsite_redirect_is_droppe
     assert!(!out.hosts.iter().any(|h| h.host == offsite), "{:?}", out.hosts);
     assert!(!out.pages.iter().any(|p| p.page.contains("esterno")), "{:?}", out.pages);
 }
+
+// --- Task 9: probes and doors ---
+
+#[tokio::test]
+async fn iframes_on_two_pages_and_a_one_field_newsletter_form_are_captured() {
+    let frame = "<iframe src=\"http://maps-fixture.invalid/maps/embed\"></iframe>";
+    let home = format!(
+        "<!doctype html><a href=\"/contatti\">Contatti</a>{frame}\
+         <form action=\"http://sibforms-fixture.invalid/serve\"><input type=\"email\" name=\"EMAIL\"></form>\
+         <a href=\"http://book-fixture.invalid/prenota\">Prenota</a>"
+    );
+    let site = common::fixture_site_serving(vec![
+        ("/", home),
+        ("/contatti", format!("<!doctype html>{frame}")),
+    ])
+    .await;
+    let out = common::scan(&site).await;
+    let maps_on: Vec<&str> = out
+        .iframes
+        .iter()
+        .filter(|f| f.host == "maps-fixture.invalid" && f.segment == "maps")
+        .map(|f| f.page.as_str())
+        .collect();
+    assert_eq!(maps_on.len(), 2, "{:?}", out.iframes);
+    assert_ne!(maps_on[0], maps_on[1]);
+    let email = out.form_fields.iter().find(|f| f.name == "EMAIL").expect("the newsletter field");
+    assert_eq!((email.form, email.action_host.as_str()), (0, "sibforms-fixture.invalid"));
+    assert!(
+        out.offsite_links.iter().any(|l| l.host == "book-fixture.invalid" && l.purpose == Purpose::Booking),
+        "{:?}",
+        out.offsite_links
+    );
+}

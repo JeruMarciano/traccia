@@ -214,6 +214,24 @@ export interface RawFormField {
   type: string
   autocomplete: string
   label: string
+  /** Index among the page's forms; -1 (or absent in an older payload) when in none. */
+  form?: number
+  /** Hostname of the enclosing form's action. Empty or absent when there is none. */
+  actionHost?: string
+}
+
+/** An iframe seen on a page: host and first path segment only. */
+export interface RawIframe {
+  page: string
+  host: string
+  segment: string
+}
+
+/** A link from the home page to another site, never visited. */
+export interface RawOffsiteLink {
+  page: string
+  host: string
+  purpose: 'booking' | 'newsletter' | 'account'
 }
 
 export type FormFieldKind = 'email' | 'phone' | 'name' | 'address' | 'payment' | 'free-text'
@@ -223,10 +241,30 @@ export interface CollectionPointField {
   kind: FormFieldKind
 }
 
-/** A discovered door: one page that collects data through a form. */
+export type DoorKind = 'form' | 'newsletter' | 'booking' | 'chat' | 'embed'
+
+/** What classifyDoors finds: one candidate per page for a form, one per provider otherwise. */
+export interface DoorCandidate {
+  kind: DoorKind
+  page: string
+  pages: string[]
+  /** The host as scanned, never a guessed name. Null when there is no third party. */
+  provider: string | null
+  fields: CollectionPointField[]
+}
+
+/** A discovered door: a form on a page, or a third party's collection point seen on the site. */
 export interface CollectionPoint {
   id: string
   page: string
+  /** Absent in an older file: read as 'form'. */
+  kind?: DoorKind
+  /** The provider place's name. */
+  provider?: string
+  /** Every page the door was seen on. Absent: just `page`. */
+  pages?: string[]
+  /** The place this door sends data to. */
+  destination?: string
   fields: CollectionPointField[]
   sources: SourceRef[]
   confidence: Confidence
@@ -247,6 +285,11 @@ export interface Door {
   colourIndex: number
   /** Field names asked at this door, in project order. Empty for a declared door with none. */
   fields: string[]
+  /** Absent on a declared door. */
+  kind?: DoorKind
+  pages?: string[]
+  /** The place id a discovered door sends data to. */
+  destination?: string
 }
 
 /** Where one door's data goes and who comes through it. Computed by tracePaths; never stored. */
@@ -297,6 +340,8 @@ export interface ScanResult {
   cookies: RawScanCookie[]
   formFields: RawFormField[]
   storageKeys: RawStorageKey[]
+  iframes?: RawIframe[]
+  offsiteLinks?: RawOffsiteLink[]
   /** Key pages the scan visited (not the home page) and what each is for, when its link said so. */
   pages?: { page: string; purpose: 'contacts' | 'careers' | 'shop' | 'booking' | 'newsletter' | 'account' | null }[]
   /** v0.3 payloads only: fixed marker names of consent managers detected. Never persisted. */

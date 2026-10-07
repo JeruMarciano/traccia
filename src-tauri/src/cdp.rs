@@ -86,6 +86,30 @@ pub struct FormField {
     pub r#type: String,
     pub autocomplete: String,
     pub label: String,
+    /// Index among `document.forms`, -1 when the field is in no form.
+    pub form: i32,
+    /// Hostname of the enclosing form's `action`, vetted; empty when there is
+    /// none or it is not a plain hostname. Never a path or a query.
+    pub action_host: String,
+}
+
+/// An iframe `src` on a visited page: the host and the first path segment
+/// only, see [`IFRAME_PROBE`]. Serialises to `RawIframe` in `types.ts`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct IframeSeen {
+    pub page: String,
+    pub host: String,
+    pub segment: String,
+}
+
+/// A link from the home page to another site, whose path or text says it is
+/// for booking, a newsletter or an account. Never visited. Serialises to
+/// `RawOffsiteLink` in `types.ts`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct OffsiteLink {
+    pub page: String,
+    pub host: String,
+    pub purpose: Purpose,
 }
 
 /// One `localStorage`/`sessionStorage` entry found on a visited page — its
@@ -265,15 +289,74 @@ fn sanitise_form_fields(
             gap = true;
             continue;
         };
+        let form = item
+            .get("form")
+            .and_then(|v| v.as_i64())
+            .filter(|n| (-1..MAX_FORM_INDEX).contains(n))
+            .unwrap_or(-1) as i32;
+        let action_host = item
+            .get("action")
+            .and_then(|v| v.as_str())
+            .map(action_host)
+            .unwrap_or_default();
         fields.push(FormField {
             page: page.clone(),
             name: tame(name, MAX_FIELD_TEXT),
             r#type: tame(field_type, MAX_FIELD_TEXT),
             autocomplete: tame(autocomplete, MAX_FIELD_TEXT),
             label: tame(label, MAX_FIELD_TEXT),
+            form,
+            action_host,
         });
     }
     (fields, gap)
+}
+
+/// No page has this many forms worth telling apart; a larger index is the
+/// page lying and reads as "no form".
+const MAX_FORM_INDEX: i64 = 4096;
+/// Iframes kept per page; [`IFRAME_PROBE`] reads one more to prove the cap.
+const IFRAMES_PER_PAGE: usize = 32;
+/// Off-site links kept for the whole scan (they come from the home page).
+const MAX_OFFSITE_LINKS: usize = 32;
+
+/// A form action's hostname, or empty: `vet_host`'s shape, never an IP
+/// literal. What the page sends is a hostname already; this is the second
+/// filter, so a `javascript:` action or a stray path reads as nothing.
+fn action_host(raw: &str) -> String {
+    match crate::admission::vet_host(raw) {
+        Some(h) if h.parse::<std::net::IpAddr>().is_err() => h.to_ascii_lowercase(),
+        _ => String::new(),
+    }
+}
+
+/// Reads the `[host, segment]` pairs [`IFRAME_PROBE`] hands back: at most
+/// [`IFRAMES_PER_PAGE`], the host through [`action_host`]'s filter, the
+/// segment only when it is `[a-z0-9-_]{0,32}` (else blank — the host is still
+/// real). A bad entry is dropped; dropping or capping reports a gap.
+fn sanitise_iframes(page_url: &str, raw: &serde_json::Value) -> (Vec<IframeSeen>, bool) {
+    let page = page_identity(page_url);
+    let Some(array) = raw.as_array() else {
+        return (Vec::new(), true);
+    };
+    let mut gap = array.len() > IFRAMES_PER_PAGE;
+    let mut frames = Vec::new();
+    for item in array.iter().take(IFRAMES_PER_PAGE) {
+        let pair = item.as_array().filter(|a| a.len() == 2);
+        let host = pair.and_then(|a| a[0].as_str()).map(action_host).filter(|h| !h.is_empty());
+        let (Some(pair), Some(host)) = (pair, host) else {
+            gap = true;
+            continue;
+        };
+        let segment = pair[1]
+            .as_str()
+            .filter(|s| {
+                s.len() <= 32 && s.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_'))
+            })
+            .unwrap_or("");
+        frames.push(IframeSeen { page: page.clone(), host, segment: segment.to_string() });
+    }
+    (frames, gap)
 }
 
 /// Reads the `scope`, `key` and `bytes` keys [`STORAGE_PROBE`] hands back,
@@ -444,6 +527,11 @@ pub struct Observation {
     /// The key pages that were loaded (not the home page), with the purpose
     /// their link was picked for. An off-site redirect is not here.
     pub pages: Vec<VisitedPage>,
+    /// Iframe hosts and first path segments on every probed page, at most 32
+    /// per page.
+    pub iframes: Vec<IframeSeen>,
+    /// Booking/newsletter/account links from the home page to other sites.
+    pub offsite_links: Vec<OffsiteLink>,
 }
 
 /// The most distinct gap keys tracked before the ledger stops deduplicating.
@@ -511,10 +599,18 @@ const FORM_PROBE: &str = r#"(() => {
     let label = '';
     try { if (el.labels && el.labels[0]) label = el.labels[0].textContent || ''; } catch (e) {}
     out.push({ name: String(el.name || el.id || '').slice(0, 128), type: String(el.type || el.tagName || '').toLowerCase().slice(0, 128),
-               autocomplete: String(el.getAttribute('autocomplete') || '').slice(0, 128), label: String(label).slice(0, 128) });
+               autocomplete: String(el.getAttribute('autocomplete') || '').slice(0, 128), label: String(label).slice(0, 128),
+               form: el.form ? [...document.forms].indexOf(el.form) : -1,
+               action: el.form ? (() => { try { return new URL(el.form.action, location.href).hostname.slice(0, 253) } catch (e) { return '' } })() : '' });
   }
   return out;
 })()"#;
+
+/// A fixed expression, evaluated once per visited on-site page after
+/// [`FORM_PROBE`]: the host and first path segment of each `iframe[src]`,
+/// capped in the page at 33 so the 33rd proves [`IFRAMES_PER_PAGE`] was hit.
+/// Nothing from the page is interpolated into it.
+const IFRAME_PROBE: &str = r#"[...document.querySelectorAll('iframe[src]')].slice(0, 33).map(f => { try { const u = new URL(f.src, location.href); return [u.hostname.slice(0, 253), (u.pathname.split('/')[1] || '').slice(0, 32).toLowerCase()] } catch (e) { return null } }).filter(Boolean)"#;
 
 /// A fixed expression, evaluated once per visited page: reads the key names
 /// and value sizes of `window.localStorage` and `window.sessionStorage` —
@@ -875,6 +971,49 @@ pub fn pick_pages(
         .take(limit)
         .map(|i| (found[i].0.clone(), found[i].1))
         .collect()
+}
+
+/// Links to *other* sites whose path or text says booking, newsletter or
+/// account, from the entry page's `(href, text)` list: never visited, one per
+/// `(host, purpose)`, at most [`MAX_OFFSITE_LINKS`] (the bool is the gap when
+/// more existed). The host must be a plain vetted name that is neither the
+/// entry's own host nor a subdomain of it; credentials and backslashes in the
+/// URL are refused as in [`pick_pages`].
+fn offsite_links(entry_url: &str, links: &[(&str, &str)]) -> (Vec<OffsiteLink>, bool) {
+    let Some(own) = http_host(entry_url) else {
+        return (Vec::new(), false);
+    };
+    let page = page_identity(entry_url);
+    let mut found: Vec<OffsiteLink> = Vec::new();
+    let mut gap = false;
+    for (link, text) in links {
+        let link = link.split('#').next().unwrap_or("");
+        let authority = link.split_once("//").map_or("", |(_, r)| r.split(['/', '?']).next().unwrap_or(""));
+        if link.contains('\\') || authority.contains('@') {
+            continue;
+        }
+        let Some(host) = http_host(link).map(|h| action_host(&h)).filter(|h| !h.is_empty()) else {
+            continue;
+        };
+        if host == own || host.ends_with(&format!(".{own}")) {
+            continue;
+        }
+        let (path, _) = path_and_query(link);
+        let Some((purpose @ (Purpose::Booking | Purpose::Newsletter | Purpose::Account), _)) =
+            purpose_of(path, text)
+        else {
+            continue;
+        };
+        if found.iter().any(|o| o.host == host && o.purpose == purpose) {
+            continue;
+        }
+        if found.len() >= MAX_OFFSITE_LINKS {
+            gap = true;
+            continue;
+        }
+        found.push(OffsiteLink { page: page.clone(), host, purpose });
+    }
+    (found, gap)
 }
 
 /// A page the walk visited, and what it is for when its link said so.
@@ -1343,6 +1482,8 @@ struct Driver<T: CdpTransport> {
     before_cookies: Option<HashSet<(String, String)>>,
     /// Key pages loaded on the entry's own origin, see [`Observation::pages`].
     pages: Vec<VisitedPage>,
+    iframes: Vec<IframeSeen>,
+    offsite_links: Vec<OffsiteLink>,
 }
 
 impl<T: CdpTransport> Driver<T> {
@@ -1364,6 +1505,8 @@ impl<T: CdpTransport> Driver<T> {
             attempt_known: None,
             before_cookies: None,
             pages: Vec::new(),
+            iframes: Vec::new(),
+            offsite_links: Vec::new(),
         }
     }
 
@@ -2175,7 +2318,46 @@ impl<T: CdpTransport> Driver<T> {
         session: &SessionId,
         page_url: &str,
     ) -> Result<Vec<FormField>, CdpError> {
-        let mut params = EvaluateParams::new(FORM_PROBE.to_string());
+        let Some(value) = self.probe_value(session, FORM_PROBE, "form_fields").await? else {
+            return Ok(Vec::new());
+        };
+        let (fields, sanitiser_gap) =
+            sanitise_form_fields(page_url, &value, self.form_fields.len());
+        if sanitiser_gap {
+            self.gaps.note("form_fields:sanitiser");
+        }
+        Ok(fields)
+    }
+
+    /// Evaluates the fixed [`IFRAME_PROBE`] and folds the result through
+    /// [`sanitise_iframes`]. The same call contract and the same [B4] rules as
+    /// [`Driver::probe_form_fields`]: top-level session only, only for a page
+    /// that was loaded and judged on-site.
+    async fn probe_iframes(
+        &mut self,
+        session: &SessionId,
+        page_url: &str,
+    ) -> Result<Vec<IframeSeen>, CdpError> {
+        let Some(value) = self.probe_value(session, IFRAME_PROBE, "iframes").await? else {
+            return Ok(Vec::new());
+        };
+        let (frames, gap) = sanitise_iframes(page_url, &value);
+        if gap {
+            self.gaps.note(format!("iframes:sanitiser:{}", page_identity(page_url)));
+        }
+        Ok(frames)
+    }
+
+    /// Runs a fixed probe expression under the [B2] contract and returns its
+    /// value; `None` for a refused call or `exceptionDetails`, each a counted
+    /// gap named `<label>:probe-failed` / `<label>:probe-exception`.
+    async fn probe_value(
+        &mut self,
+        session: &SessionId,
+        expression: &'static str,
+        label: &str,
+    ) -> Result<Option<serde_json::Value>, CdpError> {
+        let mut params = EvaluateParams::new(expression.to_string());
         params.return_by_value = Some(true);
         params.silent = Some(true);
         params.await_promise = Some(false);
@@ -2193,23 +2375,15 @@ impl<T: CdpTransport> Driver<T> {
             Ok(result) => result,
             Err(CdpError::BrowserGone) => return Err(CdpError::BrowserGone),
             Err(_) => {
-                self.gaps.note("form_fields:probe-failed");
-                return Ok(Vec::new());
+                self.gaps.note(format!("{label}:probe-failed"));
+                return Ok(None);
             }
         };
         if result.get("exceptionDetails").is_some() {
-            self.gaps.note("form_fields:probe-exception");
-            return Ok(Vec::new());
+            self.gaps.note(format!("{label}:probe-exception"));
+            return Ok(None);
         }
-        let Some(value) = result.get("result").and_then(|r| r.get("value")) else {
-            return Ok(Vec::new());
-        };
-        let (fields, sanitiser_gap) =
-            sanitise_form_fields(page_url, value, self.form_fields.len());
-        if sanitiser_gap {
-            self.gaps.note("form_fields:sanitiser");
-        }
-        Ok(fields)
+        Ok(result.get("result").and_then(|r| r.get("value")).cloned())
     }
 
     /// Evaluates the fixed [`STORAGE_PROBE`] on `session` and folds the
@@ -2309,6 +2483,8 @@ impl<T: CdpTransport> Driver<T> {
             if !cancel.is_cancelled() {
                 let fields = self.probe_form_fields(&session, entry_url).await?;
                 self.form_fields.extend(fields);
+                let frames = self.probe_iframes(&session, entry_url).await?;
+                self.iframes.extend(frames);
             }
             // [B4] Same discipline as the form-field probe above: only a page
             // this walk actually loaded, only on the page's own top-level
@@ -2339,6 +2515,11 @@ impl<T: CdpTransport> Driver<T> {
         }
         let links = self.links(&session).await?;
         let refs: Vec<(&str, &str)> = links.iter().map(|(h, t)| (h.as_str(), t.as_str())).collect();
+        let (offsite, capped) = offsite_links(entry_url, &refs);
+        if capped {
+            self.gaps.note("offsite_links:cap");
+        }
+        self.offsite_links = offsite;
         let follow = pick_pages(entry_url, &refs, (max_pages - 1) as usize);
         let entry_origin = origin(entry_url);
         for (n, (url, purpose)) in follow.into_iter().enumerate() {
@@ -2366,6 +2547,8 @@ impl<T: CdpTransport> Driver<T> {
                 if !cancel.is_cancelled() {
                     let fields = self.probe_form_fields(&session, &url).await?;
                     self.form_fields.extend(fields);
+                    let frames = self.probe_iframes(&session, &url).await?;
+                    self.iframes.extend(frames);
                 }
                 if !cancel.is_cancelled() {
                     let keys = self.probe_storage_keys(&session).await?;
@@ -2396,6 +2579,8 @@ impl<T: CdpTransport> Driver<T> {
             form_fields: std::mem::take(&mut self.form_fields),
             storage_keys: std::mem::take(&mut self.storage_keys),
             pages: std::mem::take(&mut self.pages),
+            iframes: std::mem::take(&mut self.iframes),
+            offsite_links: std::mem::take(&mut self.offsite_links),
         }
     }
 
@@ -3708,6 +3893,8 @@ mod tests {
             form_fields: Vec::new(),
             storage_keys: Vec::new(),
             pages: Vec::new(),
+            iframes: Vec::new(),
+            offsite_links: Vec::new(),
         };
         assert_eq!(
             serde_json::to_value(&observation).expect("json"),
@@ -3721,7 +3908,9 @@ mod tests {
                             "matchedText": "", "clickNavigated": false},
                 "formFields": [],
                 "storageKeys": [],
-                "pages": []
+                "pages": [],
+                "iframes": [],
+                "offsiteLinks": []
             })
         );
     }
@@ -4066,9 +4255,11 @@ mod tests {
             r#type: "email".into(),
             autocomplete: "email".into(),
             label: "Email".into(),
+            form: 0,
+            action_host: String::new(),
         })
         .unwrap();
-        for key in ["\"page\"", "\"name\"", "\"type\"", "\"autocomplete\"", "\"label\""] {
+        for key in ["\"page\"", "\"name\"", "\"type\"", "\"autocomplete\"", "\"label\"", "\"form\"", "\"actionHost\""] {
             assert!(json.contains(key), "missing {key}");
         }
     }
@@ -4138,6 +4329,8 @@ mod tests {
                 r#type: "email".to_string(),
                 autocomplete: "email".to_string(),
                 label: "Email".to_string(),
+                form: -1,
+                action_host: String::new(),
             }]
         );
     }
@@ -4592,5 +4785,85 @@ mod tests {
             .expect("no world is not an error");
         assert!(!sent);
         assert!(driver.transport.sent.is_empty(), "{:?}", driver.transport.sent);
+    }
+
+    // --- Task 9: probes and doors ---
+
+    #[test]
+    fn an_action_host_is_a_vetted_hostname_or_empty() {
+        for bad in [
+            "javascript:void(0)",
+            "1.2.3.4",
+            "[::1]",
+            "ex ample.com",
+            "evil.test@x.com",
+            "caf\u{e9}.it",
+            "",
+        ] {
+            assert_eq!(action_host(bad), "", "{bad}");
+        }
+        assert_eq!(action_host("SibForms.com"), "sibforms.com");
+        // The probe sends a hostname; the form index is an integer in range.
+        let raw = json!([{"name": "e", "type": "email", "autocomplete": "", "label": "",
+                          "form": 2, "action": "sibforms.com"},
+                         {"name": "f", "type": "text", "autocomplete": "", "label": "",
+                          "form": "x", "action": "1.2.3.4"}]);
+        let (fields, _) = sanitise_form_fields("https://x.it/", &raw, 0);
+        assert_eq!((fields[0].form, fields[0].action_host.as_str()), (2, "sibforms.com"));
+        assert_eq!((fields[1].form, fields[1].action_host.as_str()), (-1, ""));
+    }
+
+    #[test]
+    fn an_iframe_keeps_a_vetted_host_and_a_plain_segment_only() {
+        let raw = json!([
+            ["Maps.Example.invalid", "maps"],
+            ["x.invalid", "a/b"],
+            ["y.invalid", "Maps"],
+            ["1.2.3.4", "maps"],
+            ["z.invalid", "e".repeat(33)],
+            "not-a-pair",
+        ]);
+        let (frames, gap) = sanitise_iframes("https://x.it/p?q=1", &raw);
+        let got: Vec<(&str, &str)> = frames.iter().map(|f| (f.host.as_str(), f.segment.as_str())).collect();
+        assert_eq!(got, [("maps.example.invalid", "maps"), ("x.invalid", ""), ("y.invalid", ""), ("z.invalid", "")]);
+        assert!(frames.iter().all(|f| f.page == "https://x.it/p"));
+        assert!(gap, "an IP-literal host and a non-pair are dropped and counted");
+    }
+
+    #[test]
+    fn more_than_32_iframes_on_a_page_caps_and_notes_a_gap() {
+        let raw: Vec<_> = (0..33).map(|i| json!([format!("h{i}.invalid"), "x"])).collect();
+        let (frames, gap) = sanitise_iframes("https://x.it/", &json!(raw));
+        assert_eq!(frames.len(), 32);
+        assert!(gap);
+        let (frames, gap) = sanitise_iframes("https://x.it/", &json!(&raw[..32]));
+        assert_eq!((frames.len(), gap), (32, false));
+        assert!(IFRAME_PROBE.contains("slice(0, 33)"));
+    }
+
+    #[test]
+    fn an_offsite_link_needs_an_offsite_host_and_a_booking_newsletter_or_account_purpose() {
+        let entry = concat!("https", "://rossi.it/");
+        let l = |h: &str, t: &'static str| (h.to_string(), t);
+        let links = [
+            l(concat!("https", "://www.simplebooking.it/book/rossi"), ""),
+            l(concat!("https", "://www.facebook.com/rossi"), "Facebook"),
+            l(concat!("https", "://www.rossi.it/prenota"), ""),
+            l(concat!("https", "://rossi.it/prenota"), ""),
+            l(concat!("https", "://sib.example.invalid/newsletter"), ""),
+            l(concat!("https", "://shop.example.invalid/cart"), ""),
+            l(concat!("https", "://user@acme.invalid/login"), ""),
+            l(concat!("https", "://1.2.3.4/login"), ""),
+            l(concat!("https", "://x.invalid/login\\y"), ""),
+        ];
+        let refs: Vec<(&str, &str)> = links.iter().map(|(h, t)| (h.as_str(), *t)).collect();
+        let (found, gap) = offsite_links(entry, &refs);
+        let got: Vec<(&str, Purpose)> = found.iter().map(|o| (o.host.as_str(), o.purpose)).collect();
+        assert_eq!(
+            got,
+            [("www.simplebooking.it", Purpose::Booking), ("sib.example.invalid", Purpose::Newsletter)]
+        );
+        assert!(found.iter().all(|o| o.page == "https://rossi.it/"));
+        assert!(!gap);
     }
 }

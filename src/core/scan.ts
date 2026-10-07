@@ -1,5 +1,5 @@
 import { bucketLifetime, cookieOwnerName, isThirdPartyCookie } from './cookies'
-import { classifyField, isCollectingField } from './forms'
+import { classifyDoors } from './doors'
 import { addFlow, addPlace } from './graph'
 import { classifyHost, identify } from './vendors'
 import type {
@@ -9,7 +9,6 @@ import type {
   Observation,
   Place,
   Project,
-  RawFormField,
   ScanResult,
   VendorDictionary,
 } from './types'
@@ -148,18 +147,17 @@ export function ingestScan(
     site = newSite
   }
 
-  if (!hasFlow(working, visitors.id, site.id)) {
+  const siteId = site.id
+  if (!hasFlow(working, visitors.id, siteId)) {
     working = addFlow(working, visitorFlow(visitors.id, site.id), nextId(taken, ids.prefix, 'fl'))
   }
 
   // 3. Every third party, named from the dictionary, each with a flow from the
   //    site. The scanned host itself is skipped — it is the site, not a
-  //    recipient of its own data.
-  for (const observed of result.hosts) {
-    if (isSameSite(observed.host, result.scannedHost)) continue
-
-    const name = displayName(observed.host, dictionary)
-    const hit = identify(observed.host, dictionary)
+  //    recipient of its own data. The same find-or-create serves a door's provider below.
+  const placeForHost = (host: string): Place => {
+    const name = displayName(host, dictionary)
+    const hit = identify(host, dictionary)
 
     let place = findPlaceByName(working, name)
     if (place === undefined) {
@@ -171,7 +169,7 @@ export function ingestScan(
         // An uncatalogued host still gets a purpose where its own name suggests one — see
         // `classifyHost`. `kind` stays 'unknown', so the map keeps drawing it as a figure
         // nobody has explained: a guessed purpose is not an identification.
-        purposeGroup: hit === null ? (classifyHost(observed.host) ?? NOT_IDENTIFIED) : hit.purposeGroup,
+        purposeGroup: hit === null ? (classifyHost(host) ?? NOT_IDENTIFIED) : hit.purposeGroup,
         holder: 'supplier',
         leavesEEA: 'unknown',
         sources: [],
@@ -181,9 +179,14 @@ export function ingestScan(
       place = newPlace
     }
 
-    if (!hasFlow(working, site.id, place.id)) {
-      working = addFlow(working, thirdPartyFlow(site.id, place.id), nextId(taken, ids.prefix, 'fl'))
+    if (!hasFlow(working, siteId, place.id)) {
+      working = addFlow(working, thirdPartyFlow(siteId, place.id), nextId(taken, ids.prefix, 'fl'))
     }
+    return place
+  }
+  for (const observed of result.hosts) {
+    if (isSameSite(observed.host, result.scannedHost)) continue
+    placeForHost(observed.host)
   }
 
   // 4. The raw observations, so the map can always be traced back to what was
@@ -268,56 +271,39 @@ export function ingestScan(
     if (captured !== undefined) freshCookies.push(captured)
   }
 
-  // 6. Doors: pages where a form collected something. Grouped by `page` (an opaque key Rust
-  //    has already reduced to scheme+authority+path — never interpolated), filtered through
-  //    `isCollectingField` so a hidden CSRF token or a submit button never becomes a "door", and
-  //    classified per Task 9's precedence table. A page with zero collecting fields gets no
-  //    CollectionPoint at all — a form that only ever posted an antiforgery token is not a place
-  //    where personal data was written down. Deduped by page, same shape as cookies and
-  //    observations above: the newer scan's reading of a page replaces the older one rather than
-  //    duplicating it, and position is preserved rather than moved to the end.
-  const pageOrder: string[] = []
-  const fieldsByPage = new Map<string, RawFormField[]>()
-  for (const field of result.formFields) {
-    if (!fieldsByPage.has(field.page)) {
-      fieldsByPage.set(field.page, [])
-      pageOrder.push(field.page)
-    }
-    fieldsByPage.get(field.page)?.push(field)
-  }
-
-  const newCollectionPointByPage = new Map<string, CollectionPoint>()
-  for (const page of pageOrder) {
-    const collecting = (fieldsByPage.get(page) ?? []).filter(isCollectingField)
-    if (collecting.length === 0) continue
-    newCollectionPointByPage.set(page, {
+  // 6. Doors, classified by `classifyDoors` (spec §7): a form is one door per page, any other kind
+  //    one per (kind, provider). A door whose provider is a third party points at that party's
+  //    place, created like a host if absent. A door seen again keeps its id, because door colour
+  //    is assigned by position and a renumbered door silently repaints the map; the fresh capture
+  //    supplies the content, the original the identity.
+  const doorKey = (kind: string, page: string, provider: string | undefined): string =>
+    kind === 'form' ? `form|${page}` : `${kind}|${provider ?? ''}`
+  const freshDoors = new Map<string, CollectionPoint>()
+  for (const door of classifyDoors(result, dictionary)) {
+    const provider = door.provider === null ? undefined : placeForHost(door.provider)
+    const page = door.page === '' ? result.scannedHost : door.page
+    freshDoors.set(doorKey(door.kind, page, provider?.name), {
       id: nextId(taken, ids.prefix, 'cp'),
       page,
-      fields: collecting.map((field) => ({ name: field.name, kind: classifyField(field) })),
+      // Absent kind and pages read as a form on `page`: older files and form doors stay as they were.
+      ...(door.kind === 'form' ? {} : { kind: door.kind, pages: door.pages }),
+      ...(provider === undefined ? {} : { provider: provider.name, destination: provider.id }),
+      fields: door.fields,
       sources: [],
       confidence: 'observed',
     })
   }
 
   const existingCollectionPoints = working.collectionPoints ?? []
-  // A page seen again is the same door, so it keeps its id: the fresh capture supplies the
-  // fields, the original supplies the identity. Taking the fresh object whole would renumber a
-  // door on every rescan, which silently repaints the map (door colour is assigned by position)
-  // and drops whatever the user had selected.
+  const keptKeys = new Set<string>()
   const updatedExistingCollectionPoints = existingCollectionPoints.map((cp) => {
-    const fresh = newCollectionPointByPage.get(cp.page)
-    return fresh === undefined ? cp : { ...fresh, id: cp.id }
+    const key = doorKey(cp.kind ?? 'form', cp.page, cp.provider)
+    const fresh = freshDoors.get(key)
+    if (fresh === undefined) return cp
+    keptKeys.add(key)
+    return { ...fresh, id: cp.id }
   })
-
-  const alreadyKnownPages = new Set(existingCollectionPoints.map((cp) => cp.page))
-  const seenPagesThisScan = new Set<string>()
-  const freshCollectionPoints: CollectionPoint[] = []
-  for (const page of pageOrder) {
-    const cp = newCollectionPointByPage.get(page)
-    if (cp === undefined || alreadyKnownPages.has(page) || seenPagesThisScan.has(page)) continue
-    seenPagesThisScan.add(page)
-    freshCollectionPoints.push(cp)
-  }
+  const freshCollectionPoints = [...freshDoors].filter(([key]) => !keptKeys.has(key)).map(([, cp]) => cp)
 
   return {
     ...working,

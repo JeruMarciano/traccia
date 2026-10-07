@@ -7,6 +7,12 @@ import type { FormFieldKind, RawFormField } from './types'
  */
 const NON_COLLECTING_TYPES = new Set(['hidden', 'submit', 'button', 'reset'])
 
+/** A form is a door when it has a collecting field that is not just a search box. */
+export function isDoorForm(fields: readonly Pick<RawFormField, 'type'>[]): boolean {
+  const collecting = fields.filter(isCollectingField)
+  return collecting.length > 0 && !collecting.every((f) => f.type.trim().toLowerCase() === 'search')
+}
+
 export function isCollectingField(field: Pick<RawFormField, 'type'>): boolean {
   return !NON_COLLECTING_TYPES.has(field.type.trim().toLowerCase())
 }
