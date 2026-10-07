@@ -178,6 +178,6 @@ export const STRINGS = {
         'click-failed': 'the click did not complete',
       }[reason]
     }.`,
-  consentNotGivenNoReason: 'No consent was given.',
+  consentOutcomeUnknown: 'Whether consent was given could not be established.',
   consentClickLeftPage: 'The click left the page; the result is flagged.',
 } as const

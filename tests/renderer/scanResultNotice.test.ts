@@ -303,9 +303,23 @@ describe('scanResultNotice', () => {
       expect(notice).not.toContain('only after')
     })
 
-    it('says just that no consent was given when the scan could not tell why', () => {
-      expect(run({ ...base, cmp: 'iubenda' })).toBe(STRINGS.consentNotGivenNoReason)
-      expect(STRINGS.consentNotGivenNoReason).toBe('No consent was given.')
+    it('does not say consent was or was not given when a click was sent and its outcome is not known', () => {
+      const notice = run({ ...base, cmp: 'iubenda' }, {
+        hosts: [
+          { host: 'rossi-editore.it', requestCount: 1, phase: 'before' },
+          { host: 'doubleclick.net', requestCount: 1, phase: 'before' },
+          { host: 'facebook.net', requestCount: 1 },
+        ],
+      })
+      expect(notice).toBe(
+        'A consent banner appears to be present (iubenda). Whether consent was given could not be established.',
+      )
+      expect(notice).not.toContain('No consent was given')
+      expect(notice).not.toContain('before consent')
+    })
+
+    it('says nothing about consent when nothing was recognised and no reason came', () => {
+      expect(run(base, { hosts: [{ host: 'rossi-editore.it', requestCount: 1 }, { host: 'x.example', requestCount: 1 }] })).toBe('')
     })
 
     it('counts third parties by phase after a click, leaving out hosts with no phase and the site itself', () => {

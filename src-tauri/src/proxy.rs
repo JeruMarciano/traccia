@@ -4,8 +4,14 @@
 //! TLS handshake without issuing a request, so `Fetch.requestPaused` never fires for it. On one
 //! load of a news site the spike measured 22 hosts visible to CDP against 37 actually contacted,
 //! and the 15 CDP could not see were ad-tech vendors — the exact thing this product exists to
-//! find. A proxy sees connection *attempts*, which is what §7.1 forbids. So the proxy is the
-//! guard, and CDP, in Phase 2, is only attribution.
+//! find. A proxy sees connection *attempts*, which is what §7.1 is about. So the proxy is the
+//! guard, and CDP is only attribution.
+//!
+//! Third parties are not forbidden (spec §13 widened §7.1): during a scan `admission` admits any
+//! well-formed named host on port 80 or 443, as a visitor's browser would reach it, and nothing
+//! when no scan is running. What this file guards is where a name leads:
+//! `is_permitted_upstream` is applied to every address a name resolves to before anything is
+//! dialled.
 //!
 //! This proxy never decrypts anything. A CONNECT tunnel is opaque bytes: it learns the hostname
 //! and the port and nothing else, which is the correct amount for a tool whose promise is that

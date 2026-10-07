@@ -49,8 +49,10 @@ pub const MAX_PAGES: u32 = 13;
 /// pathological is ever parsed.
 const MAX_URL_LEN: usize = 2048;
 
-/// The URL to open, the host it names, and the origins the proxy will admit
-/// for the length of this scan — which is exactly `[host]`.
+/// The URL to open, the host it names, and the scan's origins — exactly
+/// `[host]`. The origins do not limit what the proxy admits: while they are
+/// set a scan is running, and the proxy then admits any named host on port
+/// 80 or 443, as a visitor's browser would reach it (see `admission`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
     pub url: String,
@@ -810,7 +812,7 @@ mod tests {
             hosts: vec![cdp::ObservedHost {
                 host: "doubleclick.net".into(),
                 request_count: 3,
-                phase: cdp::Phase::Before,
+                phase: Some(cdp::Phase::Before),
                 paths: Vec::new(),
             }],
             pages_visited: 4,

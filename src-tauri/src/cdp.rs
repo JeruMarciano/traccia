@@ -52,7 +52,10 @@ pub enum Phase {
 pub struct ObservedHost {
     pub host: String,
     pub request_count: u32,
-    pub phase: Phase,
+    /// Left out when the host was first seen after a consent click whose
+    /// outcome is not known: a blank beats a guess.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<Phase>,
     /// Up to [`MAX_SEGMENTS_PER_HOST`] distinct first path segments requested from this host,
     /// lowercased `[a-z0-9-_]{1,32}` only. Never a value, never a query.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -520,7 +523,7 @@ pub struct Observation {
     pub consent: Consent,
     /// Form fields found across every visited page, capped scan-wide at
     /// [`MAX_FORM_FIELDS`] — never a value, only the field's own shape. A
-    /// page whose navigation was refused (`Driver::visit` returned `false`)
+    /// page that did not load (`Driver::visit` returned anything but [`Visit::Loaded`])
     /// contributes nothing here: it was never loaded under its own identity,
     /// so nothing on it was ever this walk's to attribute.
     pub form_fields: Vec<FormField>,
@@ -528,7 +531,7 @@ pub struct Observation {
     /// every visited page, deduplicated on `(scope, key)` first-seen wins and
     /// capped scan-wide at [`MAX_STORAGE_KEYS`] — never a value, only the
     /// key's own name and size. A page whose navigation was refused
-    /// (`Driver::visit` returned `false`) contributes nothing here, the same
+    /// (`Driver::visit` returned anything but [`Visit::Loaded`]) contributes nothing here, the same
     /// rule as [`Self::form_fields`].
     pub storage_keys: Vec<StorageKey>,
     /// The key pages that were loaded (not the home page), with the purpose
@@ -679,7 +682,7 @@ const MAX_SEGMENTS_PER_HOST: usize = 8;
 /// something a user can trust.
 #[derive(Debug, Default, Clone)]
 pub struct HostAccumulator {
-    counts: BTreeMap<String, (u32, Phase)>,
+    counts: BTreeMap<String, (u32, Option<Phase>)>,
     segments: BTreeMap<String, BTreeSet<String>>,
     overflowed: bool,
 }
@@ -692,8 +695,9 @@ impl HostAccumulator {
     /// Records one request. A URL with no host of interest — `data:`,
     /// `about:`, `blob:`, a relative path, anything unparseable — is dropped
     /// rather than counted under some invented name.
-    /// `phase` is kept only the first time a host is seen.
-    pub fn record(&mut self, url: &str, phase: Phase) {
+    /// `phase` is kept only the first time a host is seen; `None` is a host
+    /// whose phase is not known.
+    pub fn record(&mut self, url: &str, phase: impl Into<Option<Phase>>) {
         let Some(host) = http_host(url) else {
             return;
         };
@@ -711,7 +715,7 @@ impl HostAccumulator {
                 set.insert(segment);
             }
         }
-        let (count, _) = self.counts.entry(host).or_insert((0, phase));
+        let (count, _) = self.counts.entry(host).or_insert((0, phase.into()));
         *count = count.saturating_add(1);
     }
 
@@ -720,11 +724,11 @@ impl HostAccumulator {
         self.counts.keys().cloned().collect()
     }
 
-    /// Every host not in `known` goes back to [`Phase::Before`].
-    fn rewind_to_before(&mut self, known: &HashSet<String>) {
+    /// Every host not in `known` is retagged `to`.
+    fn retag_since(&mut self, known: &HashSet<String>, to: Option<Phase>) {
         for (host, (_, phase)) in self.counts.iter_mut() {
             if !known.contains(host) {
-                *phase = Phase::Before;
+                *phase = to;
             }
         }
     }
@@ -1543,8 +1547,9 @@ struct Driver<T: CdpTransport> {
     /// loaded, via [`Driver::probe_storage_keys`] — see
     /// [`Observation::storage_keys`].
     storage_keys: Vec<StorageKey>,
-    /// The phase every host and cookie seen from now on is tagged with.
-    phase: Phase,
+    /// The phase every host and cookie seen from now on is tagged with;
+    /// `None` once a click was sent whose outcome is not known.
+    phase: Option<Phase>,
     /// The hosts already known when a consent attempt began, so a failed
     /// attempt can give back everything first seen during it.
     attempt_known: Option<HashSet<String>>,
@@ -1576,7 +1581,7 @@ impl<T: CdpTransport> Driver<T> {
             consent_bridge: Bridge::default(),
             form_fields: Vec::new(),
             storage_keys: Vec::new(),
-            phase: Phase::Before,
+            phase: Some(Phase::Before),
             attempt_known: None,
             before_cookies: None,
             pages: Vec::new(),
@@ -1593,16 +1598,18 @@ impl<T: CdpTransport> Driver<T> {
         if self.attempt_known.is_none() {
             self.attempt_known = Some(self.acc.known());
         }
-        self.phase = Phase::After;
+        self.phase = Some(Phase::After);
     }
 
-    /// The attempt failed, so no consent was given: everything first seen
-    /// since it began goes back to `Before`.
-    fn abandon_consent_attempt(&mut self) {
+    /// The attempt recorded no click. `Some(Before)` when it is known that
+    /// nothing was clicked: everything first seen since it began goes back
+    /// to `Before`. `None` when a click was sent and never answered: what was
+    /// seen since, and everything from now on, has no phase.
+    fn abandon_consent_attempt(&mut self, phase: Option<Phase>) {
         if let Some(known) = self.attempt_known.take() {
-            self.acc.rewind_to_before(&known);
+            self.acc.retag_since(&known, phase);
         }
-        self.phase = Phase::Before;
+        self.phase = phase;
     }
 
     /// Sends one command and reads until its own response arrives, servicing
@@ -2235,8 +2242,9 @@ impl<T: CdpTransport> Driver<T> {
     /// Spec §5.1 (1): accepts by the rule of the CMP whose popup the engine
     /// found. Rust sends `optIn` itself, counts a click only from the
     /// [`Bridge`]-checked answer to it, and switches the phase on its own
-    /// step: everything first seen from the send on is `After`, and given
-    /// back to `Before` if no click came of it.
+    /// step: everything first seen from the send on is `After`, given back
+    /// to `Before` if the engine answered that no click came of it, and left
+    /// without a phase if the engine never answered.
     ///
     /// A rule that can report success without clicking is never asked —
     /// see [`consent::opt_in_clicks`]. Where the engine did not click (no
@@ -2256,10 +2264,12 @@ impl<T: CdpTransport> Driver<T> {
             }
         };
         if !consent::opt_in_clicks(&cmp) {
-            // A rule that cannot prove its click is where most refused CMPs land.
+            // A rule that cannot prove its click is where most refused CMPs
+            // land. Nothing was sent: if no label is pressed either, a consent
+            // manager was recognised and no accept button the rules allow.
             let refused = Consent {
                 cmp: Some(cmp),
-                reason: Some("click-failed"),
+                reason: Some("no-button"),
                 ..Consent::default()
             };
             return self.text_click(session, cancel, entry_url, refused).await;
@@ -2272,12 +2282,20 @@ impl<T: CdpTransport> Driver<T> {
             .retain(|m| !matches!(m, EngineMsg::OptInResult(_)));
         let opt_in = self.consent_bridge.request_opt_in().to_string();
         let mut clicked = false;
+        let deadline = Instant::now() + OPT_IN_BUDGET;
         if self.consent_reply(session, opt_in).await? {
-            let deadline = Instant::now() + OPT_IN_BUDGET;
             clicked = self.relay(session, cancel, deadline, detection).await?.clicked;
         }
-        if !clicked {
-            self.abandon_consent_attempt();
+        // A cancel, a spent budget, or a bridge that died (gap noted): the
+        // engine never answered, and a click may even have happened.
+        let unanswered = !clicked
+            && (cancel.is_cancelled()
+                || self.consent_context.is_none()
+                || Instant::now() >= deadline);
+        if unanswered {
+            self.abandon_consent_attempt(None);
+        } else if !clicked {
+            self.abandon_consent_attempt(Some(Phase::Before));
         }
         Ok(Consent {
             cmp: Some(cmp.clone()),
@@ -2285,11 +2303,8 @@ impl<T: CdpTransport> Driver<T> {
             rule: clicked.then_some(ConsentRule::Cmp),
             rule_name: if clicked { cmp } else { String::new() },
             matched_text: String::new(),
-            click_navigated: self.load_fired,
-            // A cancel, or a bridge that died (gap noted), is a blank: the
-            // engine never answered, and a click may even have happened.
-            reason: (!clicked && !cancel.is_cancelled() && self.consent_context.is_some())
-                .then_some("click-failed"),
+            click_navigated: clicked && self.load_fired,
+            reason: (!clicked && !unanswered).then_some("click-failed"),
         })
     }
 
@@ -2324,12 +2339,14 @@ impl<T: CdpTransport> Driver<T> {
             .and_then(|r| r.get("result")?.get("value"))
             .and_then(consent::sanitise_text_click);
         let Some(label) = label else {
-            self.abandon_consent_attempt();
             if answer.is_none() {
-                // No answer: whether it clicked is not known — a blank.
+                // No answer: whether it clicked is not known — a blank, and
+                // so is the phase of everything since.
+                self.abandon_consent_attempt(None);
                 self.gaps.note("consent:bridge");
                 return Ok(Consent { reason: None, ..unclicked });
             }
+            self.abandon_consent_attempt(Some(Phase::Before));
             return Ok(unclicked);
         };
         self.settle(SETTLE_AFTER_LOAD, cancel, Instant::now() + ARM_DRAIN_BUDGET)
@@ -2417,7 +2434,7 @@ impl<T: CdpTransport> Driver<T> {
     /// **[B4]** Callers must only ever pass `session` for the page's own
     /// top-level session, never any attached cross-origin iframe session —
     /// that would capture a third party's fields under the scanned site's
-    /// name — and only after [`Driver::visit`] returned `true` for `page_url`.
+    /// name — and only after [`Driver::visit`] returned [`Visit::Loaded`] for `page_url`.
     async fn probe_form_fields(
         &mut self,
         session: &SessionId,
@@ -2504,7 +2521,7 @@ impl<T: CdpTransport> Driver<T> {
     /// **[B4]** Callers must only ever pass `session` for the page's own
     /// top-level session, never any attached cross-origin iframe session —
     /// that would capture a third party's storage keys and attribute them to
-    /// the scanned site — and only after [`Driver::visit`] returned `true`.
+    /// the scanned site — and only after [`Driver::visit`] returned [`Visit::Loaded`].
     async fn probe_storage_keys(&mut self, session: &SessionId) -> Result<Vec<StorageKey>, CdpError> {
         let mut params = EvaluateParams::new(STORAGE_PROBE.to_string());
         params.return_by_value = Some(true);
@@ -2808,9 +2825,10 @@ impl<T: CdpTransport> Driver<T> {
     /// The one place that builds the [`Observation`] a completed, cancelled,
     /// or budget-exhausted `run()` actually returns: folds in the cookie
     /// jar at snapshot 2, rather than in [`Driver::observation`] itself. A
-    /// cookie in snapshot 1 is `Before`; with no successful click every cookie
-    /// is `Before`; otherwise a cookie not in snapshot 1 is `After` — or has no
-    /// phase at all when snapshot 1 is unknown, because a blank beats a guess.
+    /// cookie in snapshot 1 is `Before`; when it is known that nothing was
+    /// clicked every cookie is `Before`; otherwise a cookie not in snapshot 1
+    /// is `After` — or has no phase at all when snapshot 1 or the click's
+    /// outcome is unknown, because a blank beats a guess.
     async fn finish(
         &mut self,
         pages_visited: u32,
@@ -2823,9 +2841,9 @@ impl<T: CdpTransport> Driver<T> {
         for c in &mut cookies {
             let pair = (c.name.clone(), c.domain.clone());
             c.phase = match (&self.before_cookies, self.phase) {
-                (_, Phase::Before) => Some(Phase::Before),
+                (_, Some(Phase::Before)) => Some(Phase::Before),
                 (Some(before), _) if before.contains(&pair) => Some(Phase::Before),
-                (Some(_), phase) => Some(phase),
+                (Some(_), phase) => phase,
                 (None, _) => None,
             };
         }
@@ -4025,7 +4043,7 @@ mod tests {
         // M-2. The module's doc says it never panics; unchecked u32 arithmetic
         // on a page-driven counter would make that untrue in a debug build.
         let mut acc = HostAccumulator::new();
-        acc.counts.insert("x.example".to_string(), (u32::MAX, Phase::Before));
+        acc.counts.insert("x.example".to_string(), (u32::MAX, Some(Phase::Before)));
         acc.record("https://x.example/a", Phase::Before);
         assert_eq!(acc.finish()[0].request_count, u32::MAX);
     }
@@ -4114,7 +4132,7 @@ mod tests {
             hosts: vec![ObservedHost {
                 host: "doubleclick.net".to_string(),
                 request_count: 3,
-                phase: Phase::Before,
+                phase: Some(Phase::Before),
                 paths: Vec::new(),
             }],
             pages_visited: 4,
@@ -4185,8 +4203,8 @@ mod tests {
         acc.record("https://a.example/y", Phase::After);
         acc.record("https://b.example/", Phase::After);
         let h = acc.finish();
-        assert_eq!(h.iter().find(|x| x.host == "a.example").unwrap().phase, Phase::Before);
-        assert_eq!(h.iter().find(|x| x.host == "b.example").unwrap().phase, Phase::After);
+        assert_eq!(h.iter().find(|x| x.host == "a.example").unwrap().phase, Some(Phase::Before));
+        assert_eq!(h.iter().find(|x| x.host == "b.example").unwrap().phase, Some(Phase::After));
     }
 
     #[test]
@@ -4195,11 +4213,11 @@ mod tests {
         d.acc.record("https://pre.example/", d.phase);
         d.begin_consent_attempt();
         d.acc.record("https://during.example/", d.phase);
-        d.abandon_consent_attempt();
+        d.abandon_consent_attempt(Some(Phase::Before));
         d.acc.record("https://later.example/", d.phase);
         let hosts = std::mem::take(&mut d.acc).finish();
         assert_eq!(hosts.len(), 3);
-        assert!(hosts.iter().all(|h| h.phase == Phase::Before));
+        assert!(hosts.iter().all(|h| h.phase == Some(Phase::Before)));
     }
 
     #[tokio::test]
@@ -4256,9 +4274,9 @@ mod tests {
         d.begin_consent_attempt();
         d.acc.record("https://first-try.example/", d.phase);
         d.begin_consent_attempt();
-        d.abandon_consent_attempt();
+        d.abandon_consent_attempt(Some(Phase::Before));
         let hosts = std::mem::take(&mut d.acc).finish();
-        assert!(hosts.iter().all(|h| h.phase == Phase::Before));
+        assert!(hosts.iter().all(|h| h.phase == Some(Phase::Before)));
     }
 
     #[test]
@@ -5211,7 +5229,7 @@ mod tests {
         let forged = r#"{"type":"optInResult","cmp":"iubenda","result":true}"#;
         let popup = r#"{"type":"popupFound","cmp":"iubenda"}"#;
         let phase = |driver: &Driver<FakeTransport>, host: &str| {
-            driver.acc.counts.get(host).map(|(_, phase)| *phase)
+            driver.acc.counts.get(host).and_then(|(_, phase)| *phase)
         };
 
         // A forged "true" before Rust asked, then the engine fails: no click.
@@ -5247,12 +5265,94 @@ mod tests {
 
     #[tokio::test]
     async fn a_bridge_that_dies_during_the_opt_in_is_a_blank_not_a_failed_click() {
-        let mut driver = primed();
+        let mut driver = primed_with_cookies().await;
         driver.transport.refuse_on(EvaluateParams::IDENTIFIER, Some("SESSION-A"));
-        let (mut driver, consent) = accept_on(driver, &[POPUP], &[]).await;
+        let (driver, consent) = accept_on(driver, &[POPUP], &[]).await;
         assert!(!consent.clicked, "{consent:?}");
         assert_eq!(consent.reason, None);
-        assert_eq!(driver.observation(1, false).possible_gaps, 1);
+        assert_eq!(driver.gaps.count(), 1);
+        assert_unknown_since_the_attempt(driver).await;
+    }
+
+    // --- Task 16: no click tried, and a click nobody answered ---
+
+    const COOKIEYES: &str = r#"{"type":"popupFound","cmp":"cookieyes"}"#;
+
+    /// A driver as [`primed`], whose jar held cookie A at the first snapshot
+    /// and holds A and B at the end.
+    async fn primed_with_cookies() -> Driver<FakeTransport> {
+        let a = json!({ "name": "A", "domain": ".site.example", "session": true, "expires": -1.0 });
+        let b = json!({ "name": "B", "domain": ".ads.example", "session": false, "expires": 2e9 });
+        let mut driver = primed();
+        driver.transport.queued.insert(
+            "Storage.getCookies".into(),
+            VecDeque::from([json!({ "cookies": [a.clone()] }), json!({ "cookies": [a, b] })]),
+        );
+        driver.snapshot_before_cookies().await.expect("snapshot 1");
+        driver
+    }
+
+    /// What was seen before the attempt serialises `before`; what came during
+    /// it and after it serialises no phase at all.
+    async fn assert_unknown_since_the_attempt(mut driver: Driver<FakeTransport>) {
+        driver.acc.record("https://later.example/", driver.phase);
+        let observation = driver.finish(1, false).await.expect("finish");
+        let seen = serde_json::to_value(&observation).expect("serialises");
+        let phase = |list: &str, key: &str, name: &str| {
+            let item = seen[list].as_array().unwrap().iter().find(|i| i[key] == name).unwrap();
+            item.get("phase").cloned()
+        };
+        assert_eq!(phase("hosts", "host", "home.example"), Some(json!("before")));
+        assert_eq!(phase("hosts", "host", "after.example"), None, "{seen}");
+        assert_eq!(phase("hosts", "host", "later.example"), None, "{seen}");
+        assert_eq!(phase("cookies", "name", "A"), Some(json!("before")));
+        assert_eq!(phase("cookies", "name", "B"), None, "{seen}");
+    }
+
+    #[tokio::test]
+    async fn a_text_click_nobody_answered_is_a_blank_and_so_is_everything_after_it() {
+        let mut driver = primed_with_cookies().await;
+        driver.transport.refuse_on(EvaluateParams::IDENTIFIER, Some("SESSION-A"));
+        let (driver, consent) = accept_on(driver, &[COOKIEYES], &[]).await;
+        assert!(!consent.clicked && !consent.click_navigated, "{consent:?}");
+        assert_eq!(consent.reason, None);
+        assert_unknown_since_the_attempt(driver).await;
+    }
+
+    #[tokio::test]
+    async fn a_refused_rule_with_no_label_to_press_is_no_button_not_a_failed_click() {
+        let mut driver = primed();
+        driver.transport.results.insert(
+            EvaluateParams::IDENTIFIER.to_string(),
+            json!({"result": {"value": {"clicked": false, "label": ""}}}),
+        );
+        let (driver, consent) = accept_on(driver, &[COOKIEYES], &[]).await;
+        assert!(!consent.clicked, "{consent:?}");
+        assert_eq!(consent.cmp.as_deref(), Some("cookieyes"));
+        assert_eq!(consent.reason, Some("no-button"));
+        // The page answered that nothing was pressed: that much is known.
+        assert_eq!(driver.acc.counts.get("after.example").map(|(_, phase)| *phase), Some(Some(Phase::Before)));
+    }
+
+    #[tokio::test]
+    async fn an_opt_in_answered_false_is_a_failed_click_and_no_navigation_is_claimed() {
+        let mut driver = primed();
+        driver.transport.inject_on(
+            EvaluateParams::IDENTIFIER,
+            Some("SESSION-A"),
+            CdpJsonEventMessage {
+                method: MethodId::from(EventLoadEventFired::IDENTIFIER),
+                session_id: None,
+                params: json!({"timestamp": 1.0}),
+            },
+        );
+        let refusal = r#"{"type":"optInResult","cmp":"iubenda","result":false}"#;
+        let (driver, consent) = accept_on(driver, &[POPUP], &[refusal]).await;
+        assert!(!consent.clicked, "{consent:?}");
+        assert_eq!(consent.reason, Some("click-failed"));
+        assert!(driver.load_fired, "a page load did fire during the attempt");
+        assert!(!consent.click_navigated, "no click, so no click navigated");
+        assert_eq!(driver.acc.counts.get("after.example").map(|(_, phase)| *phase), Some(Some(Phase::Before)));
     }
 
     #[tokio::test]
@@ -5285,11 +5385,12 @@ mod tests {
         assert_eq!(consent.cmp.as_deref(), Some("cookieyes"));
         assert_eq!(consent.rule, Some(consent::ConsentRule::Text));
         assert_eq!(consent.matched_text, "accetta");
+        assert_eq!(consent.reason, None);
         let expr = consent::text_click_expr();
         let sent = driver.transport.sent.iter().find(|(_, _, p)| p["expression"].as_str() == Some(expr.as_str()));
         assert_eq!(sent.map(|(_, s, p)| (s.as_deref(), p["contextId"].as_i64())), Some((Some("SESSION-A"), Some(7))));
         assert_eq!(
-            driver.acc.counts.get("after.example").map(|(_, phase)| *phase),
+            driver.acc.counts.get("after.example").and_then(|(_, phase)| *phase),
             Some(Phase::After)
         );
     }

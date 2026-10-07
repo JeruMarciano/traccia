@@ -601,7 +601,10 @@ fn wait_for_devtools_port(
 /// scanned site's cookies on disk under a name nothing ever cleans up.
 pub fn launch(found: &Found, profile_dir: PathBuf, proxy_port: u16) -> Result<Launched, LaunchError> {
     create_profile_dir(&profile_dir)?;
-    seed_download_preferences(&profile_dir)?;
+    if let Err(e) = seed_download_preferences(&profile_dir) {
+        let _ = remove_profile_with_retry(&profile_dir);
+        return Err(e);
+    }
 
     let flags = launch_flags(&profile_dir, proxy_port);
     let mut user_data_dir_arg = std::ffi::OsString::from("--user-data-dir=");

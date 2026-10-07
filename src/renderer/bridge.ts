@@ -38,7 +38,8 @@ export async function saveProject(project: Project): Promise<boolean> {
   return invoke<boolean>('save_project', { projectJson: JSON.stringify(result.project, null, 2) })
 }
 
-// Optional so a v0.3 payload still passes; when present, only the two phases Rust ever sends.
+// Optional: a v0.3 payload has none, and Rust leaves it out when the phase is not known. When
+// present, only the two phases Rust ever sends.
 function isPhase(v: unknown): boolean {
   return v === undefined || v === 'before' || v === 'after'
 }
@@ -90,8 +91,8 @@ function isRawFormField(v: unknown): boolean {
 
 /** A CMP rule name as Rust's `known_cmp` admits it. */
 const RULE_NAME = /^[A-Za-z0-9 ._+-]{0,64}$/
-/** The longest button label a text click may record (Task 7 caps it in Rust too). */
-const MAX_MATCHED_TEXT = 128
+/** The longest button label a text click may record: Rust's `sanitise_text_click` caps it at 64. */
+const MAX_MATCHED_TEXT = 64
 
 function isScanConsent(v: unknown): boolean {
   if (typeof v !== 'object' || v === null) return false

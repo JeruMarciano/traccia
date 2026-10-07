@@ -40,10 +40,12 @@ pub struct Consent {
     pub rule_name: String,
     /// The button label a text click matched (Task 7); empty otherwise.
     pub matched_text: String,
-    /// A page load fired while the click was being made.
+    /// A page load fired while the click was being made, or the click left the URL the page
+    /// had. Never true without `clicked`.
     pub click_navigated: bool,
-    /// "no-banner" | "no-button" | "click-failed" when nothing was clicked; absent when detection
-    /// did not run to its end, or a click happened.
+    /// "no-banner" | "no-button" | "click-failed" when nothing was clicked ("click-failed" only
+    /// when a click was sent and the engine answered that it did not complete); absent when
+    /// detection did not run to its end, a click happened, or a click was sent and never answered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'static str>,
 }
