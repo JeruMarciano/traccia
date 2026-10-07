@@ -1,7 +1,7 @@
 # The scanner sees what a visitor triggers — design
 
 **Date:** 2026-09-29
-**Status:** approved 2026-09-29, not yet planned.
+**Status:** implemented and measured 2026-10-07; results in `docs/decisions/2026-10-07-scanner-upgrade-measurement.md`.
 **Builds on:** `docs/decisions/2026-09-29-scanner-baseline.md` (the numbers this is judged
 against), `docs/decisions/2026-09-29-scanner-prior-art.md` (what is copied, ported or only learned
 from), §5 of `2026-08-03-extraction-depth-design.md` (the captures this extends).
