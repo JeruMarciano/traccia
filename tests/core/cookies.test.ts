@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { bucketLifetime, cookieOwnerName, isThirdPartyCookie } from '../../src/core/cookies'
+import { bucketLifetime, cookieOwnerName, cookiePlatform, isThirdPartyCookie } from '../../src/core/cookies'
+import type { CookiePlatformRow } from '../../src/core/types'
 
 describe('bucketLifetime', () => {
   const at = 1_754_000_000
@@ -34,4 +35,26 @@ describe('cookieOwnerName', () => {
     expect(cookieOwnerName('google-analytics.com', dict)).toBe('Google Analytics'))
   it('an unrecognised domain attaches to nothing, and is not dropped by the caller', () =>
     expect(cookieOwnerName('cdn.example-widget.com', dict)).toBe(null))
+})
+
+describe('cookiePlatform', () => {
+  const T: CookiePlatformRow[] = [['_hjSession_', 'Hotjar', 'Analytics', 1], ['session', 'Generic', 'Functional', 0],
+    ['id', 'DoubleClick', 'Marketing', 0], ['_fbp', 'Meta', 'Marketing', 0],
+    ['_ga', 'Google Analytics', 'Analytics', 0], ['ab', 'Short', 'Marketing', 1]]
+  it('a wildcard row matches only its own prefix, and only from 4 characters', () => {
+    expect(cookiePlatform('_hjSession_12345', T)?.platform).toBe('Hotjar')
+    expect(cookiePlatform('x_hjSession_1', T)).toBeNull()
+    expect(cookiePlatform('abcdef', T)).toBeNull() // wildcard prefix 'ab' is under 4
+  })
+  it('generic names are never matched', () => {
+    expect(cookiePlatform('session', T)).toBeNull() // stoplist
+    expect(cookiePlatform('id', T)).toBeNull() // exact names need 3+ characters
+  })
+  it('a known name matches exactly, from 3 characters', () => {
+    expect(cookiePlatform('_fbp', T)?.platform).toBe('Meta')
+    expect(cookiePlatform('_ga', T)?.platform).toBe('Google Analytics')
+  })
+  it('a name two platforms claim is not matched: a blank beats a guess', () => {
+    expect(cookiePlatform('_fbp', [...T, ['_fbp', 'Other', 'Marketing', 0]])).toBeNull()
+  })
 })

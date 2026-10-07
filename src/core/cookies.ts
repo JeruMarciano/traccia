@@ -1,6 +1,6 @@
 import { displayName, isSameSite } from './scan'
 import { identify } from './vendors'
-import type { CookieLifetime, RawScanCookie, VendorDictionary } from './types'
+import type { CookieLifetime, CookiePlatformRow, RawScanCookie, VendorDictionary } from './types'
 
 const SECONDS_PER_DAY = 86_400
 const SECONDS_PER_YEAR = 31_536_000
@@ -42,4 +42,35 @@ export function isThirdPartyCookie(cookieDomain: string, scannedHost: string): b
 export function cookieOwnerName(cookieDomain: string, dictionary: VendorDictionary): string | null {
   const hit = identify(cookieDomain, dictionary)
   return hit === null ? null : displayName(cookieDomain, dictionary)
+}
+
+/** Names too common to say anything about who set them, refused even when a row lists them. */
+const GENERIC_COOKIE_NAMES = new Set(['session', 'sessionid', 'token', 'lang', 'language', 'csrftoken', 'test'])
+
+/**
+ * The platform the Open Cookie Database names for a cookie, or null. A blank beats a guess, so:
+ * an exact name needs 3+ characters and a wildcard row's prefix 4+ (decided with the user: `_ga`
+ * matches); a wildcard row matches only a name that starts with its own prefix; a short fixed
+ * stoplist of generic names is refused; and a name that two platforms claim is not matched at all.
+ * An exact row beats a wildcard one; among wildcards the longest prefix wins.
+ */
+export function cookiePlatform(
+  name: string,
+  table: readonly CookiePlatformRow[],
+): { platform: string; category: string } | null {
+  if (GENERIC_COOKIE_NAMES.has(name.toLowerCase())) return null
+  let best: { length: number; exact: boolean; rows: CookiePlatformRow[] } | null = null
+  for (const row of table) {
+    const [rowName, , , wildcard] = row
+    const exact = wildcard === 0
+    if (exact ? rowName !== name || rowName.length < 3 : !name.startsWith(rowName) || rowName.length < 4) continue
+    if (best === null || (exact && !best.exact) || (!exact && !best.exact && rowName.length > best.length)) {
+      best = { length: rowName.length, exact, rows: [row] }
+    } else if (exact === best.exact && rowName.length === best.length) {
+      best.rows.push(row)
+    }
+  }
+  if (best === null || new Set(best.rows.map((r) => r[1])).size !== 1) return null
+  const [, platform, category] = best.rows[0]!
+  return platform === '' ? null : { platform, category }
 }
