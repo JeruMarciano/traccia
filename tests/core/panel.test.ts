@@ -134,7 +134,7 @@ describe('panelFor a door', () => {
     if (d?.sort !== 'door') throw new Error('expected a door panel')
     expect(d.origin).toBe('discovered')
     expect(d.fields).toEqual(['email', 'nome', 'messaggio'])
-    expect(d.whoComesThrough).toEqual([])
+    expect(d.whoComesThrough).toEqual(['Website visitors'])
   })
 
   it('names the people who come through a declared door', () => {

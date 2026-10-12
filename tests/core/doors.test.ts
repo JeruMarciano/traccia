@@ -4,6 +4,7 @@ import { ingestScan } from '../../src/core/scan'
 import type { RawFormField, ScanResult, VendorDictionary } from '../../src/core/types'
 import { rossiEditore } from '../fixtures/rossiEditore'
 import { emptyProject } from '../fixtures/projects'
+import { scanLike } from '../fixtures/dorsale'
 
 describe('deriveDoors', () => {
   it('finds a door for every collection place and every collection point', () => {
@@ -89,11 +90,11 @@ describe('tracePaths', () => {
     expect(paths().find((p) => p.doorId === 'place:pl-3')?.subjectIds).toEqual(['sg-1'])
   })
 
-  it('leaves a discovered door with no flows empty rather than absent', () => {
+  it('gives a discovered door with no flows no destination, and the site’s visitors', () => {
     const cp = paths().find((p) => p.doorId === 'cp:cp-1')
     expect(cp).toBeDefined()
     expect(cp?.destinationIds).toEqual([])
-    expect(cp?.subjectIds).toEqual([])
+    expect(cp?.subjectIds).toEqual(['sg-2'])
   })
 
   it('does not walk a second hop', () => {
@@ -131,6 +132,29 @@ describe('tracePaths', () => {
     const p = rossiEditore()
     const traced = tracePaths(p, deriveDoors(p))
     expect(traced.every((t) => t.subjectIds.every((id) => id.startsWith('sg-')))).toBe(true)
+  })
+
+  it('brings website visitors through every door the scan found', () => {
+    const p = scanLike(['form', 'chat'])
+    const traced = tracePaths(p, deriveDoors(p))
+    expect(traced.map((t) => [t.doorId, t.subjectIds])).toEqual([
+      ['place:pl-1', ['sg-1']],
+      ['cp:cp-1', ['sg-1']],
+      ['cp:cp-2', ['sg-1']],
+    ])
+  })
+
+  it('invents nobody when the project has no website visitors', () => {
+    const p = scanLike(['form'])
+    p.subjectGroups = [{ id: 'sg-1', name: 'Customers' }]
+    expect(tracePaths(p, deriveDoors(p)).find((t) => t.doorId === 'cp:cp-1')?.subjectIds).toEqual([])
+  })
+
+  it('gives a declared door only the people its own flows name', () => {
+    // The wrong answer: the paper form at the front desk is given website visitors.
+    const p = rossiEditore()
+    p.flows = p.flows.filter((f) => f.to !== 'pl-3')
+    expect(tracePaths(p, deriveDoors(p)).find((t) => t.doorId === 'place:pl-3')?.subjectIds).toEqual([])
   })
 })
 

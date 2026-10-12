@@ -24,7 +24,7 @@ export interface IngestIds {
  *  has to recognise it: it is a placeholder, not an answer, and must never render as a fact. */
 export const NOT_IDENTIFIED = 'Not yet identified'
 
-const VISITORS = 'Website visitors'
+export const VISITORS = 'Website visitors'
 
 /**
  * A recognised host becomes a place named "<owner> <category>", e.g. "Google
