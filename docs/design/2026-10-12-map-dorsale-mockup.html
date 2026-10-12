@@ -1,0 +1,305 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Traccia, mappa: tre direzioni</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jost:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: one working sheet. A sticky case switch on top, then four figures drawn from the
+   same three real scans: today's map, then directions A, B, C. Identity is Lettera's, as approved. */
+:root{
+  --paper:#E4E7E1; --lift:#EDEFEA; --ink:#191B19; --soft:#5F665F; --rule:#C2C8C0;
+  --person:#2648C8; --internal:#1F6F4A; --external:#B4791A;
+  --d0:#2648C8; --d1:#1F6F4A; --d2:#B4791A; --d3:#7A3E9D; --d4:#0F7C8C; --d5:#A33C5B;
+  --sans:"Jost","Avenir Next",Avenir,Futura,"Century Gothic","Segoe UI",system-ui,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --paper:#1B1E1B; --lift:#242824; --ink:#E7EAE4; --soft:#9AA39A; --rule:#3A403A;
+  --person:#7D97F0; --internal:#5CB887; --external:#D9A14A;
+  --d0:#7D97F0; --d1:#5CB887; --d2:#D9A14A; --d3:#B58AD6; --d4:#4FB6C6; --d5:#D97A99; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --paper:#1B1E1B; --lift:#242824; --ink:#E7EAE4; --soft:#9AA39A; --rule:#3A403A;
+  --person:#7D97F0; --internal:#5CB887; --external:#D9A14A;
+  --d0:#7D97F0; --d1:#5CB887; --d2:#D9A14A; --d3:#B58AD6; --d4:#4FB6C6; --d5:#D97A99; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.5;margin:0}
+.wrap{max-width:1120px;margin:0 auto;padding-inline:20px;padding-block:28px 64px;display:flex;flex-direction:column;gap:44px}
+h1{font-size:30px;font-weight:500;line-height:1.15;margin:0 0 8px;text-wrap:balance}
+h2{font-size:22px;font-weight:500;line-height:1.2;margin:0 0 6px;text-wrap:balance}
+h3{font-size:15px;font-weight:600;margin:0 0 4px}
+p{margin:0;max-width:68ch}
+.lede{color:var(--soft);font-size:17px}
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:2;background:var(--paper);border-bottom:1px solid var(--rule);padding-block:10px;display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button,.tog{font:inherit;font-size:14px;color:var(--ink);background:transparent;border:1px solid var(--ink);border-radius:999px;padding:5px 14px;cursor:pointer}
+.seg button[aria-pressed="true"],.tog[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.seg button:focus-visible,.tog:focus-visible,.hit:focus-visible{outline:2px solid var(--person);outline-offset:2px}
+.facts{font-family:var(--mono);font-size:12px;color:var(--soft)}
+section{display:flex;flex-direction:column;gap:14px}
+.fig{background:var(--lift);border:1px solid var(--rule);border-radius:4px;overflow-x:auto}
+.fig svg{display:block;min-width:820px;width:100%;height:auto}
+figure{margin:0;display:flex;flex-direction:column;gap:8px}
+figcaption{font-size:13.5px;color:var(--soft);max-width:80ch}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px 32px}
+.cols>div{min-width:0}
+ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;max-width:70ch}
+li b{font-weight:600}
+.breaks{color:var(--soft)}
+.tag{display:inline-block;font-size:12.5px;border:1px solid var(--ink);border-radius:999px;padding:1px 10px;margin-left:8px;vertical-align:3px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+.tw{overflow-x:auto}
+th{text-align:left;font-weight:600;font-size:13px;padding:8px 14px 8px 0;border-bottom:1px solid var(--ink);white-space:nowrap}
+td{padding:9px 14px 9px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+.reg{min-width:760px;background:var(--lift);border:1px solid var(--rule);border-radius:4px}
+.reg th,.reg td{padding-left:14px}
+.reg .sub td{border-bottom:0;padding-block:3px;font-size:13px;color:var(--soft)}
+.reg .hitrow{cursor:pointer}
+.chip{display:inline-flex;align-items:center;gap:6px;margin:0 12px 4px 0;white-space:nowrap}
+.ring{width:13px;height:13px;border-radius:50%;border:2px solid var(--external);flex:none}
+.ring.un{border-style:dashed}
+.door{display:inline-block;width:7px;height:16px;vertical-align:-3px;margin-right:8px}
+.softt{color:var(--soft)}
+svg text{font-family:var(--sans);fill:var(--ink)}
+svg .soft{fill:var(--soft)}
+svg .mono{font-family:var(--mono)}
+.hit{cursor:pointer}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>La mappa di Traccia: perché oggi non si legge, e tre modi di ridisegnarla</h1>
+  <p class="lede">Ogni figura qui sotto è disegnata sugli stessi tre siti reali del banco di prova (nomi dei siti cambiati, fornitori veri). Cambia caso con i pulsanti: tutte le figure si aggiornano insieme.</p>
+</header>
+
+<div class="bar">
+  <div class="seg" id="cases"></div>
+  <button class="tog" id="tg" aria-pressed="false">Apri il gruppo più grande</button>
+  <button class="tog" id="td" aria-pressed="false">Apri le porte raggruppate</button>
+  <span class="facts" id="facts"></span>
+</div>
+
+<section>
+  <h2>Oggi</h2>
+  <figure>
+    <div class="fig" id="now"></div>
+    <figcaption>La mappa attuale, ridisegnata dai numeri che <span class="mono">computeLayout</span> produce davvero per questo sito (foglio 800 × 500, come nell'app).</figcaption>
+  </figure>
+  <div class="cols">
+    <div><h3>Cosa non si legge</h3>
+      <ul>
+        <li><b>Le porte si scrivono una sull'altra.</b> Ogni porta ha bisogno di circa 40 unità in altezza (segno, nome, riga «discovered by the scan») e ne riceve 31. Il nome è centrato sotto il segno ed è un indirizzo intero, largo fino a cinque volte la colonna.</li>
+        <li><b>Quasi nessuna porta ha una linea.</b> Nel caso brutto 12 porte su 15 sono form senza alcun collegamento: né da chi entra, né verso dove va il dato. Restano segni sospesi.</li>
+        <li><b>Il colore non distingue niente.</b> Tutto quello che esce a destra parte da una sola porta (il sito), quindi tutte le linee hanno lo stesso blu.</li>
+      </ul></div>
+    <div><h3>Perché</h3>
+      <ul>
+        <li><b>Il disegno era dimensionato sul problema opposto.</b> Lettera prevedeva circa 12 gruppi a destra e poche porte. Le 55 scansioni reali danno da 1 a 5 gruppi e fino a 19 porte: 26 siti su 55 superano il tetto di 8.</li>
+        <li><b>Una porta per pagina è l'unità sbagliata.</b> Dodici pagine prodotto con lo stesso modulo sono dodici porte.</li>
+        <li><b>A destra succede troppo poco.</b> 41 luoghi stanno in 5 anelli; aprendo il più grande se ne vedono 5 su 17. Il foglio resta vuoto per metà.</li>
+      </ul></div>
+  </div>
+</section>
+
+<section>
+  <h2>Tre scelte che valgono per tutte le direzioni</h2>
+  <ul>
+    <li><b>Tre o più porte dello stesso tipo diventano una riga sola</b> («Forms on 12 pages»), che si apre sul posto come i gruppi a destra. <span class="breaks">Si rompe quando: ci sono due porte per ognuno dei cinque tipi, più il sito. Sono 11 righe, che il foglio regge. Il tetto di 8 porte e il suo «+N more» non servono più; resta un tetto di 6 dentro una riga aperta.</span></li>
+    <li><b>Un form si chiama col percorso della pagina, non con l'indirizzo intero</b> («/contatti/», «Home page»); i percorsi lunghi si accorciano al centro. <span class="breaks">Si rompe quando: due pagine hanno inizio e fine uguali. Il nome intero resta nel pannello e nel suggerimento al passaggio del mouse.</span></li>
+    <li><b>«Discovered by the scan» esce dalla mappa</b> e resta nel pannello della porta. Scritto otto volte non informa, occupa una riga a porta. <span class="breaks">Si rompe quando: un progetto mescola porte dichiarate in un documento e porte scoperte. In quel caso la differenza va nel segno (pieno o solo contorno), non in una scritta.</span></li>
+  </ul>
+</section>
+
+<section>
+  <h2>A. Colonne <span class="tag">la più vicina a Lettera</span></h2>
+  <p>Righe a sinistra e a destra, il nome accanto al segno e sopra la propria linea, l'organizzazione resta un punto al centro dove tutto converge e da cui tutto riparte.</p>
+  <figure><div class="fig" id="A"></div>
+  <figcaption>Si legge bene chi entra e da dove. Al centro le linee si stringono in un punto: per sapere quale porta porta a quale destinazione bisogna fidarsi del colore.</figcaption></figure>
+  <ul>
+    <li><b>Ogni porta è una riga con la sua linea sotto il nome.</b> <span class="breaks">Si rompe quando: il nome supera 34 caratteri. Si accorcia al centro.</span></li>
+    <li><b>Le linee escono dall'organizzazione sfalsate del 6%.</b> <span class="breaks">Si rompe quando: due porte arrivano alla stessa destinazione. Le due linee corrono a 3 unità una dall'altra e vicino al centro si toccano.</span></li>
+    <li><b>Costo:</b> <span class="mono">computeLayout</span> riscritto (righe sui due lati, raggruppamento delle porte); i test di geometria di <span class="mono">layout.test.ts</span> quasi tutti da rifare, quelli di <span class="mono">mapView</span> per metà. È il lavoro già previsto da Lettera più il lato sinistro.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>B. Dorsale <span class="tag">la mia raccomandazione</span></h2>
+  <p>L'organizzazione non è più un punto ma una barra verticale. Ogni porta la attraversa alla propria altezza e prosegue verso le sue destinazioni: la linea non si interrompe mai, dal visitatore al fornitore.</p>
+  <figure><div class="fig" id="B"></div>
+  <figcaption>Un form che non porta da nessuna parte si ferma visibilmente alla barra. Una destinazione che nessuna porta raggiunge parte dalla barra con una linea grigia.</figcaption></figure>
+  <ul>
+    <li><b>Una porta entra nella barra alla sua altezza ed esce da lì.</b> <span class="breaks">Si rompe quando: una porta bassa a sinistra va a una destinazione alta a destra. La sua linea incrocia quelle delle altre; restano distinguibili per colore e, in stampa, per tratteggio.</span></li>
+    <li><b>Una porta con molte destinazioni esce da punti vicini, 5 unità uno dall'altro.</b> <span class="breaks">Si rompe quando: il sito raggiunge più di 7 righe. Il ventaglio si allarga oltre l'altezza della riga accanto: le righe delle porte si distanziano di conseguenza.</span></li>
+    <li><b>La barra è alta quanto il disegno e porta in cima il nome dell'organizzazione.</b> <span class="breaks">Si rompe quando: nessun documento la nomina. Si scrive «Your organisation», come oggi.</span></li>
+    <li><b>Costo:</b> come A, più un dato nuovo nel risultato del layout (il punto in cui ogni linea tocca la barra) e il disegno della barra. Stimo un 15% in più di A.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>C. Registro <span class="tag">nessuna linea</span></h2>
+  <p>Una riga per porta, quattro colonne: chi entra, da dove, cosa gli viene chiesto, dove va. Niente può accavallarsi perché non c'è niente che attraversa.</p>
+  <figure><div class="tw" id="Cc"></div>
+  <figcaption>È la più leggibile riga per riga e la più facile da stampare. Non è più una mappa: non si vede a colpo d'occhio che Marketing riceve da due porte, né quanto pesa un fornitore.</figcaption></figure>
+  <ul>
+    <li><b>Ogni destinazione è ripetuta nelle righe che la raggiungono.</b> <span class="breaks">Si rompe quando: si vuole la lettura inversa («chi manda dati a Google?»). Bisogna scorrere tutte le righe.</span></li>
+    <li><b>Costo:</b> il più alto. La mappa SVG e <span class="mono">computeLayout</span> vengono sostituiti; entrambi i file di test si riscrivono; la notazione di Lettera (anelli, quota tratteggiata) si riduce a un'icona.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>A confronto</h2>
+  <div class="tw"><table>
+    <tr><th></th><th>A. Colonne</th><th>B. Dorsale</th><th>C. Registro</th></tr>
+    <tr><td>Etichette che si accavallano</td><td>No</td><td>No</td><td>No</td></tr>
+    <tr><td>Si segue un dato da chi entra a dove va</td><td>Solo col colore</td><td>Sì, la linea è continua</td><td>Sì, leggendo la riga</td></tr>
+    <tr><td>Si vede chi riceve da più porte</td><td>Sì</td><td>Sì</td><td>No</td></tr>
+    <tr><td>Stampa in bianco e nero</td><td>Regge col tratteggio</td><td>Regge col tratteggio</td><td>Regge sempre</td></tr>
+    <tr><td>Resta la mappa di Lettera</td><td>Sì</td><td>Sì, cambia il centro</td><td>No</td></tr>
+    <tr><td>Lavoro</td><td>Base</td><td>Base + 15% circa</td><td>Il più alto</td></tr>
+  </table></div>
+  <p>Raccomando <b>B</b>. Il tuo problema è «non restituisce un chiaro flusso del dato»: A ripulisce le etichette ma lascia il flusso spezzato in due al centro, C lo scrive invece di disegnarlo. B è l'unica in cui la linea di una porta è una sola dall'inizio alla fine.</p>
+</section>
+</div>
+
+<script>
+const DATA = {"15":{"site":"frantoio-esempio.example","subjects":["Website visitors"],"doors":[{"label":"frantoio-esempio.example","kind":"site","pages":1,"fields":[],"who":1,"to":["hCaptcha Captcha","Google Ads","HubSpot CRM","Stripe Payments","b.stripecdn.com","Microsoft Ads","Microsoft Analytics","Brevo Email Marketing","cdn.by.wonderpush.com","Iubenda Consent","jsDelivr CDN","Trustindex Reviews","Mailchimp Email Marketing","Meta Ads","f.hubspotusercontent-eu1.net","Google Fonts","forms-eu1.hscollectedforms.net","HubSpot Forms","Meta Social","Google Video","Google Infrastructure","HubSpot Analytics","js-eu1.hs-banner.com","js-eu1.hscollectedforms.net","js-eu1.usemessages.com","Google CDN","measurements-api.wonderpush.com","ogads-pa.clients6.google.com","play.google.com","Google Analytics","WordPress.org CDN","Meta CDN","sendcloud-checkout-static-data.sendcloud.sc","servicepoints.sendcloud.sc","static.hsappstatic.net","www.google.com","Google Captcha","www.googleoptimize.com","Google Tag Manager","PayPal Payments"]},{"label":"https://frantoio-esempio.example/","kind":"form","pages":1,"fields":["email","free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/contatti/","kind":"form","pages":1,"fields":["name","email","phone","free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/account/","kind":"form","pages":1,"fields":["email","free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/prodotti/olio-verdi-extravergine-italiano-6-litri/","kind":"form","pages":1,"fields":["free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/prodotti/20-litri-olio-extravergine-formula-verdi-classico/","kind":"form","pages":1,"fields":["free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/prodotti/kit-2x-olio-extravergine-doliva-100-italiano-lattina-5-litri/","kind":"form","pages":1,"fields":["free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/prodotti/olio-extravergine-oliva-italiano-puglia-lattina-3-litri/","kind":"form","pages":1,"fields":["free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/prodotti/kit-2x-lattine-5-litri-olio-extravergine-oliva-classico-biologico/","kind":"form","pages":1,"fields":["free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/prodotti/olio-extravergine-oliva-puglia-lattina-5-litri/","kind":"form","pages":1,"fields":["free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/prodotti/kit-4x-lattine-5-litri-olio-extravergine-doliva-biologico/","kind":"form","pages":1,"fields":["free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/prodotti/olio-extravergine-oliva-biologico-100-italiano-6litri/","kind":"form","pages":1,"fields":["free-text"],"who":0,"to":[]},{"label":"https://frantoio-esempio.example/prodotti/kit-olio-evo-bio-2-lattine-5l/","kind":"form","pages":1,"fields":["free-text"],"who":0,"to":[]},{"label":"Embed on Stripe Payments","kind":"embed","pages":10,"fields":[],"who":0,"to":["Stripe Payments"]},{"label":"Embed on Google Video","kind":"embed","pages":4,"fields":[],"who":0,"to":["Google Video"]}],"groups":[{"name":"Marketing","members":[{"name":"Google Ads","kind":"processor"},{"name":"Microsoft Ads","kind":"processor"},{"name":"Microsoft Analytics","kind":"processor"},{"name":"Brevo Email Marketing","kind":"processor"},{"name":"Trustindex Reviews","kind":"processor"},{"name":"Mailchimp Email Marketing","kind":"processor"},{"name":"Meta Ads","kind":"processor"},{"name":"forms-eu1.hscollectedforms.net","kind":"unknown"},{"name":"HubSpot Forms","kind":"processor"},{"name":"Meta Social","kind":"processor"},{"name":"HubSpot Analytics","kind":"processor"},{"name":"js-eu1.hs-banner.com","kind":"unknown"},{"name":"js-eu1.hscollectedforms.net","kind":"unknown"},{"name":"measurements-api.wonderpush.com","kind":"unknown"},{"name":"ogads-pa.clients6.google.com","kind":"unknown"},{"name":"Google Analytics","kind":"processor"},{"name":"Google Tag Manager","kind":"processor"}]},{"name":"Not yet identified","members":[{"name":"f.hubspotusercontent-eu1.net","kind":"unknown"},{"name":"play.google.com","kind":"unknown"},{"name":"www.google.com","kind":"unknown"},{"name":"www.googleoptimize.com","kind":"unknown"}]},{"name":"Payments","members":[{"name":"Stripe Payments","kind":"processor"},{"name":"sendcloud-checkout-static-data.sendcloud.sc","kind":"unknown"},{"name":"PayPal Payments","kind":"processor"}]},{"name":"Sales","members":[{"name":"HubSpot CRM","kind":"processor"}]},{"name":"Systems","members":[{"name":"hCaptcha Captcha","kind":"processor"},{"name":"b.stripecdn.com","kind":"unknown"},{"name":"cdn.by.wonderpush.com","kind":"unknown"},{"name":"Iubenda Consent","kind":"processor"},{"name":"jsDelivr CDN","kind":"processor"},{"name":"Google Fonts","kind":"processor"},{"name":"Google Video","kind":"processor"},{"name":"Google Infrastructure","kind":"processor"},{"name":"js-eu1.usemessages.com","kind":"unknown"},{"name":"Google CDN","kind":"processor"},{"name":"WordPress.org CDN","kind":"processor"},{"name":"Meta CDN","kind":"processor"},{"name":"servicepoints.sendcloud.sc","kind":"unknown"},{"name":"static.hsappstatic.net","kind":"unknown"},{"name":"Google Captcha","kind":"processor"}]}],"now":{"nodes":[{"id":"scan1-sg-1","k":"subject","l":"Website visitors","x":56,"y":250},{"id":"door:place:scan1-pl-1","k":"door","l":"frantoio-esempio.example","x":168,"y":140,"ci":0},{"id":"door:cp:scan1-cp-1","k":"door","l":"https://frantoio-esempio.example/","x":168,"y":171.43,"ci":1},{"id":"door:cp:scan1-cp-2","k":"door","l":"https://frantoio-esempio.example/contatti/","x":168,"y":202.86,"ci":2},{"id":"door:cp:scan1-cp-3","k":"door","l":"https://frantoio-esempio.example/account/","x":168,"y":234.29,"ci":3},{"id":"door:cp:scan1-cp-4","k":"door","l":"https://frantoio-esempio.example/prodotti/olio-verdi-extravergine-italiano-6-litri/","x":168,"y":265.71,"ci":4},{"id":"door:cp:scan1-cp-5","k":"door","l":"https://frantoio-esempio.example/prodotti/20-litri-olio-extravergine-formula-verdi-classico/","x":168,"y":297.14,"ci":5},{"id":"door:cp:scan1-cp-6","k":"door","l":"https://frantoio-esempio.example/prodotti/kit-2x-olio-extravergine-doliva-100-italiano-lattina-5-litri/","x":168,"y":328.57,"ci":0},{"id":"more:doors","k":"more","l":"+8 more","x":168,"y":360,"c":8},{"id":"controller","k":"controller","l":"","x":336,"y":250,"c":41},{"id":"group:Marketing","k":"group","l":"Marketing","x":303.35,"y":77.66,"c":17,"u":5},{"id":"group:Not yet identified","k":"group","l":"Not yet identified","x":456.84,"y":115.94,"c":4,"u":4},{"id":"group:Payments","k":"group","l":"Payments","x":524,"y":250,"c":3,"u":1},{"id":"group:Sales","k":"group","l":"Sales","x":456.84,"y":384.06,"c":1,"u":0},{"id":"group:Systems","k":"group","l":"Systems","x":303.35,"y":422.34,"c":15,"u":5}],"edges":[["scan1-sg-1","door:place:scan1-pl-1",0],["door:place:scan1-pl-1","controller",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Sales",0],["controller","group:Payments",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Marketing",0],["controller","group:Marketing",0],["controller","group:Systems",0],["controller","group:Systems",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Marketing",0],["controller","group:Marketing",0],["controller","group:Not yet identified",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Marketing",0],["controller","group:Marketing",0],["controller","group:Systems",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Marketing",0],["controller","group:Marketing",0],["controller","group:Systems",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Marketing",0],["controller","group:Not yet identified",0],["controller","group:Marketing",0],["controller","group:Systems",0],["controller","group:Systems",0],["controller","group:Payments",0],["controller","group:Systems",0],["controller","group:Systems",0],["controller","group:Not yet identified",0],["controller","group:Systems",0],["controller","group:Not yet identified",0],["controller","group:Marketing",0],["controller","group:Payments",0],["more:doors","controller",-1],["controller","group:Payments",1],["controller","group:Systems",2]]}},"20":{"site":"ristorante-esempio.example","subjects":["Website visitors"],"doors":[{"label":"ristorante-esempio.example","kind":"site","pages":1,"fields":[],"who":1,"to":["app.legalblink.it","cdn.reservation.dish.co","Google Fonts","Google Maps","Google Ads","play.google.com","Google Analytics","reservation.dish.co","Google Tag Manager"]},{"label":"Embed on Google Maps","kind":"embed","pages":1,"fields":[],"who":0,"to":["Google Maps"]}],"groups":[{"name":"Marketing","members":[{"name":"Google Ads","kind":"processor"},{"name":"Google Analytics","kind":"processor"},{"name":"Google Tag Manager","kind":"processor"}]},{"name":"Not yet identified","members":[{"name":"app.legalblink.it","kind":"unknown"},{"name":"play.google.com","kind":"unknown"},{"name":"reservation.dish.co","kind":"unknown"}]},{"name":"Systems","members":[{"name":"cdn.reservation.dish.co","kind":"unknown"},{"name":"Google Fonts","kind":"processor"},{"name":"Google Maps","kind":"processor"}]}],"now":{"nodes":[{"id":"scan1-sg-1","k":"subject","l":"Website visitors","x":56,"y":250},{"id":"door:place:scan1-pl-1","k":"door","l":"ristorante-esempio.example","x":168,"y":140,"ci":0},{"id":"door:cp:scan1-cp-1","k":"door","l":"Embed on Google Maps","x":168,"y":360,"ci":1},{"id":"controller","k":"controller","l":"","x":336,"y":250,"c":10},{"id":"group:Marketing","k":"group","l":"Marketing","x":303.35,"y":77.66,"c":3,"u":0},{"id":"group:Not yet identified","k":"group","l":"Not yet identified","x":524,"y":250,"c":3,"u":3},{"id":"group:Systems","k":"group","l":"Systems","x":303.35,"y":422.34,"c":3,"u":1}],"edges":[["scan1-sg-1","door:place:scan1-pl-1",0],["door:place:scan1-pl-1","controller",0],["controller","group:Not yet identified",0],["controller","group:Systems",0],["controller","group:Systems",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Not yet identified",0],["controller","group:Marketing",0],["controller","group:Not yet identified",0],["controller","group:Marketing",0],["door:cp:scan1-cp-1","controller",1],["controller","group:Systems",1]]}},"43":{"site":"agenzia-esempio.example","subjects":["Website visitors"],"doors":[{"label":"agenzia-esempio.example","kind":"site","pages":1,"fields":[],"who":1,"to":["OpenStreetMap Foundation Maps","Cloudflare CDN","OpenJS Foundation CDN","Meta Ads","Google Fonts","ogads-pa.clients6.google.com","play.google.com","Google Analytics","Meta CDN","Google Ads","Font Awesome Fonts","Meta Social","Google Tag Manager"]},{"label":"https://agenzia-esempio.example/","kind":"form","pages":1,"fields":["free-text","address"],"who":0,"to":[]},{"label":"https://agenzia-esempio.example/index.php/contattaci","kind":"form","pages":1,"fields":["free-text","name","email"],"who":0,"to":[]},{"label":"https://agenzia-esempio.example/index.php/contattaci/3","kind":"form","pages":1,"fields":["free-text","name","email"],"who":0,"to":[]},{"label":"https://agenzia-esempio.example/index.php/contattaci/2","kind":"form","pages":1,"fields":["free-text","name","email"],"who":0,"to":[]},{"label":"https://agenzia-esempio.example/index.php/contattaci/1","kind":"form","pages":1,"fields":["free-text","name","email"],"who":0,"to":[]},{"label":"https://agenzia-esempio.example/index.php/chi-siamo-agenzia","kind":"form","pages":1,"fields":["free-text","address"],"who":0,"to":[]}],"groups":[{"name":"Marketing","members":[{"name":"Meta Ads","kind":"processor"},{"name":"ogads-pa.clients6.google.com","kind":"unknown"},{"name":"Google Analytics","kind":"processor"},{"name":"Google Ads","kind":"processor"},{"name":"Meta Social","kind":"processor"},{"name":"Google Tag Manager","kind":"processor"}]},{"name":"Not yet identified","members":[{"name":"play.google.com","kind":"unknown"}]},{"name":"Systems","members":[{"name":"OpenStreetMap Foundation Maps","kind":"processor"},{"name":"Cloudflare CDN","kind":"processor"},{"name":"OpenJS Foundation CDN","kind":"processor"},{"name":"Google Fonts","kind":"processor"},{"name":"Meta CDN","kind":"processor"},{"name":"Font Awesome Fonts","kind":"processor"}]}],"now":{"nodes":[{"id":"scan1-sg-1","k":"subject","l":"Website visitors","x":56,"y":250},{"id":"door:place:scan1-pl-1","k":"door","l":"agenzia-esempio.example","x":168,"y":140,"ci":0},{"id":"door:cp:scan1-cp-1","k":"door","l":"https://agenzia-esempio.example/","x":168,"y":176.67,"ci":1},{"id":"door:cp:scan1-cp-2","k":"door","l":"https://agenzia-esempio.example/index.php/contattaci","x":168,"y":213.33,"ci":2},{"id":"door:cp:scan1-cp-3","k":"door","l":"https://agenzia-esempio.example/index.php/contattaci/3","x":168,"y":250,"ci":3},{"id":"door:cp:scan1-cp-4","k":"door","l":"https://agenzia-esempio.example/index.php/contattaci/2","x":168,"y":286.67,"ci":4},{"id":"door:cp:scan1-cp-5","k":"door","l":"https://agenzia-esempio.example/index.php/contattaci/1","x":168,"y":323.33,"ci":5},{"id":"door:cp:scan1-cp-6","k":"door","l":"https://agenzia-esempio.example/index.php/chi-siamo-agenzia","x":168,"y":360,"ci":0},{"id":"controller","k":"controller","l":"","x":336,"y":250,"c":14},{"id":"group:Marketing","k":"group","l":"Marketing","x":303.35,"y":77.66,"c":6,"u":1},{"id":"group:Not yet identified","k":"group","l":"Not yet identified","x":524,"y":250,"c":1,"u":1},{"id":"group:Systems","k":"group","l":"Systems","x":303.35,"y":422.34,"c":6,"u":0}],"edges":[["scan1-sg-1","door:place:scan1-pl-1",0],["door:place:scan1-pl-1","controller",0],["controller","group:Systems",0],["controller","group:Systems",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Not yet identified",0],["controller","group:Marketing",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Systems",0],["controller","group:Marketing",0],["controller","group:Marketing",0]]}}};
+const ORDER = [['20','Piccolo: ristorante'],['43','Medio: agenzia immobiliare'],['15','Brutto: frantoio con negozio']];
+const KIND = {form:n=>`Forms on ${n} pages`,newsletter:n=>`Newsletters (${n})`,booking:n=>`Bookings (${n})`,chat:n=>`Chats (${n})`,embed:n=>`Embedded content (${n})`};
+const st = {k:'15',g:false,d:false};
+const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const uniq = a => [...new Set(a)];
+const mid = (s,n=34) => s.length<=n ? s : s.slice(0,Math.ceil(n/2)-1)+'…'+s.slice(-(Math.floor(n/2)));
+const col = i => `var(--d${i%6})`;
+const DASH = ['','6 3','2 3','8 3 2 3','1 4','10 4'];
+function lab(d,c){ if(d.kind!=='form') return d.label; const p=d.label.replace(/^https?:\/\/[^/]+/,''); return p===''||p==='/'?'Home page':mid(p) }
+
+function doorRows(c){
+  const rows=[]; let ci=0;
+  c.doors.filter(d=>d.kind==='site').forEach(d=>rows.push({label:d.label,to:d.to,ci:ci++,kind:'site',fields:[]}));
+  for(const k of ['form','newsletter','booking','chat','embed']){
+    const ds=c.doors.filter(d=>d.kind===k); if(!ds.length) continue;
+    if(ds.length<3){ ds.forEach(d=>rows.push({label:lab(d),to:d.to,ci:ci++,kind:k,fields:d.fields})); continue }
+    const head={label:KIND[k](ds.length),ci:ci++,kind:k,group:true,open:st.d,fields:uniq(ds.flatMap(d=>d.fields)),to:st.d?[]:uniq(ds.flatMap(d=>d.to)),carry:!st.d};
+    rows.push(head);
+    if(st.d){ const shown=ds.length>6?ds.slice(0,5):ds, hid=ds.length>6?ds.slice(5):[];
+      shown.forEach(d=>rows.push({sub:true,label:lab(d),to:d.to,ci:head.ci,fields:d.fields,carry:true}));
+      if(hid.length) rows.push({sub:true,more:true,label:`+${hid.length} more`,to:uniq(hid.flatMap(d=>d.to)),ci:head.ci,fields:[],carry:true}) }
+  }
+  rows.forEach(r=>{ if(r.carry===undefined) r.carry=true });
+  return rows;
+}
+function destRows(c){
+  const big=[...c.groups].sort((a,b)=>b.members.length-a.members.length)[0];
+  const rows=[], where=new Map();
+  for(const g of c.groups){
+    const open=st.g&&g===big, u=g.members.filter(m=>m.kind==='unknown').length;
+    const head={name:g.name,n:g.members.length,u,group:true,open,internal:g.members.every(m=>m.kind==='internal')};
+    rows.push(head);
+    if(!open){ g.members.forEach(m=>where.set(m.name,head)); continue }
+    const shown=g.members.length>6?g.members.slice(0,5):g.members, hid=g.members.length>6?g.members.slice(5):[];
+    shown.forEach(m=>{ const r={sub:true,name:m.name,un:m.kind==='unknown'}; rows.push(r); where.set(m.name,r) });
+    if(hid.length){ const r={sub:true,more:true,name:`+${hid.length} more`}; rows.push(r); hid.forEach(m=>where.set(m.name,r)) }
+  }
+  return {rows,where};
+}
+function place(rows){ let y=0; rows.forEach(r=>{ const h=r.sub?24:36; r.y=y+h/2; y+=h }); return y }
+function setY(rows,off){ rows.forEach(r=>r.y+=off) }
+const arrow=(x,y,c)=>`<path d="M${x},${y} l-7,-3.5 v7 z" fill="${c}"/>`;
+
+function flow(mode){
+  const c=DATA[st.k], L=doorRows(c), D=destRows(c), R=D.rows;
+  const hl=place(L), hr=place(R), top=mode==='B'?54:30, H=Math.max(hl,hr,150)+top+30;
+  setY(L,top+(H-top-30-hl)/2); setY(R,top+(H-top-30-hr)/2);
+  const cy=top+(H-top-30)/2, X={p:112,d:150,exit:410,org:532,ring:704};
+  let s='', lines='';
+  // people
+  c.subjects.forEach((n,i)=>{ const py=cy+(i-(c.subjects.length-1)/2)*64;
+    s+=`<circle cx="${X.p}" cy="${py}" r="8" fill="var(--person)"/><text x="${X.p-14}" y="${py+4}" text-anchor="end" font-size="12">${esc(n)}</text>`;
+    L.filter(r=>!r.sub).forEach(r=>{ lines+=`<path d="M${X.p+8},${py} C${X.p+26},${py} ${X.d-22},${r.y} ${X.d},${r.y}" fill="none" stroke="${col(r.ci)}" stroke-width="1.4"/>` }) });
+  // door rows
+  L.forEach((r,i)=>{ const c0=col(r.ci);
+    if(r.sub){ s+=`<path d="M${X.d+3},${r.y-24} V${r.y} H${X.d+16}" fill="none" stroke="${c0}" stroke-width="1"/><text x="${X.d+22}" y="${r.y-3}" font-size="11.5" class="${r.more?'soft':''}">${esc(r.label)}</text><line x1="${X.d+16}" y1="${r.y}" x2="${X.exit}" y2="${r.y}" stroke="${c0}" stroke-width="1.2"/>` }
+    else { s+=`<g ${r.group?`class="hit" tabindex="0" role="button" data-t="d"`:''}><rect x="${X.d}" y="${r.y-9}" width="7" height="18" fill="${c0}"/><text x="${X.d+16}" y="${r.y-5}" font-size="13">${esc(r.label)}${r.group?`<tspan dx="7" class="soft" font-size="10">${r.open?'▾':'▸'}</tspan>`:''}</text>${r.group?`<rect x="${X.d-6}" y="${r.y-18}" width="270" height="30" fill="transparent"/>`:''}</g>`;
+      if(r.carry) s+=`<line x1="${X.d+7}" y1="${r.y}" x2="${X.exit}" y2="${r.y}" stroke="${c0}" stroke-width="1.4"/>` }
+  });
+  // destination rows
+  R.forEach((r,i)=>{ const k=r.internal?'var(--internal)':'var(--external)';
+    if(r.sub){ s+=`<path d="M${X.ring},${r.y-24} V${r.y} H${X.ring+10}" fill="none" stroke="var(--rule)" stroke-width="1"/>`+(r.more?'':`<circle cx="${X.ring+17}" cy="${r.y}" r="4.5" fill="none" stroke="${k}" stroke-width="1.6" ${r.un?'stroke-dasharray="2 2"':''}/>`)+`<text x="${X.ring+28}" y="${r.y+4}" font-size="11.5" ${r.un||r.more?'class="soft"':''} ${r.un?'font-style="italic"':''}>${esc(r.name)}</text>` }
+    else { const circ=2*Math.PI*11, solid=circ*(1-r.u/r.n);
+      s+=`<g class="hit" tabindex="0" role="button" data-t="g"><circle cx="${X.ring}" cy="${r.y}" r="11" fill="var(--lift)" stroke="${k}" stroke-width="1.6" stroke-dasharray="2 3"/><circle cx="${X.ring}" cy="${r.y}" r="11" fill="none" stroke="${k}" stroke-width="2.2" stroke-dasharray="${solid} ${circ}" transform="rotate(-90 ${X.ring} ${r.y})"/><text x="${X.ring}" y="${r.y+3.5}" text-anchor="middle" font-size="10" font-weight="600">${r.n}</text><text x="${X.ring+20}" y="${r.y+4.5}" font-size="13.5">${esc(r.name)}${r.u&&r.name!=='Not yet identified'?`<tspan dx="9" class="soft" font-size="11">${r.u} not yet identified</tspan>`:''}</text><rect x="${X.ring-14}" y="${r.y-15}" width="290" height="30" fill="transparent"/></g>` }
+  });
+  // edges door -> org -> destination
+  const reached=new Set(), hits=new Map();
+  const carriers=L.filter(r=>r.carry);
+  carriers.forEach(r=>{ r.t=uniq(r.to.map(n=>D.where.get(n)).filter(Boolean)).sort((a,b)=>a.y-b.y); r.t.forEach(t=>reached.add(t)) });
+  const endx=t=>t.sub?X.ring+6:X.ring-17;
+  const tgtY=t=>{ const n=hits.get(t)||0; hits.set(t,n+1); return t.y+(n? (n%2?1:-1)*3*Math.ceil(n/2):0) };
+  if(mode==='A'){
+    carriers.forEach(r=>{ const c0=col(r.ci);
+      lines+=`<path d="M${X.exit},${r.y} C${X.exit+60},${r.y} ${X.org-70},${cy} ${X.org-18},${cy}" fill="none" stroke="${c0}" stroke-width="1.4" stroke-dasharray="${PRINT?DASH[r.ci%6]:''}"/>`;
+      r.t.forEach(t=>{ const ty=tgtY(t), sy=cy+(ty-cy)*0.06, ex=endx(t);
+        lines+=`<path d="M${X.org+17},${sy} C${X.org+90},${sy} ${ex-80},${ty} ${ex-6},${ty}" fill="none" stroke="${c0}" stroke-width="1.4"/>`+arrow(ex,ty,c0) }) });
+    R.filter(t=>!reached.has(t)&&!(t.group&&t.open)).forEach(t=>{ const ty=t.y, sy=cy+(ty-cy)*0.06, ex=endx(t);
+      lines+=`<path d="M${X.org+17},${sy} C${X.org+90},${sy} ${ex-80},${ty} ${ex-6},${ty}" fill="none" stroke="var(--soft)" stroke-width="1.1"/>`+arrow(ex,ty,'var(--soft)') });
+    s+=`<circle cx="${X.org}" cy="${cy}" r="17" fill="var(--person)"/><path d="M${X.org-7},${cy+6} v-8 l7,-6 l7,6 v8 z" fill="var(--paper)"/><text x="${X.org}" y="${cy+36}" text-anchor="middle" font-size="12" stroke="var(--lift)" stroke-width="4" paint-order="stroke">Your organisation</text>`;
+  } else {
+    const sx=X.org-7, sw=14;
+    carriers.forEach(r=>{ const c0=col(r.ci), k=r.t.length;
+      lines+=`<line x1="${X.exit}" y1="${r.y}" x2="${sx-(k?0:7)}" y2="${r.y}" stroke="${c0}" stroke-width="1.4"/>`;
+      if(!k){ lines+=arrow(sx,r.y,c0); return }
+      r.t.forEach((t,j)=>{ const py=r.y+(j-(k-1)/2)*5, ty=tgtY(t), ex=endx(t);
+        r.ports=(r.ports||[]).concat(py);
+        lines+=`<path d="M${sx+sw},${py} C${sx+sw+70},${py} ${ex-80},${ty} ${ex-6},${ty}" fill="none" stroke="${c0}" stroke-width="1.4"/>`+arrow(ex,ty,c0) }) });
+    R.filter(t=>!reached.has(t)&&!(t.group&&t.open)).forEach(t=>{ const ex=endx(t);
+      lines+=`<line x1="${sx+sw}" y1="${t.y}" x2="${ex-6}" y2="${t.y}" stroke="var(--soft)" stroke-width="1.1"/>`+arrow(ex,t.y,'var(--soft)') });
+    s+=`<rect x="${sx}" y="${top-8}" width="${sw}" height="${H-top-14}" rx="7" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.4"/>`;
+    carriers.forEach(r=>(r.ports||[]).forEach(py=>{ s+=`<path d="M${sx},${r.y} L${sx+sw},${py}" stroke="${col(r.ci)}" stroke-width="1.4"/>` }));
+    s+=`<circle cx="${X.org}" cy="26" r="13" fill="var(--person)"/><path d="M${X.org-5.5},31 v-6.5 l5.5,-5 l5.5,5 v6.5 z" fill="var(--paper)"/><text x="${X.org+20}" y="30" font-size="12.5">Your organisation</text>`;
+  }
+  const heads=`<text x="${X.p+8}" y="16" text-anchor="end" font-size="10.5" class="soft">Whose data</text><text x="${X.d}" y="16" font-size="10.5" class="soft">Ways in</text><text x="${X.ring-11}" y="16" font-size="10.5" class="soft">Where it goes</text>`;
+  return `<svg viewBox="0 0 1000 ${H}" role="img" aria-label="Direzione ${mode}">${heads}${lines}${s}</svg>`;
+}
+const PRINT=false;
+
+function now(){
+  const n=DATA[st.k].now, by=new Map(n.nodes.map(x=>[x.id,x])); let s='';
+  n.edges.forEach(([a,b,ci])=>{ const A=by.get(a),B=by.get(b); if(!A||!B) return; const c0=ci<0?'var(--soft)':col(ci);
+    const dx=B.x-A.x, dy=B.y-A.y, d=Math.hypot(dx,dy), ux=dx/d, uy=dy/d, ex=B.x-ux*20, ey=B.y-uy*20;
+    s+=`<line x1="${A.x+ux*12}" y1="${A.y+uy*12}" x2="${ex}" y2="${ey}" stroke="${c0}" stroke-width="1.4"/><path d="M0,0 l-7,-3.5 v7 z" fill="${c0}" transform="translate(${ex+ux*6},${ey+uy*6}) rotate(${Math.atan2(dy,dx)*180/Math.PI})"/>` });
+  n.nodes.forEach(x=>{
+    if(x.k==='subject') s+=`<circle cx="${x.x}" cy="${x.y}" r="8" fill="var(--person)"/><text x="${x.x}" y="${x.y+24}" text-anchor="middle" font-size="10">${esc(x.l)}</text>`;
+    else if(x.k==='door') s+=`<rect x="${x.x-5}" y="${x.y-9}" width="10" height="18" rx="2" fill="var(--lift)" stroke="${col(x.ci)}" stroke-width="2"/><text x="${x.x}" y="${x.y+22}" text-anchor="middle" font-size="9.5">${esc(x.l)}</text><text x="${x.x}" y="${x.y+32}" text-anchor="middle" font-size="7.5" class="soft mono">discovered by the scan</text>`;
+    else if(x.k==='more') s+=`<text x="${x.x}" y="${x.y+4}" text-anchor="middle" font-size="9.5" class="soft">${esc(x.l)}</text>`;
+    else if(x.k==='controller') s+=`<circle cx="${x.x}" cy="${x.y}" r="12" fill="var(--person)"/><path d="M${x.x-5},${x.y+4.5} v-6 l5,-4.5 l5,4.5 v6 z" fill="var(--paper)"/>`;
+    else if(x.k==='group') s+=`<circle cx="${x.x}" cy="${x.y}" r="15" fill="var(--lift)" stroke="var(--external)" stroke-width="2" ${x.u===x.c?'stroke-dasharray="2 3"':''}/><text x="${x.x}" y="${x.y+4}" text-anchor="middle" font-size="11">${x.c}</text><text x="${x.x}" y="${x.y+30}" text-anchor="middle" font-size="10">${esc(x.l)}</text>`;
+  });
+  return `<svg viewBox="0 0 800 500" role="img" aria-label="La mappa attuale">${s}</svg>`;
+}
+
+function registro(){
+  const c=DATA[st.k], L=doorRows(c), gOf=new Map(); c.groups.forEach(g=>g.members.forEach(m=>gOf.set(m.name,g)));
+  const dest=to=>{ if(!to.length) return '<span class="softt">Not yet identified</span>';
+    const m=new Map(); to.forEach(n=>{ const g=gOf.get(n); if(g) m.set(g,(m.get(g)||0)+1) });
+    return [...m].map(([g,n])=>`<span class="chip"><span class="ring${g.members.every(x=>x.kind==='unknown')?' un':''}"></span>${esc(g.name)} <span class="softt">${n}</span></span>`).join('') };
+  const ask=r=>r.kind==='site'?'<span class="softt">The visit itself</span>':r.fields.length?esc(r.fields.join(', ').replace('free-text','free text')):'<span class="softt">Not yet identified</span>';
+  let h='<table class="reg"><tr><th>Whose data</th><th>Way in</th><th>What is asked</th><th>Where it goes</th></tr>';
+  L.forEach(r=>{ const all=r.group?uniq(c.doors.filter(d=>d.kind===r.kind).flatMap(d=>d.to)):r.to;
+    h+=r.sub?`<tr class="sub"><td></td><td style="padding-left:36px">${esc(r.label)}</td><td>${r.more?'':ask(r)}</td><td></td></tr>`
+      :`<tr ${r.group?'class="hitrow" data-t="d" tabindex="0"':''}><td>${esc(c.subjects[0])}</td><td><span class="door" style="background:${col(r.ci)}"></span>${esc(r.label)}${r.group?` <span class="softt">${r.open?'▾':'▸'}</span>`:''}</td><td>${ask(r)}</td><td>${dest(all)}</td></tr>` });
+  return h+'</table>';
+}
+
+function render(){
+  const c=DATA[st.k];
+  document.getElementById('cases').innerHTML=ORDER.map(([k,l])=>`<button data-k="${k}" aria-pressed="${k===st.k}">${l}</button>`).join('');
+  document.getElementById('tg').setAttribute('aria-pressed',st.g); document.getElementById('td').setAttribute('aria-pressed',st.d);
+  document.getElementById('facts').textContent=`${c.doors.length} porte, ${c.groups.length} gruppi, ${c.groups.reduce((a,g)=>a+g.members.length,0)} luoghi`;
+  document.getElementById('now').innerHTML=now();
+  document.getElementById('A').innerHTML=flow('A'); document.getElementById('B').innerHTML=flow('B');
+  document.getElementById('Cc').innerHTML=registro();
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-k]'); if(b){ st.k=b.dataset.k; return render() }
+  if(e.target.closest('#tg')||e.target.closest('[data-t="g"]')){ st.g=!st.g; return render() }
+  if(e.target.closest('#td')||e.target.closest('[data-t="d"]')){ st.d=!st.d; return render() }
+});
+document.addEventListener('keydown',e=>{ if(e.key==='Enter'&&e.target.matches('.hit,.hitrow')) e.target.dispatchEvent(new MouseEvent('click',{bubbles:true})) });
+render();
+</script>
