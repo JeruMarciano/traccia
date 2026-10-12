@@ -23,8 +23,39 @@ import type {
  * Nothing here is stored. Doors, like gaps, are computed from what the project already holds.
  */
 
-/** Six, and it cycles. A seventh door repeats the first colour; the label disambiguates. */
+/** Six, and it cycles. A seventh row repeats the first colour; the label disambiguates. */
 export const DOOR_COLOURS = 6
+
+/** The scanner's five kinds, in the order their rows are drawn. */
+export const DOOR_KINDS: readonly DoorKind[] = ['form', 'newsletter', 'booking', 'chat', 'embed']
+/** Three or more doors of one kind are one row. */
+export const FOLD_AT = 3
+
+export interface DoorRow<D> {
+  /** null for a door that is a place: one a document declared, or the scanned site itself. */
+  kind: DoorKind | null
+  doors: D[]
+  folded: boolean
+}
+
+/**
+ * The rows the ways-in column is made of. Doors that are places first, never folded; then each of
+ * the five kinds, folded into one row at FOLD_AT. Inside a kind the given order is kept.
+ *
+ * Decided here, once: the map draws these rows, and a door's colour is its row's, so the panel's
+ * chips and the map's lines cannot disagree.
+ */
+export function doorRows<D extends { kind?: DoorKind }>(doors: readonly D[]): DoorRow<D>[] {
+  const rows: DoorRow<D>[] = doors
+    .filter((d) => d.kind === undefined)
+    .map((d) => ({ kind: null, doors: [d], folded: false }))
+  for (const kind of DOOR_KINDS) {
+    const ofKind = doors.filter((d) => d.kind === kind)
+    if (ofKind.length >= FOLD_AT) rows.push({ kind, doors: ofKind, folded: true })
+    else for (const d of ofKind) rows.push({ kind, doors: [d], folded: false })
+  }
+  return rows
+}
 
 const KIND_LABEL: Record<DoorKind, string> = {
   form: 'Form',
@@ -64,9 +95,12 @@ export function deriveDoors(project: Project): Door[] {
     ...(cp.destination === undefined ? {} : { destination: cp.destination }),
   }))
 
-  // Declared first, then discovered, each in project order: the colour a door gets has to be the
-  // same colour on the next open of the same file, so position is the only input.
-  return [...declared, ...discovered].map((d, i) => ({ ...d, colourIndex: i % DOOR_COLOURS }))
+  // Declared first, then discovered, each in project order. A door's colour is its row's: the
+  // same file always folds into the same rows, so it opens in the same colours every time.
+  const all = [...declared, ...discovered]
+  const colourOf = new Map<string, number>()
+  doorRows(all).forEach((row, i) => row.doors.forEach((d) => colourOf.set(d.id, i % DOOR_COLOURS)))
+  return all.map((d) => ({ ...d, colourIndex: colourOf.get(d.id) ?? 0 }))
 }
 
 /** The place id a door stands for: `place:pl-2` -> `pl-2`. A `cp:` door has no place, so its

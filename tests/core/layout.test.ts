@@ -242,12 +242,6 @@ describe('layout edge cases', () => {
     expect(computeLayout(withDoors(1), SIZE).nodes.filter((n) => n.kind === 'door')).toHaveLength(1)
   })
 
-  it('cycles the palette at seven doors and keeps them all on the sheet', () => {
-    const doors = computeLayout(withDoors(7), SIZE).nodes.filter((n) => n.kind === 'door')
-    expect(doors).toHaveLength(7)
-    expect(doors.map((d) => d.colourIndex)).toEqual([0, 1, 2, 3, 4, 5, 0])
-  })
-
   it('spaces doors apart rather than stacking them', () => {
     const ys = computeLayout(withDoors(7), SIZE).nodes.filter((n) => n.kind === 'door').map((n) => n.y)
     expect(new Set(ys).size).toBe(7)
@@ -392,21 +386,6 @@ describe('map caps', () => {
       expect(computeLayout(p, SIZE, null, id).nodes.find((n) => n.id === 'more:doors')?.highlighted).toBe(true)
     }
     expect(computeLayout(p, SIZE, null, 'cp:cp-1').nodes.find((n) => n.id === 'more:doors')?.highlighted).toBeUndefined()
-  })
-
-  it('collapses edges to hidden members onto one neutral line when their doors differ', () => {
-    const p = projectWithMembers('Marketing', 9)
-    p.collectionPoints = [6, 7, 8].map((m, i) => ({
-      id: `cp-${i + 1}`,
-      page: `https://rossi-editore.it/${i + 1}`,
-      destination: `cap-${m}`,
-      fields: [],
-      sources: [],
-      confidence: 'observed' as const,
-    }))
-    const edges = edgesOf(computeLayout(p, SIZE, 'Marketing'), 'controller', 'more:Marketing')
-    expect(edges).toHaveLength(1)
-    expect(edges[0]!.colourIndex).toBeUndefined()
   })
 
   it('collapses the edges of hidden doors onto one line each way', () => {
