@@ -1,5 +1,5 @@
 import { classifyField, isCollectingField, isDoorForm } from './forms'
-import { isSameSite } from './scan'
+import { isSameSite, VISITORS } from './scan'
 import { identify } from './vendors'
 import type {
   CollectionPointField,
@@ -85,6 +85,9 @@ function underlyingId(door: Door): string {
  */
 export function tracePaths(project: Project, doors: Door[]): DoorPath[] {
   const isSubject = (id: string): boolean => project.subjectGroups.some((s) => s.id === id)
+  // A door the scan found on the site is used by the people who visit the site. A deduction, made
+  // here on read and never written to the file, so a project saved before this rule gains it too.
+  const visitors = project.subjectGroups.find((s) => s.name === VISITORS)
   return doors.map((door) => {
     const at = underlyingId(door)
     return {
@@ -98,9 +101,11 @@ export function tracePaths(project: Project, doors: Door[]): DoorPath[] {
       ],
       // Only people. A place feeding a door is a flow like any other, but it is not somebody
       // coming through the door, and drawing it as one would put a supplier on the inbound side.
-      subjectIds: [
-        ...new Set(project.flows.filter((f) => f.to === at).map((f) => f.from).filter(isSubject)),
-      ],
+      subjectIds: door.id.startsWith('cp:')
+        ? visitors === undefined
+          ? []
+          : [visitors.id]
+        : [...new Set(project.flows.filter((f) => f.to === at).map((f) => f.from).filter(isSubject))],
     }
   })
 }
