@@ -358,8 +358,94 @@ export function computeLayout(project: Project, view: LayoutView = {}): LayoutRe
   })
   for (const b of right) nodes.push(b.node)
 
+  const at = new Map(nodes.map((n) => [n.id, n]))
+  const yOf = (id: string): number => at.get(id)?.y ?? 0
   const edges: LayoutEdge[] = []
-  // LINES (Task 5)
+  const spineLeft = COLUMN.spine
+  const spineRight = COLUMN.spine + COLUMN.spineWidth
+
+  // People to the top-level rows. A folded row takes one line; its bracket carries it to the sub-rows.
+  for (const s of subjects) {
+    for (const b of left) {
+      if (!b.enters.some((d) => pathOf.get(d.id)?.subjectIds.includes(s.id))) continue
+      const x1 = COLUMN.person + 8
+      const x2 = b.node.x - 4
+      edges.push({
+        from: s.id,
+        to: b.node.id,
+        door: b.node.id,
+        colourIndex: b.node.colourIndex,
+        x1,
+        y1: yOf(s.id),
+        x2,
+        y2: b.node.y,
+        c1x: x1 + 14,
+        c2x: x2 - 14,
+        arrow: false,
+      })
+    }
+  }
+
+  // Each carrying row to the spine at its own height, then out again from points PORT_GAP apart,
+  // in the vertical order of the rows it reaches, so a door's own lines never cross each other.
+  const leaving: { row: LayoutNode; to: string; y1: number }[] = []
+  for (const b of left) {
+    if (b.carries.length === 0) continue
+    const targets = targetsOf(b.carries).sort((p, q) => yOf(p) - yOf(q))
+    const y = b.node.y
+    const x1 = b.node.x + 4
+    edges.push({
+      from: b.node.id,
+      to: 'controller',
+      door: b.node.id,
+      colourIndex: b.node.colourIndex,
+      x1,
+      y1: y,
+      x2: spineLeft,
+      y2: y,
+      c1x: x1,
+      c2x: spineLeft,
+      arrow: targets.length === 0,
+    })
+    targets.forEach((to, j) =>
+      leaving.push({ row: b.node, to, y1: round(y + (j - (targets.length - 1) / 2) * PORT_GAP) }),
+    )
+  }
+
+  // Two doors into one row land LAND_GAP apart, in the order they left the spine.
+  const landing = (target: LayoutNode): number => target.x - (target.kind === 'group' ? 18 : 12)
+  const reached = new Set(leaving.map((l) => l.to))
+  for (const to of reached) {
+    const target = at.get(to)
+    if (target === undefined) continue
+    const arriving = leaving.filter((l) => l.to === to).sort((p, q) => p.y1 - q.y1)
+    const x2 = landing(target)
+    arriving.forEach((l, i) => {
+      edges.push({
+        from: 'controller',
+        to,
+        door: l.row.id,
+        colourIndex: l.row.colourIndex,
+        x1: spineRight,
+        y1: l.y1,
+        x2,
+        y2: round(target.y + (i - (arriving.length - 1) / 2) * LAND_GAP),
+        c1x: spineRight + 70,
+        c2x: x2 - 70,
+        arrow: true,
+        entryY: l.row.y,
+      })
+    })
+  }
+
+  // A destination no door reaches still belongs on the sheet: one neutral line, level, from the
+  // spine. Inventing a door for it, or leaving it off, would both be claims the project cannot
+  // support. An open group is reached through its members, so its own row takes none.
+  for (const b of right) {
+    if (reached.has(b.node.id) || (b.node.kind === 'group' && b.node.open === true)) continue
+    const x2 = landing(b.node)
+    edges.push({ from: 'controller', to: b.node.id, x1: spineRight, y1: b.node.y, x2, y2: b.node.y, c1x: spineRight, c2x: x2, arrow: true })
+  }
 
   return { nodes, edges, width: SHEET_WIDTH, height: round(TOP + body + BOTTOM), openGroup, openKind }
 }

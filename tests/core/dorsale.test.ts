@@ -320,3 +320,148 @@ describe('on every fixture, closed and open', () => {
     }
   })
 })
+
+describe('lines', () => {
+  const edge = (l: LayoutResult, from: string, to: string) => l.edges.filter((e) => e.from === from && e.to === to)
+  const topRows = (l: LayoutResult) =>
+    l.nodes.filter((n) => (n.kind === 'door' || n.kind === 'doorGroup') && n.parent === undefined)
+
+  it('brings the website’s visitors to every top-level row of a scanned site', () => {
+    for (const make of [dorsaleSmall, dorsaleMedium, dorsaleUgly]) {
+      const l = computeLayout(make())
+      for (const row of topRows(l)) expect(edge(l, 'scan1-sg-1', row.id), row.id).toHaveLength(1)
+    }
+  })
+
+  it('gives an open fold one line in, and none to its sub-rows', () => {
+    const l = computeLayout(dorsaleUgly(), { openKind: 'form' })
+    expect(edge(l, 'scan1-sg-1', 'doorGroup:form')).toHaveLength(1)
+    const subs = l.nodes.filter((n) => n.parent === 'doorGroup:form').map((n) => n.id)
+    expect(l.edges.filter((e) => subs.includes(e.to))).toEqual([])
+  })
+
+  it('invents no line in a documents-only project', () => {
+    // The wrong answer: a declared door nobody is recorded at is given the visitors, or all twelve groups.
+    const p = dorsaleOversized()
+    p.collectionPoints = []
+    p.places.push({ id: 'pl-desk', name: 'Second desk', kind: 'collection', purposeGroup: 'Systems', holder: 'you', leavesEEA: false, sources: [{ documentId: 'd1', documentName: 'notice.pdf' }], confidence: 'declared' })
+    const l = computeLayout(p)
+    expect(l.edges.filter((e) => e.to === 'door:place:pl-door')).toHaveLength(12)
+    expect(l.edges.filter((e) => e.to === 'door:place:pl-desk')).toEqual([])
+    expect(edge(l, 'door:place:pl-desk', 'controller')).toHaveLength(1)
+  })
+
+  it('runs every carrying row to the spine, level, at the row’s own height', () => {
+    const l = computeLayout(dorsaleUgly(), { openGroup: 'Marketing', openKind: 'form' })
+    const carrying = l.nodes.filter(
+      (n) => n.kind === 'door' || (n.kind === 'doorGroup' && n.open !== true) || n.id.startsWith('moreDoors:'),
+    )
+    expect(carrying.length).toBeGreaterThan(5)
+    for (const row of carrying) {
+      const [e] = edge(l, row.id, 'controller')
+      expect(e, row.id).toBeDefined()
+      expect([e!.y1, e!.y2, e!.x2]).toEqual([row.y, row.y, COLUMN.spine])
+    }
+  })
+
+  it('draws no line to the spine from the head of an open fold', () => {
+    // The wrong answer: twelve forms draw thirteen lines.
+    expect(edge(computeLayout(dorsaleUgly(), { openKind: 'form' }), 'doorGroup:form', 'controller')).toEqual([])
+    expect(edge(computeLayout(dorsaleUgly()), 'doorGroup:form', 'controller')).toHaveLength(1)
+  })
+
+  it('ends a door that goes no further on the spine, and one that goes on at its destinations', () => {
+    const l = computeLayout(dorsaleUgly())
+    expect(edge(l, 'doorGroup:form', 'controller')[0]!.arrow).toBe(true)
+    expect(edge(l, 'door:place:scan1-pl-1', 'controller')[0]!.arrow).toBe(false)
+    expect(l.edges.filter((e) => e.from === 'controller').every((e) => e.arrow)).toBe(true)
+    expect(l.edges.filter((e) => e.to !== 'controller' && e.from !== 'controller').every((e) => !e.arrow)).toBe(true)
+  })
+
+  it('carries one colour from the person, through the door, to the destination', () => {
+    const l = rossi()
+    const row = 'door:place:pl-2'
+    const mine = l.edges.filter((e) => e.door === row)
+    expect(mine.map((e) => `${e.from}->${e.to}`)).toEqual(['sg-2->door:place:pl-2', 'door:place:pl-2->controller', 'controller->group:Marketing'])
+    expect(new Set(mine.map((e) => e.colourIndex))).toEqual(new Set([0]))
+  })
+
+  it('leaves the spine from points 5 apart, centred on the door, in the order of the rows reached', () => {
+    const l = computeLayout(dorsaleUgly())
+    const site = node(l, 'door:place:scan1-pl-1')!
+    const out = l.edges.filter((e) => e.door === site.id && e.from === 'controller')
+    expect(out).toHaveLength(5)
+    const ports = out.map((e) => e.y1).sort((a, b) => a - b)
+    expect(ports).toEqual([-10, -5, 0, 5, 10].map((d) => site.y + d))
+    // Its own lines never cross: the higher port goes to the higher row.
+    const byPort = [...out].sort((a, b) => a.y1 - b.y1).map((e) => e.y2)
+    expect(byPort).toEqual([...byPort].sort((a, b) => a - b))
+    expect(out.every((e) => e.entryY === site.y && e.x1 === COLUMN.spine + COLUMN.spineWidth)).toBe(true)
+  })
+
+  it('lands two doors on one row 3 units apart, in two colours', () => {
+    const into = rossi().edges.filter((e) => e.to === 'group:Marketing')
+    expect(into).toHaveLength(2)
+    expect(new Set(into.map((e) => e.colourIndex)).size).toBe(2)
+    expect(Math.abs(into[0]!.y2 - into[1]!.y2)).toBe(3)
+  })
+
+  it('reaches a destination no door reaches with one neutral, level line', () => {
+    const [e, ...rest] = rossi().edges.filter((e) => e.to === 'group:Payroll')
+    expect(rest).toEqual([])
+    expect(e).toMatchObject({ from: 'controller', arrow: true })
+    expect(e!.y1).toBe(e!.y2)
+    expect([e!.colourIndex, e!.door, e!.entryY]).toEqual([undefined, undefined, undefined])
+  })
+
+  it('sends lines to the members of an open group, and none to the group’s own row', () => {
+    const l = rossi({ openGroup: 'Marketing' })
+    expect(l.edges.filter((e) => e.to === 'group:Marketing')).toEqual([])
+    const toMember = l.edges.filter((e) => e.to === 'member:pl-4')
+    expect(toMember).toHaveLength(2)
+    expect(new Set(toMember.map((e) => e.colourIndex)).size).toBe(2)
+    // pl-8 is reached by no door: one neutral line of its own.
+    expect(l.edges.filter((e) => e.to === 'member:pl-8').map((e) => e.colourIndex)).toEqual([undefined])
+  })
+
+  it('gives each door one line to +N more, however many hidden members it reaches', () => {
+    const l = computeLayout(dorsaleUgly(), { openGroup: 'Marketing' })
+    const toMore = l.edges.filter((e) => e.to === 'more:Marketing')
+    expect(toMore.map((e) => e.door)).toEqual(['door:place:scan1-pl-1'])
+  })
+
+  it('draws the lines of the doors behind +N more from that row', () => {
+    const p = scanLike(['form', 'form', 'form', 'form', 'form', 'form', 'form'])
+    p.collectionPoints![6]!.destination = 'pl-2'
+    const l = computeLayout(p, { openKind: 'form' })
+    expect(edge(l, 'moreDoors:form', 'controller')[0]!.arrow).toBe(false)
+    expect(l.edges.filter((e) => e.door === 'moreDoors:form' && e.to === 'group:Marketing')).toHaveLength(1)
+  })
+})
+
+describe('on every fixture, closed and open: lines', () => {
+  it('no line crosses a label, and every line ends at a row', () => {
+    for (const [name, make] of DORSALE_FIXTURES) {
+      for (const view of VIEWS(make())) {
+        const l = computeLayout(make(), view)
+        expect(l.edges.length, name).toBeGreaterThan(0)
+        expect(problems(l), `${name} ${JSON.stringify(view)}`).toEqual([])
+      }
+    }
+  })
+
+  it('every way in has a line to the spine, and on a scanned site a line in', () => {
+    for (const [name, make] of DORSALE_FIXTURES) {
+      for (const view of VIEWS(make())) {
+        const l = computeLayout(make(), view)
+        for (const d of l.nodes.filter((n) => n.kind === 'door')) {
+          expect(l.edges.some((e) => e.from === d.id && e.to === 'controller'), `${name} ${d.id}`).toBe(true)
+        }
+        if (name === 'oversized') continue
+        for (const row of l.nodes.filter((n) => (n.kind === 'door' || n.kind === 'doorGroup') && n.parent === undefined)) {
+          expect(l.edges.some((e) => e.to === row.id), `${name} ${row.id}`).toBe(true)
+        }
+      }
+    }
+  })
+})
