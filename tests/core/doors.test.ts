@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyDoors, deriveDoors, tracePaths } from '../../src/core/doors'
+import { classifyDoors, deriveDoors, doorRows, tracePaths } from '../../src/core/doors'
 import { ingestScan } from '../../src/core/scan'
 import type { RawFormField, ScanResult, VendorDictionary } from '../../src/core/types'
 import { rossiEditore } from '../fixtures/rossiEditore'
@@ -45,16 +45,10 @@ describe('deriveDoors', () => {
     expect(cp?.fields).toEqual(['email', 'nome', 'messaggio'])
   })
 
-  it('assigns colours by position and cycles past six', () => {
-    const many = emptyProject()
-    many.collectionPoints = Array.from({ length: 7 }, (_, i) => ({
-      id: `cp-${i + 1}`,
-      page: `https://example.test/${i + 1}`,
-      fields: [],
-      sources: [],
-      confidence: 'observed' as const,
-    }))
-    expect(deriveDoors(many).map((d) => d.colourIndex)).toEqual([0, 1, 2, 3, 4, 5, 0])
+  it('assigns colours by row and cycles past six rows', () => {
+    // Eight rows: the site, two of each of three kinds, one embed. Nothing folds.
+    const p = scanLike(['form', 'form', 'newsletter', 'newsletter', 'booking', 'booking', 'embed'])
+    expect(deriveDoors(p).map((d) => d.colourIndex)).toEqual([0, 1, 2, 3, 4, 5, 0, 1])
   })
 
   it('returns nothing for a project with no doors', () => {
@@ -283,5 +277,53 @@ describe('classifyDoors', () => {
       DICT,
     )
     expect(d.map((x) => [x.kind, x.page])).toEqual([['form', '/a'], ['form', '/b']])
+  })
+})
+
+describe('doorRows', () => {
+  const ids = (p: ReturnType<typeof scanLike>) =>
+    doorRows(deriveDoors(p)).map((r) => `${r.kind ?? 'place'}${r.folded ? '*' : ''}:${r.doors.map((d) => d.id).join('+')}`)
+
+  it('puts doors that are places first, then the five kinds in a fixed order', () => {
+    expect(ids(scanLike(['embed', 'chat', 'form']))).toEqual([
+      'place:place:pl-1',
+      'form:cp:cp-3',
+      'chat:cp:cp-2',
+      'embed:cp:cp-1',
+    ])
+  })
+
+  it('folds three of a kind into one row, and leaves two as two', () => {
+    expect(ids(scanLike(['form', 'chat', 'form', 'chat', 'form']))).toEqual([
+      'place:place:pl-1',
+      'form*:cp:cp-1+cp:cp-3+cp:cp-5',
+      'chat:cp:cp-2',
+      'chat:cp:cp-4',
+    ])
+  })
+
+  it('never folds doors that are places, however many', () => {
+    const p = scanLike([])
+    for (const n of [2, 3, 4]) {
+      p.places.push({ id: `pl-d${n}`, name: `Desk ${n}`, kind: 'collection', purposeGroup: 'Systems', holder: 'you', leavesEEA: false, sources: [], confidence: 'declared' })
+    }
+    expect(doorRows(deriveDoors(p)).map((r) => r.folded)).toEqual([false, false, false, false])
+  })
+
+  it('makes 11 rows of two doors of every kind plus the site: the tallest closed column', () => {
+    const p = scanLike(['form', 'form', 'newsletter', 'newsletter', 'booking', 'booking', 'chat', 'chat', 'embed', 'embed'])
+    expect(doorRows(deriveDoors(p))).toHaveLength(11)
+  })
+
+  it('reads a collection point saved without a kind as a form, and folds it with the forms', () => {
+    const p = scanLike(['form', 'form'])
+    p.collectionPoints!.push({ id: 'cp-old', page: 'https://example.test/old', fields: [], sources: [], confidence: 'observed' })
+    expect(ids(p)[1]).toBe('form*:cp:cp-1+cp:cp-2+cp:cp-old')
+  })
+
+  it('gives every door of a folded kind its row’s colour, and the next row the next colour', () => {
+    // The wrong answer: twelve forms use up the six colours and the embed below repeats one.
+    const p = scanLike(['form', 'form', 'form', 'form', 'form', 'form', 'form', 'embed'])
+    expect(deriveDoors(p).map((d) => d.colourIndex)).toEqual([0, 1, 1, 1, 1, 1, 1, 1, 2])
   })
 })
