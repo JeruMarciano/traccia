@@ -10,6 +10,7 @@ import type {
   CookiePlatformRow,
   HandEnteredField,
   DataCategoryDictionary,
+  DoorKind,
   InternalSystemDictionary,
   SubjectGroupDictionary,
   VendorDictionary,
@@ -54,6 +55,8 @@ export function App() {
   // layout: it is a parameter of the drawing, so the same project and the same selection always
   // produce the same sheet. One ring at a time.
   const [openGroup, setOpenGroup] = useState<string | null>(null)
+  // Which folded kind of way in stands open. Like the open group: a parameter of the drawing.
+  const [openKind, setOpenKind] = useState<DoorKind | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   // What the printed sheet says about possible gaps, if anything. Not part of the project: a
@@ -68,8 +71,8 @@ export function App() {
   } | null>(null)
 
   const layout = useMemo(
-    () => computeLayout(project, { width: 800, height: 500 }, openGroup, selected),
-    [project, openGroup, selected],
+    () => computeLayout(project, { openGroup, openKind, selectedId: selected }),
+    [project, openGroup, openKind, selected],
   )
 
   async function openProject(): Promise<void> {
@@ -83,6 +86,7 @@ export function App() {
         // onto somebody else's map they would either point at nothing or, worse, at something.
         setSelected(null)
         setOpenGroup(null)
+        setOpenKind(null)
       }
     } catch {
       // Rust deliberately throws a short, neutral sentence carrying no filesystem path and
@@ -224,6 +228,8 @@ export function App() {
             onSelect={setSelected}
             openGroup={openGroup}
             onToggleGroup={setOpenGroup}
+            openKind={openKind}
+            onToggleKind={setOpenKind}
           />
           <div className="print-only">
             <p className="print-limits">{STRINGS.printLimits}</p>
