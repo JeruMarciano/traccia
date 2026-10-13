@@ -15,6 +15,7 @@ import type {
   PanelQuestion,
   PanelUnknowns,
   PlacePanel,
+  PurposesPanel,
 } from '../../core/panel'
 import { panelFor } from '../../core/panel'
 import { STRINGS } from '../strings'
@@ -217,7 +218,6 @@ function PlaceView({ panel, onAnswer }: { panel: PlacePanel; onAnswer?: AnswerHa
                   {STRINGS.detailObservation(o.domain, o.requestCount)}
                   {o.beforeConsent === undefined ? null : (
                     <span className="detail-said-by">
-                      {' · '}
                       {o.beforeConsent ? STRINGS.detailBeforeConsent : STRINGS.detailAfterConsent}
                     </span>
                   )}
@@ -327,16 +327,56 @@ function ControllerView({ panel }: { panel: ControllerPanel }) {
   )
 }
 
-function GroupView({ panel }: { panel: GroupPanel }) {
+/** A row of destinations: every place it counts, each one a way to that place's own facts. */
+function GroupView({ panel, onSelect }: { panel: GroupPanel; onSelect?: (id: string) => void }) {
+  const words = (m: GroupPanel['members'][number]): string =>
+    m.purpose === undefined ? m.name : STRINGS.detailMemberPurpose(m.name, m.purpose)
   return (
     <>
       <h2 className="detail-head">{STRINGS.detailHeading}</h2>
       <article className="detail-place">
-        <h3 className="detail-place-name">{panel.name}</h3>
+        <h3 className="detail-place-name">{panel.row === 'purpose' ? panel.name : STRINGS.destination[panel.row]}</h3>
+        {panel.row === 'purpose' ? null : (
+          <p className="detail-subject-notes">
+            {panel.row === 'own' ? STRINGS.detailOwnNote : STRINGS.detailUnidentifiedNote}
+          </p>
+        )}
         <ul className="detail-observations">
           {panel.members.map((m) => (
-            <li key={m.id} className={m.unexplained ? 'detail-member--open' : undefined}>
-              {m.name}
+            <li key={m.id}>
+              {onSelect === undefined ? (
+                words(m)
+              ) : (
+                <button className="detail-door-link" onClick={() => onSelect(`member:${m.id}`)}>
+                  {words(m)}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </article>
+    </>
+  )
+}
+
+/** The purposes the map folds into one row. Each opens the list of its own places. */
+function PurposesView({ panel, onSelect }: { panel: PurposesPanel; onSelect?: (id: string) => void }) {
+  return (
+    <>
+      <h2 className="detail-head">{STRINGS.detailHeading}</h2>
+      <article className="detail-place">
+        <h3 className="detail-place-name">{STRINGS.destination.others}</h3>
+        <p className="detail-subject-notes">{STRINGS.detailOthersNote}</p>
+        <ul className="detail-observations">
+          {panel.purposes.map((p) => (
+            <li key={p.name}>
+              {onSelect === undefined ? (
+                STRINGS.detailPurposePlaces(p.name, p.places)
+              ) : (
+                <button className="detail-door-link" onClick={() => onSelect(`group:${p.name}`)}>
+                  {STRINGS.detailPurposePlaces(p.name, p.places)}
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -414,7 +454,8 @@ export function DetailPanel({ project, selected, dictionary, onAnswer, onSelect 
       {panel.sort === 'place' ? <PlaceView panel={panel} onAnswer={onAnswer} /> : null}
       {panel.sort === 'door' ? <DoorView panel={panel} /> : null}
       {panel.sort === 'controller' ? <ControllerView panel={panel} /> : null}
-      {panel.sort === 'group' ? <GroupView panel={panel} /> : null}
+      {panel.sort === 'group' ? <GroupView panel={panel} onSelect={onSelect} /> : null}
+      {panel.sort === 'purposes' ? <PurposesView panel={panel} onSelect={onSelect} /> : null}
       {panel.sort === 'doorGroup' ? <DoorGroupView panel={panel} onSelect={onSelect} /> : null}
     </aside>
   )

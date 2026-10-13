@@ -51,12 +51,15 @@ export function App() {
   )
   const project = history.present
   const [selected, setSelected] = useState<string | null>(null)
-  // Which purpose-group ring stands open. Not stored in the project and not derived inside the
-  // layout: it is a parameter of the drawing, so the same project and the same selection always
-  // produce the same sheet. One ring at a time.
+  // Which card of destinations stands open, by its id on the sheet. Not stored in the project and
+  // not derived inside the layout: it is a parameter of the drawing, so the same project and the
+  // same selection always produce the same sheet. One card at a time.
   const [openGroup, setOpenGroup] = useState<string | null>(null)
   // Which folded kind of way in stands open. Like the open group: a parameter of the drawing.
   const [openKind, setOpenKind] = useState<DoorKind | null>(null)
+  // The row under the pointer. The map answers "what is this connected to?" by dimming the rest,
+  // for a hover as for a selection; it is no parameter of the layout, so a hover moves no card.
+  const [hovered, setHovered] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   // What the printed sheet says about possible gaps, if anything. Not part of the project: a
@@ -230,6 +233,8 @@ export function App() {
             onToggleGroup={setOpenGroup}
             openKind={openKind}
             onToggleKind={setOpenKind}
+            hovered={hovered}
+            onHover={setHovered}
           />
           <div className="print-only">
             <p className="print-limits">{STRINGS.printLimits}</p>

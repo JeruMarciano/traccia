@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { DetailPanel, DoorGroupView } from '../../src/renderer/components/DetailPanel'
 import { panelFor } from '../../src/core/panel'
 import type { DoorGroupPanel } from '../../src/core/panel'
-import { dorsaleUgly } from '../fixtures/dorsale'
+import { dorsaleOversized, dorsaleUgly } from '../fixtures/dorsale'
 import { STRINGS } from '../../src/renderer/strings'
 import { rossiEditore } from '../fixtures/rossiEditore'
 import { answerByHand } from '../../src/core/answers'
@@ -141,8 +141,21 @@ describe('DetailPanel', () => {
     expect(markup).not.toContain('bare')
   })
 
-  it('lists a group’s members', () => {
-    expect(show('group:Marketing')).toContain('stat.rossi-editore.it')
+  it('lists a row’s members, and says plainly what a row that mixes things is a count of', () => {
+    expect(show('group:Marketing')).toContain('Mailchimp')
+    expect(show('group:Marketing')).not.toContain('stat.rossi-editore.it')
+    const open = show('unidentified')
+    expect(open).toContain(`>${STRINGS.destination.unidentified}</h3>`)
+    expect(open).toContain(STRINGS.detailUnidentifiedNote)
+    expect(open).toContain(STRINGS.detailMemberPurpose('stat.rossi-editore.it', 'Marketing'))
+    expect(show('own')).toContain(STRINGS.detailOwnNote)
+  })
+
+  it('lists the folded purposes, each with how many places it holds', () => {
+    const markup = show('others', dorsaleOversized())
+    expect(markup).toContain(STRINGS.detailOthersNote)
+    expect(markup).toContain(STRINGS.detailPurposePlaces('Group 05', 1))
+    expect((markup.match(/<li>/g) ?? []).length).toBe(26)
   })
 
   it('renders nothing for a selection that names nothing', () => {

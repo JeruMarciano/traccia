@@ -1,5 +1,10 @@
 # Dorsale: the map redrawn so one line carries a datum from who comes in to where it goes
 
+> **Superseded 2026-10-13.** The owner rejected the spine and the per-door lines after a real scan.
+> The map is now four columns of cards with one line per way in and one per row of destinations
+> (`src/core/layout.ts`). What survives from this document: rows, folds at three of a kind, the
+> 9 px text floor, and scrolling instead of shrinking.
+
 **Date:** 2026-10-12
 **Status:** implemented on branch feat/map-dorsale-2, which continues feat/map-dorsale (plan docs/plans/2026-10-12-map-dorsale.md).
 **Mockups:** https://claude.ai/artifact/FP7wjqwr4Z8wMR1ni5hnUk (today's map and three directions on

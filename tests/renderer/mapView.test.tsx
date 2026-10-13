@@ -6,11 +6,11 @@ import { computeLayout, type LayoutView } from '../../src/core/layout'
 import { MapView } from '../../src/renderer/components/MapView'
 import { STRINGS } from '../../src/renderer/strings'
 import type { DoorKind, Project } from '../../src/core/types'
-import { dorsaleOversized, dorsaleSmall, dorsaleUgly } from '../fixtures/dorsale'
+import { DORSALE_FIXTURES, dorsaleOversized, dorsaleSmall, dorsaleUgly } from '../fixtures/dorsale'
 import { emptyProject } from '../fixtures/projects'
 import { rossiEditore } from '../fixtures/rossiEditore'
 
-function draw(project: Project = rossiEditore(), view: LayoutView = {}): string {
+function draw(project: Project = rossiEditore(), view: LayoutView = {}, hovered: string | null = null): string {
   return renderToStaticMarkup(
     <MapView
       layout={computeLayout(project, view)}
@@ -20,13 +20,16 @@ function draw(project: Project = rossiEditore(), view: LayoutView = {}): string 
       onToggleGroup={() => {}}
       openKind={view.openKind ?? null}
       onToggleKind={() => {}}
+      hovered={hovered}
     />,
   )
 }
 const count = (markup: string, pattern: RegExp): number => (markup.match(pattern) ?? []).length
 /** The drawing without its key: the key draws a door, a line and an arrowhead of its own. */
 const sheet = (markup: string): string => markup.slice(0, markup.indexOf('<figcaption'))
-const BOTH = { openGroup: 'Marketing', openKind: 'form' as DoorKind }
+/** Closed, and with a fold and the fullest row of destinations open. */
+const VIEWS = (p: Project): LayoutView[] => [{}, { openKind: 'form' }, { openGroup: computeLayout(p).nodes.find((n) => n.kind === 'group')!.id, openKind: 'form' }]
+const BOTH = { openGroup: 'group:Marketing', openKind: 'form' as DoorKind }
 /** The opening tag of the group drawn for one node. */
 const tagOf = (markup: string, id: string): string => markup.match(new RegExp(`<g[^>]*data-id="${id}"[^>]*>`))?.[0] ?? ''
 
@@ -36,19 +39,32 @@ describe('MapView', () => {
   })
 
   it('sizes the sheet to its rows', () => {
-    expect(draw(dorsaleSmall())).toContain('viewBox="0 0 1000 234"')
-    expect(draw(dorsaleUgly(), BOTH)).toContain('viewBox="0 0 1000 408"')
+    expect(draw(dorsaleSmall())).toContain('viewBox="0 0 1000 182"')
+    expect(draw(dorsaleUgly(), BOTH)).toContain('viewBox="0 0 1000 389"')
   })
 
-  it('heads the three columns', () => {
+  it('heads the four columns', () => {
     const markup = draw()
-    for (const head of [STRINGS.headPeople, STRINGS.headDoors, STRINGS.headPlaces]) expect(markup).toContain(`>${head}</text>`)
+    for (const head of [STRINGS.headPeople, STRINGS.headDoors, STRINGS.headController, STRINGS.headPlaces]) expect(markup).toContain(`>${head}</text>`)
   })
 
-  it('draws the organisation as a bar, named above it', () => {
-    expect(count(draw(), /class="spine"/g)).toBe(1)
-    expect(draw()).toContain('Rossi Editore srl')
-    expect(draw(dorsaleSmall())).toContain(STRINGS.yourOrganisation)
+  it('draws the organisation as one card, its name inside it', () => {
+    // The wrong answer: a hollow bar the height of the sheet with the name floating above it.
+    const markup = sheet(draw())
+    const card = markup.match(/<g[^>]*data-id="controller"[^>]*>(.*?)<\/g>/)?.[1] ?? ''
+    expect(count(card, /<rect class="card-box"/g)).toBe(1)
+    expect(card).toContain('class="home"')
+    expect(card).toContain('>Rossi Editore srl</text>')
+    expect(markup).not.toContain('class="spine"')
+    expect(draw(dorsaleSmall())).toContain(`>${STRINGS.yourOrganisation}</text>`)
+  })
+
+  it('draws every stop as a card with one corner', () => {
+    const markup = sheet(draw(dorsaleUgly(), BOTH))
+    const cards = [...markup.matchAll(/<rect class="card-box"[^>]*>/g)].map((m) => m[0])
+    // People, four ways in, the organisation, five rows of destinations.
+    expect(cards).toHaveLength(11)
+    expect(new Set(cards.map((c) => c.match(/rx="([^"]+)"/)?.[1])).size).toBe(1)
   })
 
   it('draws one row per way in, and writes no origin caption on the map', () => {
@@ -73,7 +89,7 @@ describe('MapView', () => {
     expect(count(closed, /class="door door--\d/g)).toBe(3)
     const open = draw(dorsaleUgly(), { openKind: 'form' })
     expect(count(open, /class="door door--\d door--sub/g)).toBe(5)
-    expect(open).toContain('+7 more')
+    expect(open).toContain('>+7 more</text>')
     expect(tagOf(open, 'doorGroup:form')).toContain('aria-expanded="true"')
     expect(tagOf(closed, 'doorGroup:form')).toContain('aria-expanded="false"')
   })
@@ -87,36 +103,102 @@ describe('MapView', () => {
     const long = p.collectionPoints![0]!.page.replace('https://example.test', '')
     const markup = draw(p, { openKind: 'form' })
     for (const [, text] of markup.matchAll(/<text class="row-label[^"]*"[^>]*>([^<]*)</g)) {
-      expect(Array.from(text ?? '').length).toBeLessThanOrEqual(41)
+      expect(Array.from(text ?? '').length).toBeLessThanOrEqual(30)
     }
     expect(markup).toContain(`<title>${long}</title>`)
   })
 
-  it('says in words how many places of a group are not yet identified', () => {
-    const markup = draw(dorsaleUgly())
-    expect(markup).toContain('5 not yet identified')
-    // Marketing, Payments and Systems; not the group that is itself "Not yet identified".
-    expect(count(markup, /not yet identified<\/tspan>/g)).toBe(3)
+  it('counts what is not yet identified once, in its own row, and says so nowhere else', () => {
+    // The wrong answer: "Marketing · 5 not yet identified", three rows above a row counting the same five.
+    const markup = sheet(draw(dorsaleUgly()))
+    expect(count(markup, /not yet identified/gi)).toBe(2) // the row's label and its tooltip
+    expect(markup.match(/<g[^>]*data-id="unidentified"[^>]*>(.*?)<\/g>/)?.[1]).toContain('class="count"')
+    expect(markup.match(/<g[^>]*data-id="unidentified"[^>]*>(.*?)<\/g>/)?.[1]).toMatch(/>15<\/text>/)
   })
 
-  it('lists the members of an open group under it, an unidentified one dashed', () => {
-    const markup = draw(rossiEditore(), { openGroup: 'Marketing' })
+  it('tells own systems, suppliers and the unidentified apart by the shape of the mark', () => {
+    const markup = sheet(draw(rossiEditore()))
+    expect(tagOf(markup, 'own')).toContain('node--internal')
+    expect(markup).toMatch(/<rect class="mark mark--internal"/)
+    expect(markup).toMatch(/<circle class="mark mark--supplier"/)
+    expect(markup).toMatch(/<circle class="mark mark--unidentified"/)
+  })
+
+  it('lists the members of an open row inside its card, each with its own mark', () => {
+    const markup = sheet(draw(rossiEditore(), { openGroup: 'unidentified' }))
     expect(markup).toContain('stat.rossi-editore.it')
-    expect(count(markup, /class="member-mark/g)).toBe(2)
-    expect(count(markup, /class="member-mark member-mark--open"/g)).toBe(1)
-    expect(tagOf(markup, 'group:Marketing')).toContain('node--open')
+    expect(count(markup, /class="member/g)).toBe(2)
+    // Two members and the row's own.
+    expect(count(markup, /class="mark mark--unidentified"/g)).toBe(3)
+    expect(tagOf(markup, 'unidentified')).toContain('node--open')
+    expect(tagOf(markup, 'unidentified')).toContain('aria-expanded="true"')
   })
 
-  it('gives every line the class of its door’s colour, and a neutral one to an unreached place', () => {
-    const markup = draw()
-    expect(markup).toContain('class="path path--0')
-    expect(markup).toContain('class="path path--1')
-    expect(markup).toContain('class="path path--neutral')
+  it('folds the smallest purposes into one row that says how many places it holds', () => {
+    const markup = sheet(draw(dorsaleOversized()))
+    expect(count(markup, /class="node node--/g)).toBe(5)
+    expect(markup).toContain(`>${STRINGS.destination.others}</text>`)
+    const open = sheet(draw(dorsaleOversized(), { openGroup: 'others' }))
+    expect(count(open, /class="member node--sub/g)).toBe(5)
+    expect(open).toContain('>Group 05</text>')
+    expect(open).toContain('>+21 more</text>')
   })
 
-  it('draws an arrowhead exactly where a line ends', () => {
+  it('gives a way in’s line the class of its colour, and the organisation’s lines a neutral one', () => {
+    const markup = sheet(draw())
+    for (const i of [0, 1, 2]) expect(markup).toContain(`class="path path--${i}"`)
+    expect(count(markup, /class="path path--neutral"/g)).toBe(4)
+  })
+
+  it('draws one line and one arrowhead per way in and per row of destinations, on every fixture', () => {
+    // The wrong answer: a line per way in per destination. The oversized project drew 63.
+    for (const [name, make] of DORSALE_FIXTURES) {
+      for (const view of VIEWS(make())) {
+        const layout = computeLayout(make(), view)
+        const markup = sheet(draw(make(), view))
+        const rows = count(markup, /class="(door door--\d|fold door--\d|node node--\w+)[ "]/g) - count(markup, /class="door door--\d door--sub/g)
+        expect(count(markup, /<g class="line/g), name).toBe(rows)
+        expect(count(markup, /class="head head--/g), name).toBe(rows)
+        expect(rows, name).toBe(layout.edges.length)
+      }
+    }
+    expect(count(sheet(draw(dorsaleOversized())), /<g class="line/g)).toBe(15)
+  })
+
+  it('stops each line inside its arrowhead, whose tip is on the edge of the card it points at', () => {
     const layout = computeLayout(dorsaleUgly())
-    expect(count(sheet(draw(dorsaleUgly())), /class="head head--/g)).toBe(layout.edges.filter((e) => e.arrow).length)
+    const markup = sheet(draw(dorsaleUgly()))
+    const lines = [...markup.matchAll(/<g class="line[^"]*">(.*?)<\/g>/g)].map((m) => m[1]!)
+    expect(lines).toHaveLength(layout.edges.length)
+    layout.edges.forEach((e, i) => {
+      const target = layout.nodes.find((n) => n.id === e.to)!
+      expect(e.x2).toBe(target.box.x)
+      // The arrowhead: tip at the card's edge, level, six units long.
+      expect(lines[i]).toContain(`d="M ${e.x2} ${e.y2} l -6 -3 v 6 z"`)
+      // The line: level at both ends, both control points at the midpoint, ending inside the head.
+      const main = [...lines[i]!.matchAll(/class="path [^"]*" d="([^"]*)"/g)].pop()![1]!
+      const end = e.x2 - 5
+      const mid = (e.x1 + end) / 2
+      expect(main).toBe(e.y1 === e.y2 ? `M ${e.x1} ${e.y1} H ${end}` : `M ${e.x1} ${e.y1} C ${mid} ${e.y1} ${mid} ${e.y2} ${end} ${e.y2}`)
+    })
+  })
+
+  it('keeps what a way in is connected to at full strength, under the pointer or selected, and dims the rest', () => {
+    for (const markup of [draw(rossiEditore(), { selectedId: 'door:place:pl-2' }), draw(rossiEditore(), {}, 'door:place:pl-2')]) {
+      for (const lit of ['door:place:pl-2', 'sg-2', 'controller', 'group:Marketing']) expect(tagOf(markup, lit), lit).not.toContain('dim')
+      for (const dimmed of ['door:place:pl-3', 'sg-1', 'group:Delivery', 'own', 'unidentified']) expect(tagOf(markup, dimmed), dimmed).toContain('dim')
+      // Its own line and the organisation's line to Marketing; the other five step back.
+      expect(count(sheet(markup), /<g class="line">/g)).toBe(2)
+      expect(count(sheet(markup), /<g class="line dim">/g)).toBe(5)
+    }
+    expect(tagOf(draw(rossiEditore(), { selectedId: 'door:place:pl-2' }), 'door:place:pl-2')).toContain('selected')
+  })
+
+  it('lets the pointer speak over the selection, and dims nothing while it is on the organisation', () => {
+    const markup = draw(rossiEditore(), { selectedId: 'door:place:pl-2' }, 'group:Delivery')
+    expect(tagOf(markup, 'door:place:pl-3')).not.toContain('dim')
+    expect(tagOf(markup, 'door:place:pl-2')).toContain('dim')
+    expect(draw(rossiEditore(), { selectedId: 'door:place:pl-2' }, 'controller')).not.toContain(' dim')
   })
 
   it('never greys the sheet around nothing: the row that hides the selection stays lit', () => {
@@ -207,8 +289,35 @@ describe('MapView', () => {
       const moreDoors = find(t, 'moreDoors:form')!
       expect(moreDoors.tabIndex).toBe(0)
       moreDoors.onKeyDown!(ev('Enter'))
-      find(t, 'more:Marketing')!.onClick!(ev())
+      find(t, 'more:group:Marketing')!.onClick!(ev())
       expect(log).toEqual(['select doorGroup:form', 'select group:Marketing'])
+    })
+
+    it('opens a row of destinations by its id, and closes it again', () => {
+      const log: string[] = []
+      find(tree({}, log), 'unidentified')!.onClick!(ev())
+      expect(log).toEqual(['select unidentified', 'group unidentified'])
+      const log2: string[] = []
+      find(tree({ openGroup: 'unidentified' }, log2), 'unidentified')!.onKeyDown!(ev('Enter'))
+      expect(log2).toEqual(['select unidentified', 'group null'])
+    })
+
+    it('reports the row the pointer is on, and that it has left', () => {
+      const log: string[] = []
+      const t = MapView({
+        layout: computeLayout(dorsaleUgly()),
+        selected: null,
+        onSelect: () => {},
+        openGroup: null,
+        onToggleGroup: () => {},
+        openKind: null,
+        onToggleKind: () => {},
+        onHover: (id) => log.push(`hover ${id}`),
+      })
+      const row = find(t, 'group:Sales') as unknown as { onMouseEnter: () => void; onMouseLeave: () => void }
+      row.onMouseEnter()
+      row.onMouseLeave()
+      expect(log).toEqual(['hover group:Sales', 'hover null'])
     })
 
     it('selects a sub-row’s own door', () => {
