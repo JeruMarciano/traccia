@@ -22,7 +22,11 @@
  * or external before any hue does, a dashed stroke is dashed in greyscale, and the break mark
  * is a shape. The sheet prints in black and white without losing a single reading.
  */
-import './print.css'
+// The print rules are read as text and appended below, last in the one <style> element. A media
+// query adds no weight, so on paper `.scanbar{display:none}` only beats the screen's
+// `.scanbar{display:flex}` by coming after it; imported as its own stylesheet, print.css landed
+// in <head>, ahead of every rule here, and lost each of those ties.
+import PRINT from './print.css?raw'
 import { MAP_MAX_WIDTH, MAP_MIN_WIDTH } from './mapMetrics'
 
 export const STYLESHEET = `
@@ -450,4 +454,4 @@ export const STYLESHEET = `
    prints can never drift from what the app knows, but of no use on this screen. print.css
    turns it back on inside @media print. */
 .print-only{display:none;}
-`
+` + PRINT
