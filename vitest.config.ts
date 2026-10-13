@@ -6,6 +6,9 @@ export default defineConfig({
   // sheet says, no browser is needed for that, and the app carries no test-only dependency for it.
   test: {
     globals: true,
+    // theme.ts appends print.css to the stylesheet as text; without this vitest hands every
+    // .css import back empty, and the tests would read a stylesheet with no print rules in it.
+    css: true,
     environment: 'node',
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
   },
