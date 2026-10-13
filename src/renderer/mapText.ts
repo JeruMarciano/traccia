@@ -1,4 +1,4 @@
-import type { LayoutNode } from '../core/dorsale'
+import type { LayoutNode } from '../core/layout'
 import { NOT_IDENTIFIED } from '../core/scan'
 import { fitLabel, maxChars } from './fitLabel'
 import { MAP_TEXT } from './mapMetrics'

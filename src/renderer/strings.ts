@@ -53,8 +53,8 @@ export const STRINGS = {
 
   keyPeople: 'People',
   keyPeopleGloss: 'Every line starts here.',
-  keyDoor: 'Way in',
-  keyDoorGloss: 'Where data is collected.',
+  keyDoor: 'Way in: seen by the scan, declared in a document, origin not established',
+  keyDoorGloss: 'Filled, outlined, dashed.',
   keyDirection: 'Direction',
   keyDirectionGloss: 'The arrow points where the data goes.',
   keyInternal: 'Your systems',

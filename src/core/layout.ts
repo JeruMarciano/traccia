@@ -1,61 +1,122 @@
 import { controllerName } from './controller'
-import { deriveDoors, tracePaths } from './doors'
-import type { DoorOrigin, Place, Project } from './types'
+import { deriveDoors, doorRows, tracePaths } from './doors'
+import type { Door, DoorKind, DoorOrigin, Place, Project } from './types'
 
 /**
- * The map reads as a sentence: whose data -> through which door -> to the controller -> onward to
- * whom. Distance now encodes direction, not ownership; ownership survives as the ring's stroke
- * colour alone.
+ * The map reads as a sentence, left to right: whose data, through which way in, across the
+ * organisation, to where it goes. The organisation is a vertical bar, and a door's line crosses it
+ * at the door's own height, so one line of one colour runs from the person to the destination.
  *
- * Pure, and a pure function of its arguments only -- the open ring is a parameter, not state kept
- * here, so the same project and the same selection always draw the same sheet.
+ * Everything is a row. Three or more doors of one kind are one row that opens in place, and so is
+ * a purpose group. Pure, and a pure function of its arguments only: what is open and what is
+ * selected are parameters, so the same project and the same view always draw the same sheet.
  */
 
-export type LayoutNodeKind = 'subject' | 'door' | 'controller' | 'group' | 'member' | 'more'
+export type LayoutNodeKind = 'subject' | 'door' | 'doorGroup' | 'controller' | 'group' | 'member' | 'more'
+
+export interface Box {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 export interface LayoutNode {
   id: string
   kind: LayoutNodeKind
+  /** A name, a door's label, or the bare path of a form ('/' for the site's root). Empty when the
+   *  renderer speaks: the unnamed controller, a folded row, a '+N more' row. */
   label: string
+  /** Centre of the mark. */
   x: number
   y: number
+  /** The box the label may fill. Shortening the text to fit is the renderer's job. */
+  labelBox: Box
+  anchor: 'start' | 'end'
+  /** A sub-row, and the row it hangs from: the renderer draws the bracket between them. */
+  parent?: string
   count?: number
   unexplained?: number
-  /** Group nodes: true when this ring stands open. An open ring is still on the sheet -- it is
-   *  what a reader clicks to close it again, and it still says how many are inside. */
   open?: boolean
-  /** Open group nodes: how far its members sit from the centre, so the renderer can draw the
-   *  boundary round them without knowing this layout's spacing. */
-  openRadius?: number
-  /** Group and member nodes: true for something the organisation runs itself (stroke colour). */
+  /** Group and member rows: true for something the organisation runs itself. */
   internal?: boolean
-  /** More nodes: true when the selection is one of the hidden items, so it is never drawn nowhere. */
+  /** True on the row that hides the selection, so a selection is never drawn nowhere. */
   highlighted?: true
-  /** Door nodes only. */
   origin?: DoorOrigin
-  /** Doors and the paths that leave them: 0-5, or absent for a neutral mark. */
+  /** 0-5, a row's colour. Sub-rows share their fold's. */
   colourIndex?: number
+  doorKind?: DoorKind
+  /** Controller only: the bar every line crosses. */
+  spine?: Box
 }
 
 export interface LayoutEdge {
   from: string
   to: string
-  /** Every edge has one. The arrowhead is drawn at `to`. */
-  directed: true
+  /** The row whose line this is, from the person to the destination. Absent on a neutral line. */
+  door?: string
   colourIndex?: number
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  /** Control points share y1 and y2, so every line leaves and arrives level. */
+  c1x: number
+  c2x: number
+  /** True where the line ends: at a destination row, or on the spine for a door that goes no further. */
+  arrow: boolean
+  /** Spine-to-destination lines: the height at which this door's line entered the spine. */
+  entryY?: number
+}
+
+export interface LayoutView {
+  openGroup?: string | null
+  openKind?: DoorKind | null
+  selectedId?: string | null
 }
 
 export interface LayoutResult {
   nodes: LayoutNode[]
   edges: LayoutEdge[]
-  /** Which group is open, echoed back so the renderer does not re-derive it. */
+  width: number
+  height: number
+  /** What stands open, echoed back so the renderer does not re-derive it. */
   openGroup: string | null
+  openKind: DoorKind | null
+}
+
+export const SHEET_WIDTH = 1000
+/** Where each column stands. Exported so the renderer's column heads sit over them. */
+export const COLUMN = {
+  person: 118,
+  door: 156,
+  doorLabel: 172,
+  lineEnd: 410,
+  spine: 525,
+  spineWidth: 14,
+  ring: 704,
+} as const
+const TOP = 54
+const BOTTOM = 30
+const MIN_BODY = 150
+const ROW = 36
+const SUB = 24
+const PERSON = 64
+const PORT_GAP = 5
+const LAND_GAP = 3
+const RIGHT_EDGE = SHEET_WIDTH - 10
+/** Past this many sub-rows, all but one slot are drawn and the last is a '+N more' row. */
+export const MAX_OPEN = 6
+
+/** Two decimals keeps the SVG readable and the equality tests exact. */
+function round(n: number): number {
+  return Math.round(n * 100) / 100
 }
 
 /**
- * Which places stand in a purpose group on the right-hand side. A door is already drawn on the
- * inbound side and the controller is already the centre; counting either here would put one place
- * on the sheet twice and the ring's count would say so.
+ * Which places stand in a purpose group on the right-hand side. A door is already a row on the
+ * left and the controller is the spine; counting either here would put one place on the sheet
+ * twice and the row's count would say so.
  *
  * Exported because the detail panel lists the same members the map draws, and two copies of this
  * rule would drift the moment one of them changed.
@@ -67,239 +128,339 @@ export function groupMembers(project: Project, group: string): Place[] {
   )
 }
 
-/** How far an open ring's members sit from its centre. Grows a little past three members so
- *  they do not crowd, and stays a layout fact rather than a drawing one. */
-const MEMBER_ORBIT = 40
-
-/** Caps: past these, all but one slot are drawn and the last slot is a '+N more' mark. */
-const MAX_OPEN_MEMBERS = 6
-const MAX_DOORS = 8
-
-/** Two decimals keeps the SVG readable and the equality tests exact. */
-function round(n: number): number {
-  return Math.round(n * 100) / 100
+/** A form is named by its page's path; the site's own root is '/'. Anything that is not an
+ *  address is left as written: a blank beats a guess. */
+function barePath(page: string): string {
+  const path = page.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '')
+  return path === '' ? '/' : path
 }
 
-/**
- * Evenly spaced down a band in the middle of the sheet. One item sits centred, not at the top.
- *
- * The band is half the height rather than the whole of it: the inbound side is read as a
- * sequence, and a person at the top of the sheet joined to a door at the bottom draws a long
- * diagonal that says nothing except that both exist.
- */
-function column(count: number, height: number, band = 0.5): number[] {
-  if (count === 0) return []
-  if (count === 1) return [round(height / 2)]
-  const span = height * band
-  const top = (height - span) / 2
-  return Array.from({ length: count }, (_, i) => round(top + (span * i) / (count - 1)))
+function capped<T>(items: T[]): { shown: T[]; hidden: T[] } {
+  return items.length > MAX_OPEN
+    ? { shown: items.slice(0, MAX_OPEN - 1), hidden: items.slice(MAX_OPEN - 1) }
+    : { shown: items, hidden: [] }
 }
 
-/**
- * Where a purpose group sits around the controller. Groups ring the centre rather than stacking
- * in a column, but only across the eastern side: the western sector is where the people and the
- * doors are, and a group drawn into it would collide with the way in.
- */
-const GROUP_ARC = (100 * Math.PI) / 180
-
-function groupAngle(i: number, count: number): number {
-  if (count === 1) return 0
-  return -GROUP_ARC + (2 * GROUP_ARC * i) / (count - 1)
+/** One horizontal band of a column, before it is given a height on the sheet. */
+interface Band {
+  node: LayoutNode
+  height: number
+  /** Ways in only: the doors whose line this row carries to the spine. None for an open fold's head. */
+  carries: Door[]
+  /** Ways in only: the doors people are drawn into at this row. None for a sub-row. */
+  enters: Door[]
 }
 
-export function computeLayout(
-  project: Project,
-  size: { width: number; height: number },
-  openGroup: string | null = null,
-  selectedId: string | null = null,
-): LayoutResult {
+const total = (bands: Band[]): number => bands.reduce((sum, b) => sum + b.height, 0)
+
+/** Gives each band its place. A label box is written relative to its row until here. */
+function stack(bands: Band[], top: number): void {
+  let y = top
+  for (const b of bands) {
+    b.node.y = round(y + b.height / 2)
+    b.node.labelBox.y = round(b.node.y + b.node.labelBox.y)
+    y += b.height
+  }
+}
+
+export function computeLayout(project: Project, view: LayoutView = {}): LayoutResult {
+  const selectedId = view.selectedId ?? null
   const doors = deriveDoors(project)
-  const paths = tracePaths(project, doors)
+  const pathOf = new Map(tracePaths(project, doors).map((p) => [p.doorId, p]))
   const controller = controllerName(project)
+  const isSelected = (prefix: string, id: string): boolean => selectedId === id || selectedId === `${prefix}${id}`
 
-  // What the right-hand column is made of. A door is already drawn on the inbound side and the
-  // controller is already the centre; drawing either again as a member of its purpose group would
-  // put one place on the sheet twice, and the count under a ring would say so.
-  const onTheRight = project.places.filter(
-    (p) => p.kind !== 'collection' && p.id !== controller.placeId,
+  // Where it goes. A door is already a row on the left and the controller is the spine; drawing
+  // either again as a member of its purpose group would put one place on the sheet twice.
+  const onTheRight = project.places.filter((p) => p.kind !== 'collection' && p.id !== controller.placeId)
+  const membersOf = (g: string): Place[] => onTheRight.filter((p) => p.purposeGroup === g)
+  const isInternal = (g: string): boolean => membersOf(g).every((p) => p.kind === 'internal')
+  // Own systems first, then suppliers, each alphabetical.
+  const groups = [...new Set(onTheRight.map((p) => p.purposeGroup))].sort(
+    (a, b) => Number(isInternal(b)) - Number(isInternal(a)) || (a < b ? -1 : a > b ? 1 : 0),
   )
-  const groups = [...new Set(onTheRight.map((p) => p.purposeGroup))].sort()
-  const open = openGroup !== null && groups.includes(openGroup) ? openGroup : null
+  const openGroup = view.openGroup != null && groups.includes(view.openGroup) ? view.openGroup : null
 
-  const nodes: LayoutNode[] = []
-  const edges: LayoutEdge[] = []
-
-  const colourOf = new Map(doors.map((d) => [d.id, d.colourIndex]))
-  const hiddenMembers = new Map<string, string>()
-  const groupOfPlace = new Map(onTheRight.map((p) => [p.id, p.purposeGroup]))
-
-  // The inbound side, read left to right: the people who reach a door, then the doors. Somebody
-  // with no traced way in is not drawn -- an unconnected dot on the far left reads as a person
-  // nobody handles, which is a claim this map has no evidence for.
-  //
-  // The three columns sit close together on purpose. They are one phrase, and a long arrow
-  // between them adds distance without adding meaning.
-  const reaching = new Set(paths.flatMap((p) => p.subjectIds))
-  const subjects = project.subjectGroups.filter((s) => reaching.has(s.id))
-  const subjectY = column(subjects.length, size.height, 0.44)
-  subjects.forEach((s, i) => {
-    nodes.push({ id: s.id, kind: 'subject', label: s.name, x: round(size.width * 0.07), y: subjectY[i] ?? 0 })
-  })
-
-  const doorsCapped = doors.length > MAX_DOORS
-  const shownDoors = doorsCapped ? doors.slice(0, MAX_DOORS - 1) : doors
-  const hiddenDoors = doorsCapped ? doors.slice(MAX_DOORS - 1) : []
-  const hiddenDoorIds = new Set(hiddenDoors.map((d) => `door:${d.id}`))
-  const doorY = column(Math.min(doors.length, MAX_DOORS), size.height, 0.44)
-  shownDoors.forEach((d, i) => {
-    nodes.push({
-      id: `door:${d.id}`,
-      kind: 'door',
-      label: d.label,
-      x: round(size.width * 0.21),
-      y: doorY[i] ?? 0,
-      origin: d.origin,
-      colourIndex: d.colourIndex,
-    })
-  })
-
-  if (doorsCapped) {
-    nodes.push({
-      id: 'more:doors',
-      kind: 'more',
-      label: `+${hiddenDoors.length} more`,
-      x: round(size.width * 0.21),
-      y: doorY[MAX_DOORS - 1] ?? 0,
-      count: hiddenDoors.length,
-      ...(hiddenDoors.some((d) => selectedId === d.id || selectedId === `door:${d.id}`)
-        ? { highlighted: true as const }
-        : {}),
-    })
-  }
-
-  // Column 3: the controller. Always exactly one once there is anything to answer for, even
-  // before a document names it -- the sentence has no subject otherwise. The empty label is the
-  // renderer's cue to say "Your organisation"; core holds no words the user reads.
-  const anything = project.places.length > 0 || subjects.length > 0
-  const cx = round(size.width * 0.42)
-  const cy = round(size.height / 2)
-  if (anything) {
-    nodes.push({
-      id: 'controller',
-      kind: 'controller',
-      label: controller.name ?? '',
-      x: cx,
-      y: cy,
-      count: project.places.length,
-    })
-  }
-
-  // The purpose groups, set around the controller rather than stacked in a column: what the
-  // organisation hands data to surrounds it, and a ring of five reads at a glance where a column
-  // of five crowds. They occupy the eastern side only, so none of them lands on the way in.
-  //
-  // A ring that opens stays exactly where it is, becoming a boundary with its members set out
-  // around its centre, rather than vanishing and leaving a reader no way back to it.
-  const rx = size.width * 0.235
-  const ry = size.height * 0.35
-  groups.forEach((g, i) => {
-    const inGroup = onTheRight.filter((p) => p.purposeGroup === g)
-    const angle = groupAngle(i, groups.length)
-    const x = round(cx + Math.cos(angle) * rx)
-    const y = round(cy + Math.sin(angle) * ry)
-    const slots = Math.min(inGroup.length, MAX_OPEN_MEMBERS)
-    const orbit = MEMBER_ORBIT + Math.max(slots - 3, 0) * 5
-    nodes.push({
+  const right: Band[] = []
+  /** Which row a place's lines arrive at: its group, itself when the group is open, or the fold. */
+  const rowOfPlace = new Map<string, string>()
+  for (const g of groups) {
+    const inGroup = membersOf(g)
+    const open = g === openGroup
+    const head: LayoutNode = {
       id: `group:${g}`,
       kind: 'group',
       label: g,
-      x,
-      y,
+      x: COLUMN.ring,
+      y: 0,
+      labelBox: { x: COLUMN.ring + 20, y: -8, width: RIGHT_EDGE - (COLUMN.ring + 20), height: 16 },
+      anchor: 'start',
       count: inGroup.length,
       unexplained: inGroup.filter((p) => p.kind === 'unknown').length,
-      internal: inGroup.length > 0 && inGroup.every((p) => p.kind === 'internal'),
-      open: g === open,
-      ...(g === open ? { openRadius: orbit } : {}),
-    })
-    if (g !== open) return
-    // Members set out around the centre, starting at twelve o'clock. One member sits above the
-    // centre rather than on it, so the group's own count stays readable underneath.
-    const capped = inGroup.length > MAX_OPEN_MEMBERS
-    const shown = capped ? inGroup.slice(0, MAX_OPEN_MEMBERS - 1) : inGroup
-    const hidden = capped ? inGroup.slice(MAX_OPEN_MEMBERS - 1) : []
-    const at = (k: number) => {
-      const angle = (k / Math.max(slots, 1)) * Math.PI * 2 - Math.PI / 2
-      return { x: round(x + Math.cos(angle) * orbit), y: round(y + Math.sin(angle) * orbit) }
+      internal: isInternal(g),
+      open,
+      ...(!open && inGroup.some((p) => isSelected('member:', p.id)) ? { highlighted: true as const } : {}),
     }
-    if (capped) {
-      nodes.push({
-        id: `more:${g}`,
+    right.push({ node: head, height: ROW, carries: [], enters: [] })
+    if (!open) {
+      for (const p of inGroup) rowOfPlace.set(p.id, head.id)
+      continue
+    }
+    const { shown, hidden } = capped(inGroup)
+    const sub = (id: string, label: string, extra: Partial<LayoutNode>): void => {
+      right.push({
+        node: {
+          id,
+          kind: 'member',
+          label,
+          x: COLUMN.ring + 17,
+          y: 0,
+          labelBox: { x: COLUMN.ring + 28, y: -7, width: RIGHT_EDGE - (COLUMN.ring + 28), height: 14 },
+          anchor: 'start',
+          parent: head.id,
+          ...extra,
+        },
+        height: SUB,
+        carries: [],
+        enters: [],
+      })
+    }
+    for (const p of shown) {
+      sub(`member:${p.id}`, p.name, { unexplained: p.kind === 'unknown' ? 1 : 0, internal: p.kind === 'internal' })
+      rowOfPlace.set(p.id, `member:${p.id}`)
+    }
+    if (hidden.length > 0) {
+      sub(`more:${g}`, '', {
         kind: 'more',
-        label: `+${hidden.length} more`,
-        ...at(MAX_OPEN_MEMBERS - 1),
         count: hidden.length,
-        ...(hidden.some((m) => selectedId === m.id || selectedId === `member:${m.id}`)
-          ? { highlighted: true as const }
-          : {}),
+        ...(hidden.some((p) => isSelected('member:', p.id)) ? { highlighted: true as const } : {}),
       })
-      for (const m of hidden) hiddenMembers.set(m.id, `more:${g}`)
+      for (const p of hidden) rowOfPlace.set(p.id, `more:${g}`)
     }
-    shown.forEach((m, k) => {
-      const angle = (k / Math.max(slots, 1)) * Math.PI * 2 - Math.PI / 2
-      nodes.push({
-        id: `member:${m.id}`,
-        kind: 'member',
-        label: m.name,
-        x: round(x + Math.cos(angle) * orbit),
-        y: round(y + Math.sin(angle) * orbit),
-        unexplained: m.kind === 'unknown' ? 1 : 0,
-        internal: m.kind === 'internal',
+  }
+
+  /** The rows a set of doors reaches, deduplicated. */
+  const targetsOf = (carried: Door[]): string[] => [
+    ...new Set(
+      carried.flatMap((d) => pathOf.get(d.id)?.destinationIds ?? []).flatMap((id) => rowOfPlace.get(id) ?? []),
+    ),
+  ]
+  /** A door with k targets leaves the spine from k points PORT_GAP apart; its row grows to hold them. */
+  const tall = (base: number, carried: Door[]): number =>
+    Math.max(base, PORT_GAP * (targetsOf(carried).length - 1) + 16)
+
+  // Ways in.
+  const rows = doorRows(doors)
+  const openKind =
+    view.openKind != null && rows.some((r) => r.folded && r.kind === view.openKind) ? view.openKind : null
+  const left: Band[] = []
+  const rowBox = (): Box => ({ x: COLUMN.doorLabel, y: -19, width: COLUMN.lineEnd - COLUMN.doorLabel, height: 15 })
+  const subBox = (): Box => ({ x: COLUMN.doorLabel + 6, y: -16, width: COLUMN.lineEnd - COLUMN.doorLabel - 6, height: 13 })
+  const doorNode = (d: Door, extra: Partial<LayoutNode>): LayoutNode => ({
+    id: `door:${d.id}`,
+    kind: 'door',
+    label: d.kind === 'form' ? barePath(d.label) : d.label,
+    x: COLUMN.door,
+    y: 0,
+    labelBox: rowBox(),
+    anchor: 'start',
+    origin: d.origin,
+    colourIndex: d.colourIndex,
+    ...(d.kind === undefined ? {} : { doorKind: d.kind }),
+    ...extra,
+  })
+  for (const row of rows) {
+    const first = row.doors[0]
+    if (first === undefined) continue
+    if (!row.folded || row.kind === null) {
+      left.push({ node: doorNode(first, {}), height: tall(ROW, row.doors), carries: row.doors, enters: row.doors })
+      continue
+    }
+    const open = row.kind === openKind
+    const head: LayoutNode = {
+      id: `doorGroup:${row.kind}`,
+      kind: 'doorGroup',
+      label: '',
+      x: COLUMN.door,
+      y: 0,
+      labelBox: rowBox(),
+      anchor: 'start',
+      count: row.doors.length,
+      colourIndex: first.colourIndex,
+      doorKind: row.kind,
+      open,
+      ...(!open && row.doors.some((d) => isSelected('door:', d.id)) ? { highlighted: true as const } : {}),
+    }
+    if (!open) {
+      left.push({ node: head, height: tall(ROW, row.doors), carries: row.doors, enters: row.doors })
+      continue
+    }
+    // Open: the head takes the people's line and carries nothing; each sub-row carries its own.
+    left.push({ node: head, height: ROW, carries: [], enters: row.doors })
+    const { shown, hidden } = capped(row.doors)
+    for (const d of shown) {
+      left.push({
+        node: doorNode(d, { x: COLUMN.door + 10, labelBox: subBox(), parent: head.id }),
+        height: tall(SUB, [d]),
+        carries: [d],
+        enters: [],
       })
+    }
+    if (hidden.length > 0) {
+      left.push({
+        node: {
+          id: `moreDoors:${row.kind}`,
+          kind: 'more',
+          label: '',
+          x: COLUMN.door + 10,
+          y: 0,
+          labelBox: subBox(),
+          anchor: 'start',
+          parent: head.id,
+          count: hidden.length,
+          colourIndex: first.colourIndex,
+          doorKind: row.kind,
+          ...(hidden.some((d) => isSelected('door:', d.id)) ? { highlighted: true as const } : {}),
+        },
+        height: tall(SUB, hidden),
+        carries: hidden,
+        enters: [],
+      })
+    }
+  }
+
+  // Whose data. Somebody with no traced way in is not drawn: an unconnected disc reads as a person
+  // nobody handles, which is a claim this map has no evidence for.
+  const reaching = new Set([...pathOf.values()].flatMap((p) => p.subjectIds))
+  const subjects = project.subjectGroups.filter((s) => reaching.has(s.id))
+
+  if (project.places.length === 0 && doors.length === 0 && subjects.length === 0) {
+    return { nodes: [], edges: [], width: SHEET_WIDTH, height: 0, openGroup: null, openKind: null }
+  }
+
+  const body = Math.max(total(left), total(right), subjects.length * PERSON, MIN_BODY)
+  stack(left, TOP + (body - total(left)) / 2)
+  stack(right, TOP + (body - total(right)) / 2)
+
+  const nodes: LayoutNode[] = []
+  const firstPersonY = TOP + body / 2 - ((subjects.length - 1) * PERSON) / 2
+  subjects.forEach((s, i) => {
+    const y = round(firstPersonY + i * PERSON)
+    nodes.push({
+      id: s.id,
+      kind: 'subject',
+      label: s.name,
+      x: COLUMN.person,
+      y,
+      labelBox: { x: 0, y: y - 8, width: COLUMN.person - 14, height: 16 },
+      anchor: 'end',
     })
   })
+  for (const b of left) nodes.push(b.node)
+  // Always exactly one once there is anything to answer for, even before a document names it. The
+  // empty label is the renderer's cue to say "Your organisation"; core holds no words the user reads.
+  const spineCentre = COLUMN.spine + COLUMN.spineWidth / 2
+  nodes.push({
+    id: 'controller',
+    kind: 'controller',
+    label: controller.name ?? '',
+    x: spineCentre,
+    y: 26,
+    labelBox: { x: spineCentre + 20, y: 19, width: RIGHT_EDGE - (spineCentre + 20), height: 15 },
+    anchor: 'start',
+    count: project.places.length,
+    spine: { x: COLUMN.spine, y: TOP - 8, width: COLUMN.spineWidth, height: body + 16 },
+  })
+  for (const b of right) nodes.push(b.node)
 
-  // Every edge directed; the coloured ones repeat a door's colour along the whole path, so two
-  // doors into one destination are two lines a reader can follow separately.
-  const reached = new Set<string>()
-  const drawn = new Set(nodes.map((n) => n.id))
-  for (const path of paths) {
-    const colourIndex = colourOf.get(path.doorId)
-    const isHidden = hiddenDoorIds.has(`door:${path.doorId}`)
-    // A hidden door's lines go to the mark: neutral, and once per pair.
-    const doorNodeId = isHidden ? 'more:doors' : `door:${path.doorId}`
-    const doorColour = isHidden ? undefined : colourIndex
-    const push = (from: string, to: string, colour: number | undefined): void => {
-      if (isHidden && edges.some((e) => e.from === from && e.to === to)) return
-      edges.push({ from, to, directed: true, colourIndex: colour })
-    }
-    for (const s of path.subjectIds) {
-      if (!drawn.has(s)) continue
-      push(s, doorNodeId, doorColour)
-    }
-    if (anything && (path.subjectIds.length > 0 || path.destinationIds.length > 0)) {
-      push(doorNodeId, 'controller', doorColour)
-    }
-    for (const dest of path.destinationIds) {
-      const g = groupOfPlace.get(dest)
-      if (g === undefined) continue
-      const to = g === open ? (hiddenMembers.get(dest) ?? `member:${dest}`) : `group:${g}`
-      if (!drawn.has(to)) continue
-      // Several hidden members collapse onto one edge; it keeps a colour only while every path
-      // that reaches the mark agrees on it.
-      const prior = to.startsWith('more:') ? edges.find((e) => e.from === 'controller' && e.to === to) : undefined
-      if (prior === undefined) edges.push({ from: 'controller', to, directed: true, colourIndex })
-      else if (prior.colourIndex !== colourIndex) delete prior.colourIndex
-      reached.add(to)
+  const at = new Map(nodes.map((n) => [n.id, n]))
+  const yOf = (id: string): number => at.get(id)?.y ?? 0
+  const edges: LayoutEdge[] = []
+  const spineLeft = COLUMN.spine
+  const spineRight = COLUMN.spine + COLUMN.spineWidth
+
+  // People to the top-level rows. A folded row takes one line; its bracket carries it to the sub-rows.
+  for (const s of subjects) {
+    for (const b of left) {
+      if (!b.enters.some((d) => pathOf.get(d.id)?.subjectIds.includes(s.id))) continue
+      const x1 = COLUMN.person + 8
+      const x2 = b.node.x - 4
+      edges.push({
+        from: s.id,
+        to: b.node.id,
+        door: b.node.id,
+        colourIndex: b.node.colourIndex,
+        x1,
+        y1: yOf(s.id),
+        x2,
+        y2: b.node.y,
+        c1x: x1 + 14,
+        c2x: x2 - 14,
+        arrow: false,
+      })
     }
   }
 
-  // Anything no door reaches still belongs on the sheet: one neutral line from the controller.
-  // Inventing a door for it, or leaving it off, would both be claims the project cannot support.
-  for (const n of nodes) {
-    if (n.kind === 'subject' || n.kind === 'door' || n.kind === 'controller' || n.id === 'more:doors') continue
-    if (reached.has(n.id)) continue
-    edges.push({ from: 'controller', to: n.id, directed: true })
+  // Each carrying row to the spine at its own height, then out again from points PORT_GAP apart,
+  // in the vertical order of the rows it reaches, so a door's own lines never cross each other.
+  const leaving: { row: LayoutNode; to: string; y1: number }[] = []
+  for (const b of left) {
+    if (b.carries.length === 0) continue
+    const targets = targetsOf(b.carries).sort((p, q) => yOf(p) - yOf(q))
+    const y = b.node.y
+    const x1 = b.node.x + 4
+    edges.push({
+      from: b.node.id,
+      to: 'controller',
+      door: b.node.id,
+      colourIndex: b.node.colourIndex,
+      x1,
+      y1: y,
+      x2: spineLeft,
+      y2: y,
+      c1x: x1,
+      c2x: spineLeft,
+      arrow: targets.length === 0,
+    })
+    targets.forEach((to, j) =>
+      leaving.push({ row: b.node, to, y1: round(y + (j - (targets.length - 1) / 2) * PORT_GAP) }),
+    )
   }
 
-  return { nodes, edges, openGroup: open }
+  // Two doors into one row land LAND_GAP apart, in the order they left the spine.
+  const landing = (target: LayoutNode): number => target.x - (target.kind === 'group' ? 18 : 12)
+  const reached = new Set(leaving.map((l) => l.to))
+  for (const to of reached) {
+    const target = at.get(to)
+    if (target === undefined) continue
+    const arriving = leaving.filter((l) => l.to === to).sort((p, q) => p.y1 - q.y1)
+    const x2 = landing(target)
+    arriving.forEach((l, i) => {
+      edges.push({
+        from: 'controller',
+        to,
+        door: l.row.id,
+        colourIndex: l.row.colourIndex,
+        x1: spineRight,
+        y1: l.y1,
+        x2,
+        y2: round(target.y + (i - (arriving.length - 1) / 2) * LAND_GAP),
+        c1x: spineRight + 70,
+        c2x: x2 - 70,
+        arrow: true,
+        entryY: l.row.y,
+      })
+    })
+  }
+
+  // A destination no door reaches still belongs on the sheet: one neutral line, level, from the
+  // spine. Inventing a door for it, or leaving it off, would both be claims the project cannot
+  // support. An open group is reached through its members, so its own row takes none.
+  for (const b of right) {
+    if (reached.has(b.node.id) || (b.node.kind === 'group' && b.node.open === true)) continue
+    const x2 = landing(b.node)
+    edges.push({ from: 'controller', to: b.node.id, x1: spineRight, y1: b.node.y, x2, y2: b.node.y, c1x: spineRight, c2x: x2, arrow: true })
+  }
+
+  return { nodes, edges, width: SHEET_WIDTH, height: round(TOP + body + BOTTOM), openGroup, openKind }
 }

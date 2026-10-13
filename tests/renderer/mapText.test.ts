@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeLayout } from '../../src/core/dorsale'
+import { computeLayout } from '../../src/core/layout'
 import { drawnText, fontSizeOf, rowSuffix, rowText } from '../../src/renderer/mapText'
 import { MAP_TEXT } from '../../src/renderer/mapMetrics'
 import { STRINGS } from '../../src/renderer/strings'
