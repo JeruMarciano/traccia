@@ -1,8 +1,7 @@
 # Dorsale: the map redrawn so one line carries a datum from who comes in to where it goes
 
 **Date:** 2026-10-12
-**Status:** direction approved by the user (B "Dorsale", visitors joined to every door found on
-the site). The written document awaits the user's review before a plan is written.
+**Status:** implemented on branch feat/map-dorsale-2, which continues feat/map-dorsale (plan docs/plans/2026-10-12-map-dorsale.md).
 **Mockups:** https://claude.ai/artifact/FP7wjqwr4Z8wMR1ni5hnUk (today's map and three directions on
 three real scans). The same page is committed beside this file as
 `2026-10-12-map-dorsale-mockup.html`; its script is a working sketch of the geometry below.
@@ -139,13 +138,14 @@ its height is set by its rows. Each rule is followed by the case that breaks it.
     identified").
     - *Breaks when:* two doors reach the same row. Their arrowheads land 3 units apart.
     - *Breaks when:* the open group's selected member is behind "+N more": that row is highlighted.
-14. **When a group is open, lines go to its members**, not to the group; hidden members' lines
-    collapse onto "+N more" and keep a colour only while every line agrees on it (today's rule).
+14. **When a group is open, lines go to its members**, not to the group; a door that reaches
+    hidden members has one line of its own to "+N more".
 
 ### 3.5 The sheet
 
 15. **The drawing grows with its rows and scales to the window**, as in Lettera §3.4. Target: at a
-    1180×740 window with the panel open, labels are 9 px or more on screen for the worst real case
+    1180×740 window with the panel open, labels are 9 px or more on screen (held by construction: nothing on the map is set under 12
+    units and the sheet is never drawn under 750 px wide) for the worst real case
     with the largest group and the forms both open. Below that floor the sheet stops shrinking and
     scrolls vertically.
     - *Breaks when:* printing. Print has no scroll; the sheet scales to the page, and an oversized
@@ -153,7 +153,8 @@ its height is set by its rows. Each rule is followed by the case that breaks it.
 16. **Labels are part of the layout result** (position, anchor, the box they may fill), so a test
     checks that no two label boxes overlap and none crosses a line of another row. Shortening the
     text is the renderer's job and is a pure function with its own test. `computeLayout` stays a
-    pure function of project, size, open group, open door kind and selection.
+    pure function of the project and the view (open group, open door kind, selection); the sheet is
+    always 1000 units wide and its height is a result.
 
 ### 3.6 Caps
 
@@ -196,7 +197,7 @@ and any name in a path replaced (the mockup's data was made this way), saved as 
 - **Medium:** R5 run 43. 7 doors (6 forms), 3 groups, 13 places.
 - **Ugly:** R5 run 15. 15 doors (12 forms, labels to 106 characters), 5 groups, 40 places, a group
   of 17.
-- **Oversized, synthetic:** 30 purpose groups; 19 doors (14 forms, one with a 233-character path,
+- **Oversized, synthetic:** 30 purpose groups; 19 doors (10 forms, one with a 233-character path,
   two of each other kind, one declared in a document); an open group of 14; 12 subject groups; no
   controller name.
 
@@ -214,6 +215,7 @@ suite is not the claim; the screenshot is.
 - `src/core/layout.ts`: rewritten. New in the result: row boxes and label boxes, the grouped-door
   node kind, and for each edge the height at which it meets the spine.
 - `src/core/doors.ts`: `tracePaths` gains rule 6.
+- `src/core/doors.ts` also decides the rows (`doorRows`) and gives a door its row's colour; `src/core/panel.ts` gains the panel of a folded row.
 - `src/renderer/components/MapView.tsx`: the drawing of rows, the spine, curved paths and the
   bracket; print dash patterns per door colour stay.
 - `tests/core/layout.test.ts` (418 lines): the geometry assertions (arc, ring, columns) are
@@ -226,3 +228,32 @@ suite is not the claim; the screenshot is.
 The map comes first and is useful on its own: it is what the user cannot read today. Lettera's
 remaining sections (panel, type, dark variant, first run) follow in the same plan as later batches
 or in their own; the plan session decides, and nothing here depends on them.
+
+## 9. Limits found while building
+
+Measured 2026-10-13 in the running app on the three real scans (anonymised), window 1180×740,
+closed and with the forms and the largest group open and the panel open: the smallest text is
+10.06 px, no two labels touch, and every way in has a line in from the visitors and a line to the
+bar. Pictures: `img/2026-10-12-dorsale-before.png`, `…-after.png`, `…-after-open.png`,
+`…-print.png`.
+
+- **A colour is a row's, not a door's.** A rescan that changes the number of rows shifts the
+  colours below it. Stable for one file as saved, not across scans.
+- **A folded row has a panel of its own**, which this document did not ask for: it lists every
+  door of the kind, each one selectable. Without it, seven of the twelve forms of the worst real
+  case could be reached by no click. Choosing a hidden one highlights "+N more" (or the closed
+  row) in its place.
+- **A label is shortened by whole characters.** An accented pair, a flag or a joined emoji is
+  never cut in the middle; the width of a label is still an estimate (0.52 of the font size per
+  character), since the map is drawn without measuring text.
+- **With a place selected, everything that does not lead to it is drawn faint**, the other rows'
+  arrowheads included. On the worst case with both folds open this leaves one line at full
+  strength and about forty marks faint: correct, and sparse to look at.
+- **On paper the four rows are four dash patterns** and can be followed in black and white. An
+  oversized project prints small (no scroll on paper).
+- **Not the map's doing, found while taking the print picture:** the scan bar, the action buttons
+  and the notice are still drawn under print, because the rule that hides them loses to the theme
+  stylesheet. It was so before this work; it is recorded as its own task.
+- **Not independently reviewed task by task.** Tasks 1–6 had a reviewer each. For Tasks 7–10 the
+  session could not launch one; the plan's code had been run end to end beforehand, each task's
+  test was watched failing, and the proof above is what stands for them.
