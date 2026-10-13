@@ -4,7 +4,7 @@ import { panelFor } from '../../src/core/panel'
 import { answerByHand } from '../../src/core/answers'
 import { rossiEditore } from '../fixtures/rossiEditore'
 import { emptyProject } from '../fixtures/projects'
-import { dorsaleUgly, scanLike } from '../fixtures/dorsale'
+import { dorsaleOversized, dorsaleUgly, scanLike } from '../fixtures/dorsale'
 import vendorsJson from '../../src/data/vendors.json'
 import type { VendorDictionary } from '../../src/core/types'
 
@@ -172,20 +172,53 @@ describe('panelFor the controller', () => {
   })
 })
 
-describe('panelFor a group', () => {
-  it('lists its members, unexplained ones marked', () => {
+describe('panelFor a row of destinations', () => {
+  it('lists one purpose’s suppliers, and only those somebody has identified', () => {
     const d = panel('group:Marketing')
     if (d?.sort !== 'group') throw new Error('expected a group panel')
+    expect(d).toMatchObject({ row: 'purpose', name: 'Marketing' })
+    expect(d.members).toEqual([{ id: 'pl-4', name: 'Mailchimp' }])
+  })
+
+  it('lists what nobody has identified once, each with the purpose its address suggested', () => {
+    // The wrong answer: stat.rossi-editore.it listed under Marketing as well, and counted twice.
+    const d = panel('unidentified')
+    if (d?.sort !== 'group') throw new Error('expected a group panel')
+    expect(d).toMatchObject({ row: 'unidentified', name: '' })
     expect(d.members).toEqual([
-      { id: 'pl-4', name: 'Mailchimp', unexplained: false },
-      { id: 'pl-8', name: 'stat.rossi-editore.it', unexplained: true },
+      { id: 'pl-8', name: 'stat.rossi-editore.it', purpose: 'Marketing' },
+      { id: 'pl-9', name: expect.any(String), purpose: 'Systems' },
     ])
+    expect(panel('group:Systems')).toBeNull()
+  })
+
+  it('lists the organisation’s own systems together, each with what it is for', () => {
+    const d = panel('own')
+    if (d?.sort !== 'group') throw new Error('expected a group panel')
+    expect(d.row).toBe('own')
+    expect(d.members.map((m) => m.purpose).sort()).toEqual(['Payroll', 'Support'])
   })
 
   it('leaves out the door and the controller, exactly as the map does', () => {
-    const d = panel('group:Systems')
-    if (d?.sort !== 'group') throw new Error('expected a group panel')
-    expect(d.members.map((m) => m.id)).toEqual(['pl-9'])
+    const everyone = ['own', 'group:Marketing', 'group:Delivery', 'unidentified'].flatMap((id) => {
+      const d = panel(id)
+      return d?.sort === 'group' ? d.members.map((m) => m.id) : []
+    })
+    expect(everyone).not.toContain('pl-1')
+    expect(everyone).not.toContain('pl-2')
+    expect(new Set(everyone).size).toBe(everyone.length)
+  })
+
+  it('lists the purposes the map folds into one row, and still answers for each of them', () => {
+    const p = dorsaleOversized()
+    const d = panelFor(p, 'others', V)
+    if (d?.sort !== 'purposes') throw new Error('expected a purposes panel')
+    expect(d.purposes).toHaveLength(26)
+    expect(d.purposes[0]).toEqual({ name: 'Group 05', places: 1 })
+    const folded = panelFor(p, 'group:Group 20', V)
+    if (folded?.sort !== 'group') throw new Error('expected a group panel')
+    expect(folded.members).toEqual([{ id: 'pl-20-1', name: 'Vendor 20.1' }])
+    expect(panelFor(rossiEditore(), 'others', V)).toBeNull()
   })
 })
 

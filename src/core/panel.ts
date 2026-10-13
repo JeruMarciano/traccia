@@ -1,7 +1,7 @@
 import { controllerName } from './controller'
 import { DOOR_KINDS, FOLD_AT, barePath, deriveDoors, tracePaths } from './doors'
 import { computeGaps } from './gaps'
-import { groupMembers } from './layout'
+import { destinations } from './layout'
 import { NOT_IDENTIFIED } from './scan'
 import { identify } from './vendors'
 import type {
@@ -106,8 +106,19 @@ export interface ControllerPanel {
 
 export interface GroupPanel {
   sort: 'group'
+  /** Which row of destinations: the organisation's own systems, one purpose's suppliers, or what
+   *  nobody has identified. The first and last have no name of their own; the renderer speaks it. */
+  row: 'own' | 'purpose' | 'unidentified'
   name: string
-  members: { id: string; name: string; unexplained: boolean }[]
+  /** `purpose` only where the row is not one purpose and the place has one: a row that mixes
+   *  purposes says so here, member by member, and not on the map. */
+  members: { id: string; name: string; purpose?: string }[]
+}
+
+/** The purposes the map folds into one row, largest first, each with how many places it holds. */
+export interface PurposesPanel {
+  sort: 'purposes'
+  purposes: { name: string; places: number }[]
 }
 
 export interface DoorGroupPanel {
@@ -117,7 +128,7 @@ export interface DoorGroupPanel {
   doors: { id: string; label: string }[]
 }
 
-export type Panel = PlacePanel | DoorPanel | ControllerPanel | GroupPanel | DoorGroupPanel
+export type Panel = PlacePanel | DoorPanel | ControllerPanel | GroupPanel | PurposesPanel | DoorGroupPanel
 
 // Mirrors the displayName/titleCase pair in scan.ts, the only place a scanned host is turned into
 // a place name. A Place carries no domain, so matching an observation back to the place it
@@ -303,14 +314,28 @@ export function panelFor(
     }
   }
 
-  if (selectedId.startsWith('group:')) {
-    const name = selectedId.slice('group:'.length)
-    const members = groupMembers(project, name)
+  // The rows of destinations, by the ids the layout gives them. A purpose the map folds into
+  // "other purposes" is not a row there, and still answers here: its places are in the project.
+  const rows = destinations(project)
+  const others = rows.find((d) => d.id === 'others')
+  if (selectedId === 'others') {
+    if (others?.purposes === undefined) return null
+    return { sort: 'purposes', purposes: others.purposes.map((p) => ({ name: p.name, places: p.places.length })) }
+  }
+  if (selectedId === 'own' || selectedId === 'unidentified' || selectedId.startsWith('group:')) {
+    const name = selectedId.startsWith('group:') ? selectedId.slice('group:'.length) : ''
+    const members =
+      rows.find((d) => d.id === selectedId)?.places ?? others?.purposes?.find((p) => p.name === name)?.places ?? []
     if (members.length === 0) return null
     return {
       sort: 'group',
+      row: name === '' ? (selectedId as 'own' | 'unidentified') : 'purpose',
       name,
-      members: members.map((m) => ({ id: m.id, name: m.name, unexplained: m.kind === 'unknown' })),
+      members: members.map((m) => ({
+        id: m.id,
+        name: m.name,
+        ...(name === '' && m.purposeGroup !== '' && m.purposeGroup !== NOT_IDENTIFIED ? { purpose: m.purposeGroup } : {}),
+      })),
     }
   }
 

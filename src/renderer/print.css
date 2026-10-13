@@ -8,10 +8,11 @@
  * are ordinary text in the DOM at all times -- theme.ts keeps them off the screen -- so what
  * prints can never say something the app is not also showing, or fail to say something it is.
  *
- * One distinction does need a rule here. A door's colour travels its whole path, and two doors
- * feeding one destination are two parallel lines told apart by hue -- which a monochrome printer
- * flattens to two identical greys. So on paper each door colour also takes its own dash pattern:
- * the count of lines and the pattern of each survive the photocopier, and the label says the rest.
+ * One distinction does need a rule here. A way in's line carries its colour from the people to the
+ * organisation, and the lines of several ways in arrive side by side, told apart by hue -- which a
+ * monochrome printer flattens to identical greys. So on paper each door colour also takes its own
+ * dash pattern: the count of lines and the pattern of each survive the photocopier, and the label
+ * says the rest. Nothing is dimmed on paper: a selection is a question asked of the screen.
  * Every other distinction the map makes is already carried by shape, weight or label (theme.ts).
  */
 @media print {

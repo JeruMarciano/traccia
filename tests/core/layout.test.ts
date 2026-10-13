@@ -1,5 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { COLUMN, MAX_OPEN, computeLayout, type Box, type LayoutEdge, type LayoutResult, type LayoutView } from '../../src/core/layout'
+import {
+  COLUMN,
+  MAX_DESTINATIONS,
+  MAX_OPEN,
+  computeLayout,
+  destinations,
+  traced,
+  tracedEdge,
+  type Box,
+  type LayoutResult,
+  type LayoutView,
+} from '../../src/core/layout'
+import { NOT_IDENTIFIED } from '../../src/core/scan'
 import type { DoorKind, Project } from '../../src/core/types'
 import { DORSALE_FIXTURES, dorsaleMedium, dorsaleOversized, dorsaleSmall, dorsaleUgly, rightPlaces, scanLike } from '../fixtures/dorsale'
 import { emptyProject } from '../fixtures/projects'
@@ -8,20 +20,20 @@ import { rossiEditore } from '../fixtures/rossiEditore'
 const node = (l: LayoutResult, id: string) => l.nodes.find((n) => n.id === id)
 const ids = (l: LayoutResult, kind: string) => l.nodes.filter((n) => n.kind === kind).map((n) => n.id)
 const rossi = (view: LayoutView = {}) => computeLayout(rossiEditore(), view)
-/** The largest purpose group of a project: the one worth opening in a test. */
-const biggest = (p: Project): string => {
-  const sizes = new Map<string, number>()
-  for (const pl of rightPlaces(p)) sizes.set(pl.purposeGroup, (sizes.get(pl.purposeGroup) ?? 0) + 1)
-  return [...sizes].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]![0]
-}
+const right = (b: Box): number => b.x + b.width
+/** The cards of a column: the rows a line starts from or ends at. */
+const wayInCards = (l: LayoutResult) => l.nodes.filter((n) => (n.kind === 'door' || n.kind === 'doorGroup') && n.parent === undefined)
+const destinationCards = (l: LayoutResult) => l.nodes.filter((n) => n.kind === 'group' && n.parent === undefined)
+/** The fullest row of destinations: the one worth opening in a test. */
+const biggest = (p: Project): string => [...destinations(p)].sort((a, b) => b.places.length - a.places.length)[0]!.id
 
 describe('the sentence, left to right', () => {
-  it('stands the people left of the ways in, those left of the spine, and the destinations right of it', () => {
+  it('stands the people left of the ways in, those left of the organisation, and the destinations right of it', () => {
     const l = rossi()
-    const spine = node(l, 'controller')!.spine!
-    expect(node(l, 'sg-2')!.x).toBeLessThan(node(l, 'door:place:pl-2')!.x)
-    expect(node(l, 'door:place:pl-2')!.x).toBeLessThan(spine.x)
-    for (const g of l.nodes.filter((n) => n.kind === 'group')) expect(g.x).toBeGreaterThan(spine.x + spine.width)
+    const org = node(l, 'controller')!.box
+    expect(right(node(l, 'people')!.box)).toBeLessThan(node(l, 'door:place:pl-2')!.box.x)
+    expect(right(node(l, 'door:place:pl-2')!.box)).toBeLessThan(org.x)
+    for (const g of destinationCards(l)) expect(g.box.x).toBeGreaterThan(right(org))
   })
 
   it('draws exactly one controller, named when a document named it', () => {
@@ -33,44 +45,64 @@ describe('the sentence, left to right', () => {
     expect(node(computeLayout(dorsaleSmall()), 'controller')!.label).toBe('')
   })
 
-  it('makes the spine as tall as every row on either side', () => {
-    const l = computeLayout(dorsaleUgly(), { openGroup: 'Marketing', openKind: 'form' })
-    const spine = node(l, 'controller')!.spine!
-    for (const n of l.nodes.filter((n) => n.kind !== 'controller')) {
-      expect(n.y).toBeGreaterThan(spine.y)
-      expect(n.y).toBeLessThan(spine.y + spine.height)
+  it('draws the organisation as a card on the middle of the flow, only as tall as its lines need', () => {
+    // The wrong answer: a pole the full height of the sheet, which is what the card replaced.
+    expect(node(computeLayout(dorsaleSmall()), 'controller')!.box.height).toBe(56)
+    for (const [name, make] of DORSALE_FIXTURES) {
+      const l = computeLayout(make(), { openGroup: biggest(make()), openKind: 'form' })
+      const org = node(l, 'controller')!
+      expect(org.box.y + org.box.height / 2, name).toBe(org.y)
+      expect(org.y, name).toBeCloseTo((44 + l.height - 18) / 2, 1)
+      expect(org.box.height, name).toBe(Math.max(56, (Math.max(wayInCards(l).length, destinationCards(l).length) - 1) * 9 + 24))
+      expect(org.box.height, name).toBeLessThan(l.height / 2)
+      expect(org.labelBox.x, name).toBeGreaterThan(org.box.x)
+      expect(right(org.labelBox), name).toBeLessThan(right(org.box))
+    }
+    expect(node(computeLayout(dorsaleOversized()), 'controller')!.box.height).toBe(105)
+  })
+
+  it('draws only the people who reach a way in, in project order, in one card', () => {
+    const l = rossi()
+    expect(ids(l, 'subject')).toEqual(['sg-1', 'sg-2'])
+    const card = node(l, 'people')!.box
+    for (const s of l.nodes.filter((n) => n.kind === 'subject')) {
+      expect(s.parent).toBe('people')
+      expect(s.box.y).toBeGreaterThanOrEqual(card.y)
+      expect(s.box.y + s.box.height).toBeLessThanOrEqual(card.y + card.height)
     }
   })
 
-  it('draws only the people who reach a way in, in project order', () => {
-    expect(ids(rossi(), 'subject')).toEqual(['sg-1', 'sg-2'])
+  it('draws no card for people when nobody is recorded at any way in', () => {
+    const p = scanLike([])
+    p.flows = p.flows.filter((f) => f.from !== 'sg-1')
+    expect(ids(computeLayout(p), 'people')).toEqual([])
   })
 
   it('draws nothing at all for an empty project', () => {
-    expect(computeLayout(emptyProject())).toMatchObject({ nodes: [], edges: [] })
+    expect(computeLayout(emptyProject())).toMatchObject({ nodes: [], edges: [], trails: [] })
   })
 })
 
-describe('ways in are rows', () => {
-  it('draws one row per door, places first, each a full pitch below the last', () => {
+describe('ways in are cards', () => {
+  it('draws one card per door, places first, each a full pitch below the last', () => {
     const l = rossi()
     expect(ids(l, 'door')).toEqual(['door:place:pl-2', 'door:place:pl-3', 'door:cp:cp-1'])
     const ys = ids(l, 'door').map((id) => node(l, id)!.y)
-    expect(ys[1]! - ys[0]!).toBeGreaterThanOrEqual(36)
-    expect(ys[2]! - ys[1]!).toBeGreaterThanOrEqual(36)
+    expect(ys[1]! - ys[0]!).toBe(40)
+    expect(ys[2]! - ys[1]!).toBe(40)
   })
 
-  it('sets a door’s label to the right of its mark and above its own line', () => {
-    const d = node(rossi(), 'door:place:pl-2')!
-    expect(d.anchor).toBe('start')
-    expect(d.labelBox.x).toBeGreaterThan(d.x)
-    expect(d.labelBox.y + d.labelBox.height).toBeLessThanOrEqual(d.y)
-  })
-
-  it('sets a person’s name to the left of the disc, right-aligned', () => {
-    const s = node(rossi(), 'sg-2')!
-    expect(s.anchor).toBe('end')
-    expect(s.labelBox.x + s.labelBox.width).toBeLessThan(s.x)
+  it('writes every label inside its own card, to the right of the mark', () => {
+    for (const [name, make] of DORSALE_FIXTURES) {
+      const l = computeLayout(make(), { openGroup: biggest(make()), openKind: 'form' })
+      for (const n of l.nodes.filter((n) => n.kind !== 'people' && n.kind !== 'controller')) {
+        expect(n.anchor, `${name} ${n.id}`).toBe('start')
+        expect(n.labelBox.x, `${name} ${n.id}`).toBeGreaterThan(n.x)
+        expect(right(n.labelBox), `${name} ${n.id}`).toBeLessThan(right(n.box))
+        expect(n.labelBox.y, `${name} ${n.id}`).toBeGreaterThanOrEqual(n.box.y)
+        expect(n.labelBox.y + n.labelBox.height, `${name} ${n.id}`).toBeLessThanOrEqual(n.box.y + n.box.height)
+      }
+    }
   })
 
   it('names a form by its page’s path, and the site’s root by a single slash', () => {
@@ -105,29 +137,31 @@ describe('ways in are rows', () => {
   })
 })
 
-describe('three or more doors of one kind are one row', () => {
-  it('folds the six forms of the medium scan into one row that says how many', () => {
+describe('three or more doors of one kind are one card', () => {
+  it('folds the six forms of the medium scan into one card that says how many', () => {
     const l = computeLayout(dorsaleMedium())
     expect(ids(l, 'door')).toHaveLength(1)
     expect(node(l, 'doorGroup:form')).toMatchObject({ kind: 'doorGroup', count: 6, doorKind: 'form', open: false, label: '' })
   })
 
-  it('draws 11 rows for two doors of every kind plus the site, in 396 units', () => {
+  it('draws 11 cards for two doors of every kind plus the site, in 430 units', () => {
     const p = scanLike(['form', 'form', 'newsletter', 'newsletter', 'booking', 'booking', 'chat', 'chat', 'embed', 'embed'])
     const l = computeLayout(p)
     expect(ids(l, 'door')).toHaveLength(11)
-    const ys = ids(l, 'door').map((id) => node(l, id)!.y)
-    expect(ys[10]! - ys[0]!).toBe(360)
+    const cards = wayInCards(l)
+    expect(cards[10]!.box.y + cards[10]!.box.height - cards[0]!.box.y).toBe(430)
   })
 
-  it('opens a fold in place: sub-rows under it, and the rows below move down', () => {
+  it('opens a fold in place: sub-rows inside its card, and the cards below move down', () => {
     const closed = computeLayout(dorsaleMedium())
     const open = computeLayout(dorsaleMedium(), { openKind: 'form' })
+    const head = node(open, 'doorGroup:form')!
     const subs = open.nodes.filter((n) => n.parent === 'doorGroup:form')
     expect(subs).toHaveLength(6)
-    expect(subs.every((n) => n.kind === 'door' && n.y > node(open, 'doorGroup:form')!.y)).toBe(true)
-    expect(subs[1]!.y - subs[0]!.y).toBe(24)
-    expect(node(open, 'doorGroup:form')!.open).toBe(true)
+    expect(subs.every((n) => n.kind === 'door' && n.y > head.y && n.box.y + n.box.height <= head.box.y + head.box.height)).toBe(true)
+    expect(subs[1]!.y - subs[0]!.y).toBe(22)
+    expect(head.open).toBe(true)
+    expect(head.box.height).toBeGreaterThan(node(closed, 'doorGroup:form')!.box.height)
     expect(open.height).toBeGreaterThan(closed.height)
     expect(open.openKind).toBe('form')
   })
@@ -162,105 +196,201 @@ describe('three or more doors of one kind are one row', () => {
     expect(node(l, 'doorGroup:form')!.highlighted).toBeUndefined()
   })
 
-  it('grows a row to hold its lines: a door reaching 30 groups is 161 units tall', () => {
+  it('keeps a card one row tall however many places its door reaches', () => {
+    // The wrong answer: a door reaching 30 groups grew to 161 units to hold 30 lines of its own.
     const l = computeLayout(dorsaleOversized())
-    const rows = l.nodes.filter((n) => (n.kind === 'door' || n.kind === 'doorGroup') && n.parent === undefined)
-    expect(rows[0]!.id).toBe('door:place:pl-door')
-    // Half of 161 and half of the next row's 36.
-    expect(rows[1]!.y - rows[0]!.y).toBe(98.5)
+    const cards = wayInCards(l)
+    expect(cards[0]!.id).toBe('door:place:pl-door')
+    expect(cards[0]!.box.height).toBe(30)
+    expect(cards[1]!.y - cards[0]!.y).toBe(40)
   })
 })
 
-describe('where it goes is rows', () => {
+describe('where it goes is a handful of rows', () => {
   const twoKinds = (): Project => {
     const p = scanLike([])
     p.places.push(
       { id: 'pl-3', name: 'Archive', kind: 'internal', purposeGroup: 'Records', holder: 'you', leavesEEA: false, sources: [], confidence: 'declared' },
       { id: 'pl-4', name: 'cdn.example.net', kind: 'unknown', purposeGroup: 'Marketing', holder: 'supplier', leavesEEA: 'unknown', sources: [], confidence: 'observed' },
       { id: 'pl-5', name: 'Stripe', kind: 'processor', purposeGroup: 'Billing', holder: 'supplier', leavesEEA: false, sources: [], confidence: 'declared' },
+      { id: 'pl-6', name: 'Brevo', kind: 'processor', purposeGroup: 'Marketing', holder: 'supplier', leavesEEA: false, sources: [], confidence: 'declared' },
     )
     return p
   }
+  /** `n` purposes of suppliers, the first with two places and the rest with one. */
+  const purposes = (n: number): Project => {
+    const p = scanLike([])
+    p.places = p.places.slice(0, 1)
+    p.flows = p.flows.slice(0, 1)
+    for (let g = 0; g < n; g++) {
+      for (let m = 0; m < (g === 0 ? 2 : 1); m++) {
+        p.places.push({ id: `pl-${g}-${m}`, name: `Vendor ${g}.${m}`, kind: 'processor', purposeGroup: `Purpose ${g}`, holder: 'supplier', leavesEEA: false, sources: [], confidence: 'declared' })
+      }
+    }
+    return p
+  }
 
-  it('lists own systems first, then suppliers, each in alphabetical order', () => {
-    expect(ids(computeLayout(twoKinds()), 'group')).toEqual(['group:Records', 'group:Billing', 'group:Marketing'])
+  it('lists own systems first, then suppliers by purpose, largest first, then what is not identified', () => {
+    expect(destinationCards(computeLayout(twoKinds())).map((n) => n.id)).toEqual(['own', 'group:Marketing', 'group:Billing', 'unidentified'])
+    // Equal sizes fall back on the alphabet, so the same project always draws the same order.
+    expect(destinationCards(computeLayout(purposes(3))).map((n) => n.id)).toEqual(['group:Purpose 0', 'group:Purpose 1', 'group:Purpose 2'])
   })
 
-  it('says on each row how many places it holds and how many are not yet identified', () => {
+  it('says on each row how many places it holds, and by its mark what they are', () => {
     const l = computeLayout(twoKinds())
-    expect(node(l, 'group:Marketing')).toMatchObject({ count: 2, unexplained: 1, internal: false, open: false })
-    expect(node(l, 'group:Records')).toMatchObject({ count: 1, unexplained: 0, internal: true })
+    expect(node(l, 'own')).toMatchObject({ count: 1, mark: 'internal', label: '', open: false })
+    expect(node(l, 'group:Marketing')).toMatchObject({ count: 2, mark: 'supplier', label: 'Marketing' })
+    expect(node(l, 'unidentified')).toMatchObject({ count: 1, mark: 'unidentified', label: '' })
+  })
+
+  it('counts a place nobody has identified once, in its own row, whatever purpose its address suggested', () => {
+    // The wrong answer: cdn.example.net counted under Marketing, and announced again as
+    // "1 not yet identified" beside it.
+    const l = computeLayout(twoKinds(), { openGroup: 'group:Marketing' })
+    expect(l.nodes.filter((n) => n.parent === 'group:Marketing').map((n) => n.id)).toEqual(['member:pl-2', 'member:pl-6'])
+    const open = computeLayout(twoKinds(), { openGroup: 'unidentified' })
+    expect(open.nodes.filter((n) => n.parent === 'unidentified').map((n) => n.id)).toEqual(['member:pl-4'])
+  })
+
+  it('stands every place on the right in exactly one row, on every fixture', () => {
+    for (const [name, make] of [...DORSALE_FIXTURES, ['rossi', rossiEditore] as const]) {
+      const p = make()
+      const rows = destinations(p)
+      for (const place of rightPlaces(p)) {
+        expect(rows.filter((r) => r.places.some((m) => m.id === place.id)).map((r) => r.id), `${name} ${place.id}`).toHaveLength(1)
+      }
+      const open = rightPlaces(p).filter((pl) => pl.kind === 'unknown' || pl.purposeGroup === NOT_IDENTIFIED)
+      const l = computeLayout(p)
+      expect(node(l, 'unidentified')?.count ?? 0, name).toBe(open.length)
+      for (const pl of open) {
+        expect(rows.find((r) => r.places.some((m) => m.id === pl.id))!.id, `${name} ${pl.id}`).toBe('unidentified')
+      }
+      expect(destinationCards(l).reduce((sum, n) => sum + (n.count ?? 0), 0), name).toBe(rightPlaces(p).length)
+    }
+  })
+
+  it('never draws more than five rows: the smallest purposes share one', () => {
+    const p = dorsaleOversized()
+    const l = computeLayout(p)
+    expect(destinationCards(l).map((n) => n.id)).toEqual(['group:Group 01', 'group:Group 02', 'group:Group 03', 'group:Group 04', 'others'])
+    expect(node(l, 'others')).toMatchObject({ count: 26, mark: 'supplier', label: '' })
+    for (const [name, make] of [...DORSALE_FIXTURES, ['rossi', rossiEditore] as const]) {
+      expect(destinationCards(computeLayout(make())).length, name).toBeLessThanOrEqual(MAX_DESTINATIONS)
+    }
+  })
+
+  it('gives own systems and the unidentified a row each inside the five', () => {
+    const p = purposes(8)
+    p.places.push(
+      { id: 'pl-own', name: 'Archive', kind: 'internal', purposeGroup: 'Purpose 1', holder: 'you', leavesEEA: false, sources: [], confidence: 'declared' },
+      { id: 'pl-open', name: 'cdn.example.net', kind: 'unknown', purposeGroup: NOT_IDENTIFIED, holder: 'supplier', leavesEEA: 'unknown', sources: [], confidence: 'observed' },
+    )
+    expect(destinationCards(computeLayout(p)).map((n) => n.id)).toEqual(['own', 'group:Purpose 0', 'group:Purpose 1', 'others', 'unidentified'])
+  })
+
+  it('folds no purpose alone: five purposes are five rows, six are four and a fold of two', () => {
+    expect(destinationCards(computeLayout(purposes(5))).map((n) => n.id)).not.toContain('others')
+    const l = computeLayout(purposes(6))
+    expect(destinationCards(l)).toHaveLength(5)
+    expect(destinations(purposes(6)).find((d) => d.id === 'others')!.purposes!.map((x) => x.name)).toEqual(['Purpose 4', 'Purpose 5'])
+  })
+
+  it('opens the fold of purposes into the purposes it holds, and highlights it for one of them', () => {
+    const p = dorsaleOversized()
+    const open = computeLayout(p, { openGroup: 'others' })
+    const subs = open.nodes.filter((n) => n.parent === 'others')
+    expect(subs.map((n) => n.id)).toEqual(['group:Group 05', 'group:Group 06', 'group:Group 07', 'group:Group 08', 'group:Group 09', 'more:others'])
+    expect(subs[0]).toMatchObject({ kind: 'group', count: 1, label: 'Group 05' })
+    expect(node(open, 'more:others')!.count).toBe(21)
+    expect(node(computeLayout(p, { selectedId: 'group:Group 20' }), 'others')!.highlighted).toBe(true)
+    expect(node(computeLayout(p, { selectedId: 'member:pl-20-1' }), 'others')!.highlighted).toBe(true)
+    expect(node(computeLayout(p, { openGroup: 'others', selectedId: 'member:pl-5-1' }), 'group:Group 05')!.highlighted).toBe(true)
+    expect(node(computeLayout(p, { openGroup: 'others', selectedId: 'group:Group 20' }), 'more:others')!.highlighted).toBe(true)
   })
 
   it('draws no door and no controller among the destinations', () => {
-    // pl-2 is a door in Marketing; pl-1 is the controller, in Systems with pl-9.
-    expect(node(rossi(), 'group:Marketing')!.count).toBe(2)
-    expect(node(rossi(), 'group:Systems')!.count).toBe(1)
-    expect(rossi({ openGroup: 'Marketing' }).nodes.map((n) => n.id)).not.toContain('member:pl-2')
+    // pl-2 is a door in Marketing; pl-1 is the controller.
+    const all = destinations(rossiEditore()).flatMap((d) => d.places.map((p) => p.id))
+    expect(all).not.toContain('pl-1')
+    expect(all).not.toContain('pl-2')
+    expect(rossi({ openGroup: 'group:Marketing' }).nodes.map((n) => n.id)).not.toContain('member:pl-2')
   })
 
-  it('opens a group in place: members as sub-rows, the group’s own row still there', () => {
-    const l = rossi({ openGroup: 'Marketing' })
-    const members = l.nodes.filter((n) => n.parent === 'group:Marketing')
-    expect(members.map((n) => n.id)).toEqual(['member:pl-4', 'member:pl-8'])
-    expect(members[1]!.y - members[0]!.y).toBe(24)
-    expect(node(l, 'group:Marketing')).toMatchObject({ open: true, count: 2 })
-    expect(node(l, 'member:pl-8')).toMatchObject({ label: 'stat.rossi-editore.it', unexplained: 1 })
-    expect(l.openGroup).toBe('Marketing')
+  it('opens a row in place: members inside its card, the row itself still there', () => {
+    const l = rossi({ openGroup: 'own' })
+    const head = node(l, 'own')!
+    const members = l.nodes.filter((n) => n.parent === 'own')
+    expect(members.map((n) => n.kind)).toEqual(['member', 'member'])
+    expect(members[1]!.y - members[0]!.y).toBe(22)
+    expect(members.every((n) => n.mark === 'internal' && n.box.y + n.box.height <= head.box.y + head.box.height)).toBe(true)
+    expect(head).toMatchObject({ open: true, count: 2 })
+    expect(l.openGroup).toBe('own')
   })
 
   it('shows at most six members: past that, five and a row that says how many more', () => {
-    const l = computeLayout(dorsaleUgly(), { openGroup: 'Marketing' })
+    const l = computeLayout(dorsaleUgly(), { openGroup: 'group:Marketing' })
     expect(ids(l, 'member')).toHaveLength(5)
-    expect(node(l, 'more:Marketing')).toMatchObject({ kind: 'more', count: 12, label: '' })
+    expect(node(l, 'more:group:Marketing')).toMatchObject({ kind: 'more', count: 7, label: '' })
   })
 
-  it('highlights the row that hides a selected place: the closed group, or +N more', () => {
+  it('highlights the row that hides a selected place: the closed row, or +N more', () => {
     const p = dorsaleUgly()
-    const last = rightPlaces(p).filter((pl) => pl.purposeGroup === 'Marketing')[16]!.id
+    const last = destinations(p).find((d) => d.id === 'group:Marketing')!.places[11]!.id
     expect(node(computeLayout(p, { selectedId: `member:${last}` }), 'group:Marketing')!.highlighted).toBe(true)
-    const open = computeLayout(p, { openGroup: 'Marketing', selectedId: last })
-    expect(node(open, 'more:Marketing')!.highlighted).toBe(true)
+    const open = computeLayout(p, { openGroup: 'group:Marketing', selectedId: last })
+    expect(node(open, 'more:group:Marketing')!.highlighted).toBe(true)
     expect(node(open, 'group:Marketing')!.highlighted).toBeUndefined()
     expect(node(computeLayout(p), 'group:Marketing')!.highlighted).toBeUndefined()
   })
 
-  it('treats an open group that does not exist as none open', () => {
-    expect(rossi({ openGroup: 'Nonexistent' })).toEqual(rossi())
+  it('highlights nothing for a member whose own row is drawn', () => {
+    const p = dorsaleUgly()
+    const first = destinations(p).find((d) => d.id === 'group:Marketing')!.places[0]!.id
+    const l = computeLayout(p, { openGroup: 'group:Marketing', selectedId: `member:${first}` })
+    expect(l.nodes.filter((n) => n.highlighted === true)).toEqual([])
   })
 
-  it('keeps every id on the sheet unique when a group is named like an id', () => {
-    // The wrong answer: a purpose group called 'kind:form' and the forms' fold share one id.
-    const p = dorsaleUgly()
-    for (const pl of p.places) if (pl.purposeGroup === 'Marketing') pl.purposeGroup = 'kind:form'
-    const l = computeLayout(p, { openGroup: 'kind:form', openKind: 'form' })
-    expect(new Set(l.nodes.map((n) => n.id)).size).toBe(l.nodes.length)
-    expect(node(l, 'more:kind:form')!.parent).toBe('group:kind:form')
-    expect(node(l, 'moreDoors:form')!.parent).toBe('doorGroup:form')
+  it('treats an open row that does not exist as none open', () => {
+    expect(rossi({ openGroup: 'group:Nonexistent' })).toEqual(rossi())
+    // A purpose inside the fold is not a row of its own, so it cannot stand open.
+    expect(computeLayout(dorsaleOversized(), { openGroup: 'group:Group 20' }).openGroup).toBeNull()
+  })
+
+  it('keeps every id on the sheet unique when a purpose is named like an id', () => {
+    // The wrong answer: a purpose called 'own', or 'kind:form', and a row of the sheet share one id.
+    for (const name of ['kind:form', 'own', 'others', 'unidentified']) {
+      const p = dorsaleUgly()
+      for (const pl of p.places) if (pl.purposeGroup === 'Marketing') pl.purposeGroup = name
+      const l = computeLayout(p, { openGroup: `group:${name}`, openKind: 'form' })
+      expect(new Set(l.nodes.map((n) => n.id)).size, name).toBe(l.nodes.length)
+      expect(node(l, `more:group:${name}`)!.parent, name).toBe(`group:${name}`)
+      expect(node(l, 'moreDoors:form')!.parent, name).toBe('doorGroup:form')
+    }
   })
 })
 
 describe('the sheet', () => {
   it('is 1000 wide and as tall as its rows, and never a slit', () => {
-    expect(computeLayout(dorsaleSmall())).toMatchObject({ width: 1000, height: 234 })
-    expect(computeLayout(dorsaleUgly(), { openGroup: 'Marketing', openKind: 'form' }).height).toBe(408)
+    expect(computeLayout(dorsaleSmall())).toMatchObject({ width: 1000, height: 182 })
+    expect(computeLayout(dorsaleUgly(), { openGroup: 'group:Marketing', openKind: 'form' }).height).toBe(389)
   })
 
-  it('holds core to no words: a fold and a +N more row carry a count, not a sentence', () => {
-    const l = computeLayout(dorsaleUgly(), { openGroup: 'Marketing', openKind: 'form' })
-    for (const n of l.nodes.filter((n) => n.kind === 'doorGroup' || n.kind === 'more')) expect(n.label).toBe('')
+  it('holds core to no words: a fold, a +N more row and the unnamed rows carry a count, not a sentence', () => {
+    const l = computeLayout(dorsaleUgly(), { openGroup: 'unidentified', openKind: 'form' })
+    for (const n of l.nodes.filter((n) => n.kind === 'doorGroup' || n.kind === 'more' || n.id === 'unidentified')) expect(n.label).toBe('')
   })
 
   it('stands the columns where COLUMN says', () => {
     const l = rossi()
-    expect(node(l, 'sg-2')!.x).toBe(COLUMN.person)
-    expect(node(l, 'door:place:pl-2')!.x).toBe(COLUMN.door)
-    expect(node(l, 'group:Marketing')!.x).toBe(COLUMN.ring)
+    expect(node(l, 'people')!.box).toMatchObject(COLUMN.people)
+    expect(node(l, 'door:place:pl-2')!.box).toMatchObject(COLUMN.doors)
+    expect(node(l, 'controller')!.box).toMatchObject(COLUMN.controller)
+    expect(node(l, 'group:Marketing')!.box).toMatchObject(COLUMN.places)
   })
 })
 
-// Shared with Task 5: every view worth drawing of every fixture.
-export const VIEWS = (p: Project): LayoutView[] => [
+// Every view worth drawing of every fixture.
+const VIEWS = (p: Project): LayoutView[] => [
   {},
   { openGroup: biggest(p) },
   { openKind: 'form' as DoorKind },
@@ -268,37 +398,48 @@ export const VIEWS = (p: Project): LayoutView[] => [
 ]
 const overlap = (a: Box, b: Box): boolean =>
   a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
-const along = (e: LayoutEdge, t: number): { x: number; y: number } => {
+type Stretch = { x1: number; y1: number; x2: number; y2: number }
+/** A point of a line as the renderer draws it: both control points at the horizontal midpoint. */
+const along = (e: Stretch, t: number): { x: number; y: number } => {
   const u = 1 - t
+  const mid = (e.x1 + e.x2) / 2
   return {
-    x: u * u * u * e.x1 + 3 * u * u * t * e.c1x + 3 * u * t * t * e.c2x + t * t * t * e.x2,
+    x: u * u * u * e.x1 + 3 * u * u * t * mid + 3 * u * t * t * mid + t * t * t * e.x2,
     y: u * u * u * e.y1 + 3 * u * u * t * e.y1 + 3 * u * t * t * e.y2 + t * t * t * e.y2,
   }
 }
+const inside = (p: { x: number; y: number }, b: Box): boolean => p.x > b.x && p.x < b.x + b.width && p.y > b.y && p.y < b.y + b.height
 /** Everything that would make a sheet unreadable, as sentences. Empty is the pass. */
-export function problems(l: LayoutResult): string[] {
+function problems(l: LayoutResult): string[] {
   const out: string[] = []
   const known = new Set(l.nodes.map((n) => n.id))
   if (known.size !== l.nodes.length) out.push('two nodes share an id')
+  const cards = l.nodes.filter((n) => n.parent === undefined)
   l.nodes.forEach((a, i) =>
     l.nodes.slice(i + 1).forEach((b) => {
       if (overlap(a.labelBox, b.labelBox)) out.push(`labels overlap: ${a.id} / ${b.id}`)
     }),
   )
+  cards.forEach((a, i) =>
+    cards.slice(i + 1).forEach((b) => {
+      if (overlap(a.box, b.box)) out.push(`cards touch: ${a.id} / ${b.id}`)
+    }),
+  )
   for (const n of l.nodes) {
-    const b = n.labelBox
-    if (b.x < 0 || b.y < 0 || b.x + b.width > l.width || b.y + b.height > l.height) out.push(`label off the sheet: ${n.id}`)
+    for (const b of [n.labelBox, n.box]) {
+      if (b.x < 0 || b.y < 0 || b.x + b.width > l.width || b.y + b.height > l.height) out.push(`off the sheet: ${n.id}`)
+    }
   }
   for (const e of l.edges) {
     if (!known.has(e.from) || !known.has(e.to)) out.push(`line to nowhere: ${e.from} -> ${e.to}`)
-    for (let k = 0; k <= 24; k++) {
-      const p = along(e, k / 24)
-      const hit = l.nodes.find(
-        (n) => p.x > n.labelBox.x && p.x < n.labelBox.x + n.labelBox.width && p.y > n.labelBox.y && p.y < n.labelBox.y + n.labelBox.height,
-      )
-      if (hit !== undefined) {
-        out.push(`line ${e.from} -> ${e.to} crosses the label of ${hit.id}`)
-        break
+    for (const stretch of [e, ...(e.lead === undefined ? [] : [e.lead])]) {
+      for (let k = 0; k <= 24; k++) {
+        const p = along(stretch, k / 24)
+        const hit = l.nodes.find((n) => inside(p, n.box))
+        if (hit !== undefined) {
+          out.push(`line ${e.from} -> ${e.to} crosses ${hit.id}`)
+          break
+        }
       }
     }
   }
@@ -306,7 +447,7 @@ export function problems(l: LayoutResult): string[] {
 }
 
 describe('on every fixture, closed and open', () => {
-  it('no two labels overlap and none leaves the sheet', () => {
+  it('no two labels overlap, no two cards touch, and nothing leaves the sheet', () => {
     for (const [name, make] of DORSALE_FIXTURES) {
       for (const view of VIEWS(make())) {
         expect(problems(computeLayout(make(), view)), `${name} ${JSON.stringify(view)}`).toEqual([])
@@ -321,146 +462,179 @@ describe('on every fixture, closed and open', () => {
   })
 })
 
-describe('lines', () => {
-  const edge = (l: LayoutResult, from: string, to: string) => l.edges.filter((e) => e.from === from && e.to === to)
-  const topRows = (l: LayoutResult) =>
-    l.nodes.filter((n) => (n.kind === 'door' || n.kind === 'doorGroup') && n.parent === undefined)
+describe('lines are a sum, not a product', () => {
+  const from = (l: LayoutResult, id: string) => l.edges.filter((e) => e.from === id)
+  const into = (l: LayoutResult, id: string) => l.edges.filter((e) => e.to === id)
 
-  it('brings the website’s visitors to every top-level row of a scanned site', () => {
+  it('draws one line per way in and one per row of destinations, on every fixture, closed and open', () => {
+    // The wrong answer: a line per way in per destination, which drew 63 lines for 10 and 30 rows.
+    for (const [name, make] of DORSALE_FIXTURES) {
+      for (const view of VIEWS(make())) {
+        const l = computeLayout(make(), view)
+        const at = `${name} ${JSON.stringify(view)}`
+        expect(l.edges.length, at).toBe(wayInCards(l).length + destinationCards(l).length)
+        for (const card of wayInCards(l)) expect(from(l, card.id).map((e) => e.to), `${at} ${card.id}`).toEqual(['controller'])
+        for (const card of destinationCards(l)) expect(into(l, card.id).map((e) => e.from), `${at} ${card.id}`).toEqual(['controller'])
+      }
+    }
+    expect(computeLayout(dorsaleOversized()).edges).toHaveLength(15)
+    expect(computeLayout(dorsaleUgly()).edges).toHaveLength(9)
+  })
+
+  it('brings the website’s visitors to every way in of a scanned site', () => {
     for (const make of [dorsaleSmall, dorsaleMedium, dorsaleUgly]) {
       const l = computeLayout(make())
-      for (const row of topRows(l)) expect(edge(l, 'scan1-sg-1', row.id), row.id).toHaveLength(1)
+      for (const card of wayInCards(l)) {
+        expect(from(l, card.id)[0]!.lead, card.id).toBeDefined()
+        expect(l.trails.find((t) => t.id === card.id)!.people, card.id).toEqual(['scan1-sg-1'])
+      }
     }
   })
 
-  it('gives an open fold one line in, and none to its sub-rows', () => {
-    const l = computeLayout(dorsaleUgly(), { openKind: 'form' })
-    expect(edge(l, 'scan1-sg-1', 'doorGroup:form')).toHaveLength(1)
-    const subs = l.nodes.filter((n) => n.parent === 'doorGroup:form').map((n) => n.id)
-    expect(l.edges.filter((e) => subs.includes(e.to))).toEqual([])
+  it('gives an open fold or an open row the one line it had closed, and none to what is inside', () => {
+    // The wrong answer: twelve forms draw thirteen lines.
+    const l = computeLayout(dorsaleUgly(), { openKind: 'form', openGroup: 'group:Marketing' })
+    expect(from(l, 'doorGroup:form')).toHaveLength(1)
+    expect(into(l, 'group:Marketing')).toHaveLength(1)
+    const subs = l.nodes.filter((n) => n.parent !== undefined).map((n) => n.id)
+    expect(subs.length).toBeGreaterThan(10)
+    expect(l.edges.filter((e) => subs.includes(e.to) || subs.includes(e.from))).toEqual([])
   })
 
   it('invents no line in a documents-only project', () => {
-    // The wrong answer: a declared door nobody is recorded at is given the visitors, or all twelve groups.
+    // The wrong answer: a declared door nobody is recorded at is given the visitors.
     const p = dorsaleOversized()
     p.collectionPoints = []
     p.places.push({ id: 'pl-desk', name: 'Second desk', kind: 'collection', purposeGroup: 'Systems', holder: 'you', leavesEEA: false, sources: [{ documentId: 'd1', documentName: 'notice.pdf' }], confidence: 'declared' })
     const l = computeLayout(p)
-    expect(l.edges.filter((e) => e.to === 'door:place:pl-door')).toHaveLength(12)
-    expect(l.edges.filter((e) => e.to === 'door:place:pl-desk')).toEqual([])
-    expect(edge(l, 'door:place:pl-desk', 'controller')).toHaveLength(1)
+    expect(l.trails.find((t) => t.id === 'door:place:pl-door')!.people).toHaveLength(12)
+    expect(from(l, 'door:place:pl-door')[0]!.lead).toBeDefined()
+    expect(l.trails.find((t) => t.id === 'door:place:pl-desk')).toMatchObject({ people: [], reaches: [] })
+    expect(from(l, 'door:place:pl-desk')).toHaveLength(1)
+    expect(from(l, 'door:place:pl-desk')[0]!.lead).toBeUndefined()
   })
 
-  it('runs every carrying row to the spine, level, at the row’s own height', () => {
-    const l = computeLayout(dorsaleUgly(), { openGroup: 'Marketing', openKind: 'form' })
-    const carrying = l.nodes.filter(
-      (n) => n.kind === 'door' || (n.kind === 'doorGroup' && n.open !== true) || n.id.startsWith('moreDoors:'),
-    )
-    expect(carrying.length).toBeGreaterThan(5)
-    for (const row of carrying) {
-      const [e] = edge(l, row.id, 'controller')
-      expect(e, row.id).toBeDefined()
-      expect([e!.y1, e!.y2, e!.x2]).toEqual([row.y, row.y, COLUMN.spine])
+  it('runs every line from the right edge of one card to the left edge of the next, at the card’s own row', () => {
+    for (const [name, make] of DORSALE_FIXTURES) {
+      const l = computeLayout(make(), { openGroup: biggest(make()), openKind: 'form' })
+      const org = node(l, 'controller')!.box
+      for (const card of wayInCards(l)) {
+        const e = from(l, card.id)[0]!
+        expect([e.x1, e.y1, e.x2], `${name} ${card.id}`).toEqual([right(card.box), card.y, org.x])
+        if (e.lead !== undefined) expect([e.lead.x1, e.lead.x2, e.lead.y2], `${name} ${card.id}`).toEqual([right(node(l, 'people')!.box), card.box.x, card.y])
+      }
+      for (const card of destinationCards(l)) {
+        const e = into(l, card.id)[0]!
+        expect([e.x1, e.x2, e.y2], `${name} ${card.id}`).toEqual([right(org), card.box.x, card.y])
+      }
     }
   })
 
-  it('draws no line to the spine from the head of an open fold', () => {
-    // The wrong answer: twelve forms draw thirteen lines.
-    expect(edge(computeLayout(dorsaleUgly(), { openKind: 'form' }), 'doorGroup:form', 'controller')).toEqual([])
-    expect(edge(computeLayout(dorsaleUgly()), 'doorGroup:form', 'controller')).toHaveLength(1)
+  it('spreads the lines that meet one card along its edge, in the order of the cards they come from', () => {
+    for (const [name, make] of DORSALE_FIXTURES) {
+      const l = computeLayout(make())
+      const org = node(l, 'controller')!.box
+      const people = node(l, 'people')!.box
+      const groups: [number[], number, Box][] = [
+        [wayInCards(l).map((c) => from(l, c.id)[0]!.y2), 9, org],
+        [destinationCards(l).map((c) => into(l, c.id)[0]!.y1), 9, org],
+        [wayInCards(l).flatMap((c) => from(l, c.id)[0]!.lead?.y1 ?? []), 4, people],
+      ]
+      for (const [ports, gap, card] of groups) {
+        // Top to bottom as the cards stand, so no two lines of a column cross; apart, so none hides another.
+        for (let i = 1; i < ports.length; i++) expect(ports[i]! - ports[i - 1]!, name).toBeCloseTo(gap, 5)
+        for (const y of ports) {
+          expect(y, name).toBeGreaterThan(card.y + 4)
+          expect(y, name).toBeLessThan(card.y + card.height - 4)
+        }
+        if (ports.length > 0) expect((ports[0]! + ports[ports.length - 1]!) / 2, name).toBeCloseTo(card.y + card.height / 2, 1)
+      }
+    }
   })
 
-  it('ends a door that goes no further on the spine, and one that goes on at its destinations', () => {
-    const l = computeLayout(dorsaleUgly())
-    expect(edge(l, 'doorGroup:form', 'controller')[0]!.arrow).toBe(true)
-    expect(edge(l, 'door:place:scan1-pl-1', 'controller')[0]!.arrow).toBe(false)
-    expect(l.edges.filter((e) => e.from === 'controller').every((e) => e.arrow)).toBe(true)
-    expect(l.edges.filter((e) => e.to !== 'controller' && e.from !== 'controller').every((e) => !e.arrow)).toBe(true)
-  })
-
-  it('carries one colour from the person, through the door, to the destination', () => {
+  it('gives a way in’s line its card’s colour, and the organisation’s lines none', () => {
     const l = rossi()
-    const row = 'door:place:pl-2'
-    const mine = l.edges.filter((e) => e.door === row)
-    expect(mine.map((e) => `${e.from}->${e.to}`)).toEqual(['sg-2->door:place:pl-2', 'door:place:pl-2->controller', 'controller->group:Marketing'])
-    expect(new Set(mine.map((e) => e.colourIndex))).toEqual(new Set([0]))
+    expect(wayInCards(l).map((c) => from(l, c.id)[0]!.colourIndex)).toEqual([0, 1, 2])
+    expect(from(l, 'controller').map((e) => e.colourIndex)).toEqual(destinationCards(l).map(() => undefined))
   })
 
-  it('leaves the spine from points 5 apart, centred on the door, in the order of the rows reached', () => {
-    const l = computeLayout(dorsaleUgly())
-    const site = node(l, 'door:place:scan1-pl-1')!
-    const out = l.edges.filter((e) => e.door === site.id && e.from === 'controller')
-    expect(out).toHaveLength(5)
-    const ports = out.map((e) => e.y1).sort((a, b) => a - b)
-    expect(ports).toEqual([-10, -5, 0, 5, 10].map((d) => site.y + d))
-    // Its own lines never cross: the higher port goes to the higher row.
-    const byPort = [...out].sort((a, b) => a.y1 - b.y1).map((e) => e.y2)
-    expect(byPort).toEqual([...byPort].sort((a, b) => a - b))
-    expect(out.every((e) => e.entryY === site.y && e.x1 === COLUMN.spine + COLUMN.spineWidth)).toBe(true)
+  it('reaches a destination no door reaches like any other: one line from the organisation', () => {
+    const l = rossi()
+    expect(l.trails.some((t) => t.reaches.includes('own'))).toBe(false)
+    expect(into(l, 'own')).toHaveLength(1)
+  })
+})
+
+describe('what a way in connects is kept beside the drawing', () => {
+  it('records for each way in who comes through it and which rows it reaches', () => {
+    expect(rossi().trails.find((t) => t.id === 'door:place:pl-2')).toEqual({
+      id: 'door:place:pl-2',
+      row: 'door:place:pl-2',
+      people: ['sg-2'],
+      reaches: ['group:Marketing'],
+    })
   })
 
-  it('lands two doors on one row 3 units apart, in two colours', () => {
-    const into = rossi().edges.filter((e) => e.to === 'group:Marketing')
-    expect(into).toHaveLength(2)
-    expect(new Set(into.map((e) => e.colourIndex)).size).toBe(2)
-    expect(Math.abs(into[0]!.y2 - into[1]!.y2)).toBe(3)
-  })
-
-  it('reaches a destination no door reaches with one neutral, level line', () => {
-    const [e, ...rest] = rossi().edges.filter((e) => e.to === 'group:Payroll')
-    expect(rest).toEqual([])
-    expect(e).toMatchObject({ from: 'controller', arrow: true })
-    expect(e!.y1).toBe(e!.y2)
-    expect([e!.colourIndex, e!.door, e!.entryY]).toEqual([undefined, undefined, undefined])
-  })
-
-  it('sends lines to the members of an open group, and none to the group’s own row', () => {
-    const l = rossi({ openGroup: 'Marketing' })
-    expect(l.edges.filter((e) => e.to === 'group:Marketing')).toEqual([])
-    const toMember = l.edges.filter((e) => e.to === 'member:pl-4')
-    expect(toMember).toHaveLength(2)
-    expect(new Set(toMember.map((e) => e.colourIndex)).size).toBe(2)
-    // pl-8 is reached by no door: one neutral line of its own.
-    expect(l.edges.filter((e) => e.to === 'member:pl-8').map((e) => e.colourIndex)).toEqual([undefined])
-  })
-
-  it('gives each door one line to +N more, however many hidden members it reaches', () => {
-    const l = computeLayout(dorsaleUgly(), { openGroup: 'Marketing' })
-    const toMore = l.edges.filter((e) => e.to === 'more:Marketing')
-    expect(toMore.map((e) => e.door)).toEqual(['door:place:scan1-pl-1'])
-  })
-
-  it('draws the lines of the doors behind +N more from that row', () => {
+  it('records a sub-row’s own trail under its card, and the hidden doors’ under +N more', () => {
     const p = scanLike(['form', 'form', 'form', 'form', 'form', 'form', 'form'])
     p.collectionPoints![6]!.destination = 'pl-2'
     const l = computeLayout(p, { openKind: 'form' })
-    expect(edge(l, 'moreDoors:form', 'controller')[0]!.arrow).toBe(false)
-    expect(l.edges.filter((e) => e.door === 'moreDoors:form' && e.to === 'group:Marketing')).toHaveLength(1)
+    expect(l.trails.find((t) => t.id === 'moreDoors:form')).toMatchObject({ row: 'doorGroup:form', reaches: ['group:Marketing'] })
+    expect(l.trails.find((t) => t.id === 'door:cp:cp-1')).toMatchObject({ row: 'doorGroup:form', reaches: [] })
+    expect(l.trails.find((t) => t.id === 'doorGroup:form')).toMatchObject({ row: 'doorGroup:form', reaches: ['group:Marketing'] })
+  })
+
+  it('reaches a member’s own row as well as its card when the card is open', () => {
+    const l = rossi({ openGroup: 'group:Marketing' })
+    expect(l.trails.find((t) => t.id === 'door:place:pl-2')!.reaches).toEqual(['group:Marketing', 'member:pl-4'])
+  })
+
+  it('keeps at full strength what a way in is connected to, and nothing else', () => {
+    const l = rossi()
+    const lit = traced(l, 'door:place:pl-2')!
+    expect([...lit].sort()).toEqual(['controller', 'door:place:pl-2', 'group:Marketing', 'people', 'sg-2'])
+    expect(l.edges.filter((e) => tracedEdge(lit, e)).map((e) => `${e.from}->${e.to}`)).toEqual(['door:place:pl-2->controller', 'controller->group:Marketing'])
+  })
+
+  it('answers a destination with the ways in that reach it and the people who use them', () => {
+    const lit = traced(rossi(), 'group:Delivery')!
+    expect([...lit].sort()).toEqual(['controller', 'door:place:pl-3', 'group:Delivery', 'people', 'sg-1'])
+    // Asked about one destination, the others the same way in also feeds are not the answer.
+    const ugly = computeLayout(dorsaleUgly())
+    const one = traced(ugly, 'group:Sales')!
+    expect(destinationCards(ugly).filter((n) => one.has(n.id)).map((n) => n.id)).toEqual(['group:Sales'])
+  })
+
+  it('answers a person with the ways in they come through and where those lead', () => {
+    const lit = traced(rossi(), 'sg-2')!
+    expect(lit.has('door:place:pl-2')).toBe(true)
+    expect(lit.has('group:Marketing')).toBe(true)
+    expect(lit.has('sg-1')).toBe(false)
+  })
+
+  it('does not grey a card’s own rows when the card is what is asked about, nor the card for one of its rows', () => {
+    const l = computeLayout(dorsaleUgly(), { openKind: 'form' })
+    const sub = l.nodes.find((n) => n.parent === 'doorGroup:form')!
+    expect(traced(l, 'doorGroup:form')!.has(sub.id)).toBe(true)
+    expect(traced(l, sub.id)!.has('doorGroup:form')).toBe(true)
+    expect(traced(l, sub.id)!.has('moreDoors:form')).toBe(false)
+  })
+
+  it('dims nothing for the organisation, nor for a focus that is not on the sheet', () => {
+    expect(traced(rossi(), 'controller')).toBeNull()
+    expect(traced(rossi(), 'nothing-here')).toBeNull()
+    expect(traced(rossi(), null)).toBeNull()
+    expect(rossi().edges.every((e) => tracedEdge(null, e))).toBe(true)
   })
 })
 
 describe('on every fixture, closed and open: lines', () => {
-  it('no line crosses a label, and every line ends at a row', () => {
+  it('no line crosses a card, and every line ends at one', () => {
     for (const [name, make] of DORSALE_FIXTURES) {
       for (const view of VIEWS(make())) {
         const l = computeLayout(make(), view)
         expect(l.edges.length, name).toBeGreaterThan(0)
         expect(problems(l), `${name} ${JSON.stringify(view)}`).toEqual([])
-      }
-    }
-  })
-
-  it('every way in has a line to the spine, and on a scanned site a line in', () => {
-    for (const [name, make] of DORSALE_FIXTURES) {
-      for (const view of VIEWS(make())) {
-        const l = computeLayout(make(), view)
-        for (const d of l.nodes.filter((n) => n.kind === 'door')) {
-          expect(l.edges.some((e) => e.from === d.id && e.to === 'controller'), `${name} ${d.id}`).toBe(true)
-        }
-        if (name === 'oversized') continue
-        for (const row of l.nodes.filter((n) => (n.kind === 'door' || n.kind === 'doorGroup') && n.parent === undefined)) {
-          expect(l.edges.some((e) => e.to === row.id), `${name} ${row.id}`).toBe(true)
-        }
       }
     }
   })

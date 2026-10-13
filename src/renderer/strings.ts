@@ -46,9 +46,15 @@ export const STRINGS = {
     embed: (n: number): string => `Embedded content (${n})`,
   },
   more: (n: number): string => `+${n} more`,
-  groupUnidentified: (n: number): string => `${n} not yet identified`,
+  /** The rows of destinations that are not one purpose. Every place stands in exactly one row. */
+  destination: {
+    own: 'Your systems',
+    others: 'Other purposes',
+    unidentified: 'Not yet identified',
+  },
   headPeople: 'Whose data',
   headDoors: 'Ways in',
+  headController: 'Organisation',
   headPlaces: 'Where it goes',
 
   keyPeople: 'People',
@@ -62,7 +68,7 @@ export const STRINGS = {
   keyExternal: 'Suppliers',
   keyExternalGloss: 'Run by somebody else.',
   keyOpen: 'Not yet identified',
-  keyOpenGloss: 'The dashed share of a ring.',
+  keyOpenGloss: 'A dashed ring.',
 
   saveBlocked:
     'The project could not be saved because another program is holding the file open. Close it and try again.',
@@ -83,7 +89,7 @@ export const STRINGS = {
     `Read ${count} ${count === 1 ? 'document' : 'documents'}: ${names}`,
   suggestionsHeading: 'Found in the documents',
   suggestionsCaption:
-    'Tick what belongs on the map. The documents themselves are not kept — only what you confirm.',
+    'Tick what belongs on the map. The documents themselves are not kept, only what you confirm.',
   suggestionsConfirm: 'Add to map',
   suggestionsCancel: 'Discard all',
   suggestionFoundIn: (names: string): string => `Found in ${names}`,
@@ -97,6 +103,15 @@ export const STRINGS = {
   declaredIn: (names: string): string => `Declared: ${names}`,
 
   detailHeading: 'What is here',
+  /** Under the name of a row that mixes things: what its count is a count of, said plainly. */
+  detailOwnNote: 'Run by the organisation itself, whatever each one is used for.',
+  detailUnidentifiedNote:
+    'Seen, and not yet matched to a known supplier. Where the address suggests a purpose, it is shown beside the name.',
+  detailOthersNote:
+    'The smaller purposes share one row so the map stays readable. Nothing is left out: each one is listed here.',
+  detailMemberPurpose: (name: string, purpose: string): string => `${name} · ${purpose}`,
+  detailPurposePlaces: (name: string, places: number): string =>
+    `${name} · ${places} ${places === 1 ? 'place' : 'places'}`,
   detailPeopleHeading: 'People',
   /**
    * Where a fact came from, when no document names it. These say the origin in plain words
@@ -124,10 +139,10 @@ export const STRINGS = {
   detailDoorFields: 'What is asked',
   detailControllerHeading: 'Who answers for this',
   detailTotals: (places: number, doors: number, groups: number, flows: number): string =>
-    `${places} places · ${doors} ways in · ${groups} groups of people · ${flows} flows`,
+    `${places} places, ${doors} ways in, ${groups} groups of people, ${flows} flows`,
   detailCookiesHeading: 'Cookies recorded',
   detailCookie: (name: string, lifetime: string, thirdParty: boolean): string =>
-    thirdParty ? `${name} — ${lifetime}, third-party` : `${name} — ${lifetime}`,
+    thirdParty ? `${name}: ${lifetime}, third-party` : `${name}: ${lifetime}`,
   detailLifetimeSession: 'until the browser closes',
   detailLifetimeUnderADay: 'under a day',
   detailLifetimeUnderAYear: 'under a year',
@@ -139,7 +154,7 @@ export const STRINGS = {
   detailDataCategories: 'What is held',
   detailObservationsHeading: 'Trackers observed',
   detailObservation: (domain: string, requestCount: number): string =>
-    `${domain} — ${requestCount} ${requestCount === 1 ? 'request' : 'requests'}`,
+    `${domain}: ${requestCount} ${requestCount === 1 ? 'request' : 'requests'}`,
   detailBeforeConsent: 'Contacted before consent',
   detailAfterConsent: 'Only after consent',
   doorKind: {
@@ -166,11 +181,11 @@ export const STRINGS = {
   scanPageNotLoaded: 'The page did not load, so nothing was observed. Check the address and try again.',
   scanFoundNothing: 'The scan finished without observing any third party.',
   scanIncomplete: (n: number): string =>
-    `Scan complete — ${n} ${n === 1 ? 'place' : 'places'} where the map may be incomplete.`,
+    `Scan complete. ${n} ${n === 1 ? 'place' : 'places'} where the map may be incomplete.`,
   scanStopped: (n: number): string =>
     n === 0
       ? 'Scan stopped before it finished.'
-      : `Scan stopped before it finished — ${n} ${n === 1 ? 'place' : 'places'} where the map may be incomplete.`,
+      : `Scan stopped before it finished. ${n} ${n === 1 ? 'place' : 'places'} where the map may be incomplete.`,
   cookiesRecorded: (n: number, thirdParty: number): string =>
     `${n} ${n === 1 ? 'cookie' : 'cookies'} recorded (${thirdParty} third-party).`,
   storageKeysRecorded: (n: number): string =>

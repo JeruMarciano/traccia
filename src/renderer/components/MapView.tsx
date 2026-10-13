@@ -1,19 +1,25 @@
-import { COLUMN, type LayoutEdge, type LayoutNode, type LayoutResult } from '../../core/layout'
+import { COLUMN, traced, tracedEdge, type LayoutEdge, type LayoutNode, type LayoutResult, type Mark } from '../../core/layout'
 import type { DoorKind } from '../../core/types'
-import { drawnText, fontSizeOf, rowSuffix, rowText } from '../mapText'
+import { drawnText, fontSizeOf, rowText } from '../mapText'
+import { MAP_TEXT } from '../mapMetrics'
 import { STRINGS } from '../strings'
 
 /**
- * The map, read as a sentence, left to right: whose data, through which way in, across the
- * organisation, to where it goes. The organisation is a bar; a way in's line crosses it at the way
- * in's own height and runs on to its destinations, one colour from the person to the place.
+ * The map, read as a sentence, left to right: whose data, through which way in, into the
+ * organisation, out to where it goes. Every stop is a card; a way in draws one line to the
+ * organisation and the organisation one line to each row of destinations.
  *
- * Everything here is drawn from the layout: where a row stands, the box its label may fill, the
+ * Which way in reaches which destination is not a line. It is answered on request: the row under
+ * the pointer, or the selected one, keeps what it is connected to at full strength and the rest
+ * steps back.
+ *
+ * Everything here is drawn from the layout: where a card stands, the box its label may fill, the
  * ends of every line. This component decides nothing about position. It picks the words (through
  * mapText) and the marks.
  *
  * Colour repeats the story and never solely carries it: position and label say the same thing,
- * and in print each colour also takes its own dash pattern.
+ * each kind of destination has its own shape of mark, and in print each way in's colour also
+ * takes its own dash pattern.
  */
 
 /**
@@ -23,12 +29,13 @@ import { STRINGS } from '../strings'
  */
 const HOME_PATH =
   'M 8 1.6 L 15.2 8.2 L 13 8.2 L 13 14.4 L 9.6 14.4 L 9.6 10.6 L 6.4 10.6 L 6.4 14.4 L 3 14.4 L 3 8.2 L 0.8 8.2 Z'
-const PERSON_R = 8
-const HOUSE_R = 13
-const RING_R = 11
-const MEMBER_R = 4.5
-const DOOR_W = 7
-const DOOR_H = 18
+/** One corner for every card on the sheet. */
+const RADIUS = 6
+const PERSON_R = 4.5
+const DOOR_W = 5
+const DOOR_H = 16
+/** The arrowhead, tip to base. A line stops inside it, so nothing pokes through the tip. */
+const HEAD = 6
 
 interface Props {
   layout: LayoutResult
@@ -38,19 +45,35 @@ interface Props {
   onToggleGroup: (group: string | null) => void
   openKind: DoorKind | null
   onToggleKind: (kind: DoorKind | null) => void
+  /** The row under the pointer. Held by the caller, like the selection, so this stays a pure drawing. */
+  hovered?: string | null
+  onHover?: (id: string | null) => void
 }
 
-/** Level lines are straight; the rest leave and arrive level, with a curve between. */
-function linePath(e: LayoutEdge): string {
-  return e.y1 === e.y2
-    ? `M ${e.x1} ${e.y1} H ${e.x2}`
-    : `M ${e.x1} ${e.y1} C ${e.c1x} ${e.y1} ${e.c2x} ${e.y2} ${e.x2} ${e.y2}`
+/**
+ * The link of a flow diagram: both control points at the horizontal midpoint, so a line leaves and
+ * arrives level whatever the drop between its ends. `inset` stops it short of an arrowhead.
+ */
+function linePath(e: { x1: number; y1: number; x2: number; y2: number }, inset = 0): string {
+  const end = e.x2 - inset
+  const mid = (e.x1 + end) / 2
+  return e.y1 === e.y2 ? `M ${e.x1} ${e.y1} H ${end}` : `M ${e.x1} ${e.y1} C ${mid} ${e.y1} ${mid} ${e.y2} ${end} ${e.y2}`
 }
 
 const colourClass = (prefix: string, index: number | undefined): string =>
   `${prefix}--${index === undefined ? 'neutral' : index}`
 
-export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, openKind, onToggleKind }: Props) {
+/** A destination's mark. The shape is the reading: a block for the organisation's own, a ring for
+ *  a supplier's, a dashed ring for what nobody has identified. */
+function mark(kind: Mark | undefined, x: number, y: number, r: number) {
+  return kind === 'internal' ? (
+    <rect className="mark mark--internal" x={x - r} y={y - r} width={2 * r} height={2 * r} rx="1.5" />
+  ) : (
+    <circle className={`mark mark--${kind ?? 'supplier'}`} cx={x} cy={y} r={r} />
+  )
+}
+
+export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, openKind, onToggleKind, hovered, onHover }: Props) {
   if (layout.nodes.length === 0) {
     return (
       <figure className="map">
@@ -59,20 +82,19 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
     )
   }
 
-  const byId = new Map(layout.nodes.map((n) => [n.id, n]))
-  // What stands for the selection on the sheet: the selected row itself or, when it is behind a
-  // fold, the row the layout highlighted in its place. Isolation has to isolate something: with
-  // neither on the sheet nothing is dimmed, rather than everything.
-  const focus = layout.nodes.find((n) => n.id === selected || n.highlighted === true)?.id ?? null
-  // A row is lit when it is the focus or hangs from it: opening a fold must not grey its own rows.
-  const lit = (id: string | undefined): boolean =>
-    id !== undefined && (id === focus || byId.get(id)?.parent === focus)
+  // What has the reader's attention: the row under the pointer or, failing that, what stands for
+  // the selection on the sheet: the selected row itself or, when it is behind a fold, the row the
+  // layout highlighted in its place. With neither on the sheet nothing is dimmed, rather than
+  // everything.
+  const focus =
+    (hovered != null && layout.nodes.some((n) => n.id === hovered) ? hovered : null) ??
+    layout.nodes.find((n) => n.id === selected || n.highlighted === true)?.id ??
+    null
+  const lit = traced(layout, focus)
   const state = (n: LayoutNode): string =>
-    `${n.highlighted === true ? ' highlighted' : ''}${focus !== null && !lit(n.id) ? ' dim' : ''}`
-  const faded = (e: LayoutEdge): string =>
-    focus !== null && !lit(e.from) && !lit(e.to) && !lit(e.door) ? ' dim' : ''
+    `${n.id === selected ? ' selected' : ''}${n.highlighted === true ? ' highlighted' : ''}${lit !== null && !lit.has(n.id) ? ' dim' : ''}`
 
-  function press(act: () => void) {
+  function press(id: string, act: () => void) {
     return {
       role: 'button' as const,
       tabIndex: 0,
@@ -86,47 +108,81 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
         ev.stopPropagation()
         act()
       },
+      onMouseEnter: () => onHover?.(id),
+      onMouseLeave: () => onHover?.(null),
     }
   }
 
   /** The row's words in its box, shortened to fit; the whole of them in the tooltip. */
-  function label(n: LayoutNode, extra = '', caret: string | null = null) {
-    const { text, suffix } = drawnText(n)
+  function label(n: LayoutNode, extra = '') {
     const box = n.labelBox
     return (
       <>
-        <title>{`${rowText(n)}${rowSuffix(n) === '' ? '' : ` · ${rowSuffix(n)}`}`}</title>
+        <title>{rowText(n)}</title>
         <text
           className={`row-label${n.parent !== undefined ? ' row-label--sub' : ''}${extra}`}
-          x={n.anchor === 'end' ? box.x + box.width : box.x}
+          x={n.anchor === 'middle' ? box.x + box.width / 2 : box.x}
           y={box.y + box.height - 3}
           fontSize={fontSizeOf(n)}
           textAnchor={n.anchor}
         >
-          {text}
-          {suffix === '' ? null : <tspan className="row-soft">{` · ${suffix}`}</tspan>}
-          {caret === null ? null : (
-            <tspan className="row-soft" dx="6" aria-hidden="true">
-              {caret}
-            </tspan>
-          )}
+          {drawnText(n)}
         </text>
       </>
     )
   }
 
-  /** The bracket from a row down to one of its sub-rows. */
-  function bracket(n: LayoutNode, dropFrom: number, reach: number) {
-    const parent = n.parent === undefined ? undefined : byId.get(n.parent)
-    if (parent === undefined) return null
-    return <path className="bracket" d={`M ${parent.x} ${parent.y + dropFrom} V ${n.y} H ${n.x + reach}`} />
+  const right = (n: LayoutNode): number => n.box.x + n.box.width
+  const box = (n: LayoutNode, className: string) => (
+    <rect className={className} x={n.box.x} y={n.box.y} width={n.box.width} height={n.box.height} rx={RADIUS} />
+  )
+  /** A sub-row's band inside its card: what the pointer hits, and what a selection tints. */
+  const band = (n: LayoutNode) => (
+    <rect className="sub-box" x={n.box.x + 3} y={n.box.y + 1} width={n.box.width - 6} height={n.box.height - 2} rx={RADIUS - 2} />
+  )
+  /** How many a row holds, quietly, at its right-hand end. */
+  const count = (n: LayoutNode, inset: number) =>
+    n.count === undefined ? null : (
+      <text className="count" x={right(n) - inset} y={n.y + 4} fontSize={MAP_TEXT.sub} textAnchor="end">
+        {n.count}
+      </text>
+    )
+  /** The mark that says a card opens, and under an open one the rule that sets its rows apart. */
+  function opens(n: LayoutNode) {
+    const x = right(n) - 15
+    return (
+      <>
+        <path
+          className="chevron"
+          d={n.open === true ? `M ${x - 4} ${n.y - 2} l 4 4 l 4 -4` : `M ${x - 2} ${n.y - 4} l 4 4 l -4 4`}
+        />
+        {n.open === true ? <path className="card-rule" d={`M ${n.box.x} ${2 * n.y - n.box.y} H ${right(n)}`} /> : null}
+      </>
+    )
   }
+  const doorMark = (n: LayoutNode) => (
+    <rect
+      className={`door-mark door-mark--${n.kind === 'doorGroup' ? 'discovered' : (n.origin ?? 'unsourced')}`}
+      x={n.x - DOOR_W / 2}
+      y={n.y - DOOR_H / 2}
+      width={DOOR_W}
+      height={DOOR_H}
+      rx="1"
+    />
+  )
 
   function drawNode(n: LayoutNode) {
     switch (n.kind) {
+      case 'people':
+        return (
+          <g key={n.id} className="people">
+            {box(n, 'card-box')}
+          </g>
+        )
       case 'subject':
         return (
-          <g key={n.id} data-id={n.id} className={`subject${state(n)}`} {...press(() => onSelect(n.id))}>
+          <g key={n.id} data-id={n.id} className={`subject${state(n)}`} {...press(n.id, () => onSelect(n.id))}>
+            {band(n)}
             <circle className="disc" cx={n.x} cy={n.y} r={PERSON_R} />
             {label(n)}
           </g>
@@ -137,19 +193,10 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
             key={n.id}
             data-id={n.id}
             className={`door door--${n.colourIndex ?? 0}${n.parent !== undefined ? ' door--sub' : ''}${state(n)}`}
-            {...press(() => onSelect(n.id))}
+            {...press(n.id, () => onSelect(n.id))}
           >
-            {n.parent !== undefined ? (
-              bracket(n, DOOR_H / 2, -4)
-            ) : (
-              <rect
-                className={`door-mark door-mark--${n.origin ?? 'unsourced'}`}
-                x={n.x - DOOR_W / 2}
-                y={n.y - DOOR_H / 2}
-                width={DOOR_W}
-                height={DOOR_H}
-              />
-            )}
+            {n.parent !== undefined ? band(n) : box(n, 'card-box')}
+            {n.parent !== undefined ? null : doorMark(n)}
             {label(n)}
           </g>
         )
@@ -161,96 +208,82 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
             data-id={n.id}
             className={`fold door--${n.colourIndex ?? 0}${state(n)}`}
             aria-expanded={n.open === true}
-            {...press(() => {
+            {...press(n.id, () => {
               onSelect(n.id)
               onToggleKind(openKind === kind ? null : kind)
             })}
           >
-            <rect className="door-mark door-mark--discovered" x={n.x - DOOR_W / 2} y={n.y - DOOR_H / 2} width={DOOR_W} height={DOOR_H} />
-            {label(n, '', n.open === true ? '▾' : '▸')}
+            {box(n, 'card-box')}
+            {doorMark(n)}
+            {label(n)}
+            {opens(n)}
           </g>
         )
       }
       case 'more': {
+        // The row it hangs from is what it stands for: selecting that lists everything it hides.
+        const stands = n.id.slice(n.id.indexOf(':') + 1)
         const ofDoors = n.id.startsWith('moreDoors:')
-        const stands = ofDoors ? `doorGroup:${n.doorKind ?? 'form'}` : `group:${n.id.slice('more:'.length)}`
         return (
-          <g
-            key={n.id}
-            data-id={n.id}
-            className={`more${ofDoors ? ` door--${n.colourIndex ?? 0}` : ''}${state(n)}`}
-            {...press(() => onSelect(stands))}
-          >
-            {ofDoors ? bracket(n, DOOR_H / 2, -4) : bracket(n, RING_R, -MEMBER_R - 3)}
+          <g key={n.id} data-id={n.id} className={`more${state(n)}`} {...press(n.id, () => onSelect(ofDoors ? `doorGroup:${stands}` : stands))}>
+            {band(n)}
             {label(n, ' row-soft')}
           </g>
         )
       }
       case 'controller':
         return (
-          <g key={n.id} data-id={n.id} className={`controller${state(n)}`} {...press(() => onSelect(n.id))}>
-            <circle className="disc" cx={n.x} cy={n.y} r={HOUSE_R} />
-            <path className="disc-home" d={HOME_PATH} transform={`translate(${n.x - 8} ${n.y - 8})`} />
+          <g key={n.id} data-id={n.id} className={`controller${state(n)}`} {...press(n.id, () => onSelect(n.id))}>
+            {box(n, 'card-box')}
+            <path className="home" d={HOME_PATH} transform={`translate(${n.x - 8} ${n.y - 19})`} />
             {label(n)}
           </g>
         )
-      case 'group': {
-        const total = n.count ?? 0
-        const circumference = 2 * Math.PI * RING_R
-        // The ring, divided in proportion: solid for what somebody has identified, dashed for the
-        // share nobody has yet. The dashed ring lies under the solid arc, so a group with nothing
-        // open is one unbroken circle and one entirely open is all dashes.
-        const known = total > 0 ? (total - (n.unexplained ?? 0)) / total : 0
-        return (
+      case 'group':
+        // A purpose inside the fold of purposes is a sub-row: it is selected, and does not open.
+        return n.parent !== undefined ? (
+          <g key={n.id} data-id={n.id} className={`member node--sub${state(n)}`} {...press(n.id, () => onSelect(n.id))}>
+            {band(n)}
+            {mark(n.mark, n.x, n.y, 3.5)}
+            {label(n)}
+            {count(n, 12)}
+          </g>
+        ) : (
           <g
             key={n.id}
             data-id={n.id}
-            className={`node node--${n.internal ? 'internal' : 'external'}${n.open === true ? ' node--open' : ''}${state(n)}`}
+            className={`node node--${n.mark ?? 'supplier'}${n.open === true ? ' node--open' : ''}${state(n)}`}
             aria-expanded={n.open === true}
-            {...press(() => {
+            {...press(n.id, () => {
               onSelect(n.id)
-              onToggleGroup(openGroup === n.label ? null : n.label)
+              onToggleGroup(openGroup === n.id ? null : n.id)
             })}
           >
-            <circle className="ring" cx={n.x} cy={n.y} r={RING_R} />
-            <circle
-              className="ring-known"
-              cx={n.x}
-              cy={n.y}
-              r={RING_R}
-              strokeDasharray={`${(circumference * known).toFixed(2)} ${circumference.toFixed(2)}`}
-              transform={`rotate(-90 ${n.x} ${n.y})`}
-            />
-            <text className="ring-count" x={n.x} y={n.y + 4} textAnchor="middle">
-              {total}
-            </text>
+            {box(n, 'card-box')}
+            {mark(n.mark, n.x, n.y, 4.5)}
             {label(n)}
+            {count(n, 26)}
+            {opens(n)}
           </g>
         )
-      }
       case 'member':
         return (
-          <g
-            key={n.id}
-            data-id={n.id}
-            className={`member node--${n.internal ? 'internal' : 'external'}${state(n)}`}
-            {...press(() => onSelect(n.id))}
-          >
-            {bracket(n, RING_R, -MEMBER_R - 3)}
-            <circle
-              className={`member-mark${(n.unexplained ?? 0) > 0 ? ' member-mark--open' : ''}`}
-              cx={n.x}
-              cy={n.y}
-              r={MEMBER_R}
-            />
-            {label(n, (n.unexplained ?? 0) > 0 ? ' row-soft' : '')}
+          <g key={n.id} data-id={n.id} className={`member${state(n)}`} {...press(n.id, () => onSelect(n.id))}>
+            {band(n)}
+            {mark(n.mark, n.x, n.y, 3.5)}
+            {label(n)}
           </g>
         )
     }
   }
 
-  const controller = byId.get('controller')
-  const spine = controller?.spine
+  const heads: [{ x: number; width: number }, string][] = [
+    [COLUMN.people, STRINGS.headPeople],
+    [COLUMN.doors, STRINGS.headDoors],
+    [COLUMN.controller, STRINGS.headController],
+    [COLUMN.places, STRINGS.headPlaces],
+  ]
+  const arrow = (e: LayoutEdge) => `M ${e.x2} ${e.y2} l ${-HEAD} ${-HEAD / 2} v ${HEAD} z`
 
   return (
     <figure className="map">
@@ -259,39 +292,28 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
           className="map-svg"
           viewBox={`0 0 ${layout.width} ${layout.height}`}
           preserveAspectRatio="xMidYMin meet"
+          onMouseLeave={() => onHover?.(null)}
           onClick={() => {
             onSelect(null)
             onToggleGroup(null)
             onToggleKind(null)
           }}
         >
-          <text className="col-head" x={COLUMN.person + PERSON_R} y="14" textAnchor="end">
-            {STRINGS.headPeople}
-          </text>
-          <text className="col-head" x={COLUMN.door - DOOR_W / 2} y="14">
-            {STRINGS.headDoors}
-          </text>
-          <text className="col-head" x={COLUMN.ring - RING_R} y="14">
-            {STRINGS.headPlaces}
-          </text>
+          {heads.map(([column, words]) => (
+            <g key={words}>
+              <text className="col-head" x={column.x} y="15">
+                {words}
+              </text>
+              <path className="col-rule" d={`M ${column.x} 23.5 h ${column.width}`} />
+            </g>
+          ))}
 
-          {spine === undefined ? null : (
-            <rect className="spine" x={spine.x} y={spine.y} width={spine.width} height={spine.height} rx={spine.width / 2} />
-          )}
-
-          {layout.edges.map((e, i) => (
-            <g key={`${e.from}->${e.to}-${i}`} className={`line${faded(e)}`}>
-              <path className={`path ${colourClass('path', e.colourIndex)}`} d={linePath(e)} />
-              {/* Inside the bar: from the height the door came in at to the point this line leaves from. */}
-              {e.entryY === undefined || spine === undefined ? null : (
-                <path
-                  className={`path ${colourClass('path', e.colourIndex)}`}
-                  d={`M ${spine.x} ${e.entryY} L ${spine.x + spine.width} ${e.y1}`}
-                />
-              )}
-              {e.arrow ? (
-                <path className={`head ${colourClass('head', e.colourIndex)}`} d={`M ${e.x2} ${e.y2} l -7 -3.5 v 7 z`} />
-              ) : null}
+          {layout.edges.map((e) => (
+            <g key={`${e.from}->${e.to}`} className={`line${tracedEdge(lit, e) ? '' : ' dim'}`}>
+              {e.lead === undefined ? null : <path className={`path ${colourClass('path', e.colourIndex)}`} d={linePath(e.lead)} />}
+              {/* A touch past the arrowhead's base, so no seam shows between the two. */}
+              <path className={`path ${colourClass('path', e.colourIndex)}`} d={linePath(e, HEAD - 1)} />
+              <path className={`head ${colourClass('head', e.colourIndex)}`} d={arrow(e)} />
             </g>
           ))}
 
@@ -302,7 +324,7 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
       <figcaption className="legend">
         <span className="key">
           <svg className="key-mark" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-            <circle className="disc" cx="9" cy="9" r="7" />
+            <circle className="disc" cx="9" cy="9" r="6" />
           </svg>
           <span>
             <span className="key-term">{STRINGS.keyPeople}</span>
@@ -311,9 +333,9 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
         </span>
         <span className="key">
           <svg className="key-mark key-mark--wide door door--0" width="30" height="18" viewBox="0 0 30 18" aria-hidden="true">
-            <rect className="door-mark door-mark--discovered" x="3" y="2" width="6" height="14" />
-            <rect className="door-mark door-mark--declared" x="12" y="2" width="6" height="14" />
-            <rect className="door-mark door-mark--unsourced" x="21" y="2" width="6" height="14" />
+            <rect className="door-mark door-mark--discovered" x="3" y="2" width="6" height="14" rx="1" />
+            <rect className="door-mark door-mark--declared" x="12" y="2" width="6" height="14" rx="1" />
+            <rect className="door-mark door-mark--unsourced" x="21" y="2" width="6" height="14" rx="1" />
           </svg>
           <span>
             <span className="key-term">{STRINGS.keyDoor}</span>
@@ -322,8 +344,8 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
         </span>
         <span className="key">
           <svg className="key-mark" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-            <path className="path path--neutral" d="M 0 9 H 16" />
-            <path className="head head--neutral" d="M 16 9 l -7 -3.5 v 7 z" />
+            <path className="path path--neutral" d="M 1 9 H 12" />
+            <path className="head head--neutral" d="M 17 9 l -6 -3 v 6 z" />
           </svg>
           <span>
             <span className="key-term">{STRINGS.keyDirection}</span>
@@ -331,8 +353,8 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
           </span>
         </span>
         <span className="key">
-          <svg className="key-mark node node--internal" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-            <circle className="ring-known" cx="9" cy="9" r="7" />
+          <svg className="key-mark" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+            {mark('internal', 9, 9, 6)}
           </svg>
           <span>
             <span className="key-term">{STRINGS.keyInternal}</span>
@@ -340,8 +362,8 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
           </span>
         </span>
         <span className="key">
-          <svg className="key-mark node node--external" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-            <circle className="ring-known" cx="9" cy="9" r="7" />
+          <svg className="key-mark" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+            {mark('supplier', 9, 9, 6)}
           </svg>
           <span>
             <span className="key-term">{STRINGS.keyExternal}</span>
@@ -349,8 +371,8 @@ export function MapView({ layout, selected, onSelect, openGroup, onToggleGroup, 
           </span>
         </span>
         <span className="key">
-          <svg className="key-mark node node--external" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-            <circle className="ring" cx="9" cy="9" r="7" />
+          <svg className="key-mark" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+            {mark('unidentified', 9, 9, 6)}
           </svg>
           <span>
             <span className="key-term">{STRINGS.keyOpen}</span>
