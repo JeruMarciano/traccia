@@ -24,7 +24,9 @@
      for this screen -- none of them leaves the room on paper. */
   .scanbar, .actions, .notice, .detail, .suggestions { display: none; }
 
-  .map-svg { height: auto; }
+  /* Paper does not scroll: the sheet scales to the page, and an oversized project prints small. */
+  .map-scroll { overflow: visible; display: block; }
+  .map-svg { min-width: 0; max-width: none; width: 100%; height: auto; }
   .dim { opacity: 1; }
 
   /* Six patterns for six door colours, all distinct. A door that shares a pattern with another

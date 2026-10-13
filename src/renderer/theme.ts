@@ -23,6 +23,7 @@
  * is a shape. The sheet prints in black and white without losing a single reading.
  */
 import './print.css'
+import { MAP_MAX_WIDTH, MAP_MIN_WIDTH } from './mapMetrics'
 
 export const STYLESHEET = `
 :root{
@@ -138,9 +139,75 @@ export const STYLESHEET = `
   line-height:1.45;
 }
 
-/* The map */
+/* The map. A sheet 1000 units wide whose height follows from its rows; it scales with the width
+   of its column, never below the width that keeps its smallest text at 9 px on screen. A sheet
+   taller than the window scrolls rather than shrinking. */
 .map{flex:1;display:flex;flex-direction:column;min-height:0;margin:0;}
-.map-svg{flex:1;min-height:0;width:100%;height:100%;display:block;}
+.map-scroll{flex:1;min-height:0;overflow:auto;display:flex;}
+.map-svg{display:block;flex:none;margin:auto;width:100%;min-width:${MAP_MIN_WIDTH}px;max-width:${MAP_MAX_WIDTH}px;height:auto;}
+.col-head{font-size:12px;letter-spacing:.04em;fill:var(--ink-soft);}
+
+/* The organisation: a bar every line crosses at its own height. */
+.spine{fill:var(--paper-lift);stroke:var(--ink);stroke-width:1.4;}
+.controller{cursor:pointer;}
+.disc{fill:var(--person);}
+.disc-home{fill:var(--paper);}
+
+/* Lines. A way in's colour travels from the person to the destination. */
+.path{fill:none;stroke-width:1.4;stroke:var(--rule);}
+.path--neutral{stroke:var(--ink-soft);opacity:.6;}
+.path--0{stroke:var(--door-1);}
+.path--1{stroke:var(--door-2);}
+.path--2{stroke:var(--door-3);}
+.path--3{stroke:var(--door-4);}
+.path--4{stroke:var(--door-5);}
+.path--5{stroke:var(--door-6);}
+.head--neutral{fill:var(--ink-soft);opacity:.6;}
+.head--0{fill:var(--door-1);}
+.head--1{fill:var(--door-2);}
+.head--2{fill:var(--door-3);}
+.head--3{fill:var(--door-4);}
+.head--4{fill:var(--door-5);}
+.head--5{fill:var(--door-6);}
+
+/* Rows. One size for a row, one for a sub-row; the sizes themselves are set on the element from
+   mapMetrics, so the width floor above and the text agree by construction. */
+.row-label{font-weight:500;fill:var(--ink);}
+.row-label--sub{font-weight:400;}
+.row-soft{font-weight:400;fill:var(--ink-soft);}
+.highlighted .row-label{font-weight:600;text-decoration:underline;}
+.bracket{fill:none;stroke:var(--rule);stroke-width:1;}
+
+/* Ways in. The mark says where the door comes from by ink, not by hue: filled for one the scan
+   saw, outlined for one a document declared, dashed when neither is established. */
+.subject,.door,.fold,.more,.node,.member{cursor:pointer;}
+.door--0{color:var(--door-1);}
+.door--1{color:var(--door-2);}
+.door--2{color:var(--door-3);}
+.door--3{color:var(--door-4);}
+.door--4{color:var(--door-5);}
+.door--5{color:var(--door-6);}
+.door-mark{stroke:currentColor;stroke-width:1.6;}
+.door-mark--discovered{fill:currentColor;}
+.door-mark--declared{fill:var(--paper-lift);}
+.door-mark--unsourced{fill:var(--paper-lift);stroke-dasharray:2 2;}
+.door .bracket,.more .bracket{stroke:currentColor;}
+
+/* Where it goes. The ring is the reading: solid for what somebody has identified, dashed for the
+   share nobody has yet. Green for what the organisation runs itself, ochre for a supplier. */
+.ring{fill:var(--paper-lift);stroke-width:1.6;stroke-dasharray:2 3;}
+.ring-known{fill:none;stroke-width:2.2;}
+.ring-count{font-size:12px;font-weight:500;fill:var(--ink);}
+.member-mark{fill:var(--paper-lift);stroke-width:1.6;}
+.member-mark--open{stroke-dasharray:2 2;}
+.node--internal .ring,.node--internal .ring-known,.node--internal .member-mark{stroke:var(--internal);}
+.node--external .ring,.node--external .ring-known,.node--external .member-mark{stroke:var(--external);}
+.node .bracket,.member .bracket{stroke:var(--rule);}
+
+.map-svg [role="button"]:focus-visible{outline:2px solid var(--person);outline-offset:2px;}
+.map-svg [role="button"]:hover .row-label{text-decoration:underline;}
+.dim{opacity:.16;}
+
 .map-empty{
   margin:auto;
   padding:0 0 8vh;
@@ -148,87 +215,6 @@ export const STYLESHEET = `
   color:var(--ink-soft);
   text-align:center;
 }
-
-/* A door's colour travels the whole path, so two doors feeding one destination are two lines a
-   reader can follow apart. Colour repeats the story; it never solely carries it -- the label and
-   the position say the same thing, and print.css gives each colour its own dash pattern. */
-.path{stroke:var(--rule);stroke-width:1.25;fill:none;}
-.path--neutral{stroke:var(--rule);opacity:.65;}
-.path--0{stroke:var(--door-1);opacity:.75;}
-.path--1{stroke:var(--door-2);opacity:.75;}
-.path--2{stroke:var(--door-3);opacity:.75;}
-.path--3{stroke:var(--door-4);opacity:.75;}
-.path--4{stroke:var(--door-5);opacity:.75;}
-.path--5{stroke:var(--door-6);opacity:.75;}
-.arrow path{fill:var(--ink-soft);}
-
-/* A door is drawn as a door: a small upright rectangle standing in the inbound side. */
-.door{cursor:pointer;}
-.door-mark{fill:var(--paper-lift);stroke-width:2.5;}
-.door--0 .door-mark{stroke:var(--door-1);}
-.door--1 .door-mark{stroke:var(--door-2);}
-.door--2 .door-mark{stroke:var(--door-3);}
-.door--3 .door-mark{stroke:var(--door-4);}
-.door--4 .door-mark{stroke:var(--door-5);}
-.door--5 .door-mark{stroke:var(--door-6);}
-.door:hover .door-mark{fill:var(--paper);}
-.door-label{font-size:9px;font-weight:500;fill:var(--ink);}
-.door-origin{font-family:var(--mono);font-size:7.5px;fill:var(--ink-soft);letter-spacing:.02em;}
-
-.subject{cursor:pointer;}
-.subject-label{font-size:9px;font-weight:500;fill:var(--ink);}
-.disc{fill:var(--person);}
-.disc-halo{fill:none;stroke:var(--person);stroke-width:1;opacity:.28;}
-.disc-label{
-  fill:var(--paper);
-  font-size:10px;
-  font-weight:600;
-  letter-spacing:.2em;
-}
-.disc-count{fill:var(--paper);font-family:var(--mono);font-size:9px;opacity:.85;}
-/* The centre carries a house and no text: the organisation is named on the title block, in this
-   mark's tooltip, and in the panel a click opens. */
-.controller{cursor:pointer;}
-.disc-home{fill:var(--paper);}
-.controller:hover .disc-halo{opacity:.55;}
-
-.node{cursor:pointer;}
-.node-fill{fill:var(--paper-lift);}
-.node-arc{fill:none;stroke-width:2.5;stroke-linecap:butt;}
-.node--internal .node-arc{stroke:var(--internal);}
-.node--external .node-arc{stroke:var(--external);}
-.node-arc--open{stroke-dasharray:3 4;opacity:.75;}
-.node-count{font-size:13px;font-weight:500;fill:var(--ink);}
-.more{cursor:default;}
-.more[role="button"]{cursor:pointer;}
-.more[role="button"]:focus-visible{outline:2px solid var(--person);outline-offset:2px;}
-.more-label{font-size:9.5px;font-weight:600;fill:var(--ink-soft);}
-.more--highlighted .more-label{fill:var(--ink);text-decoration:underline;}
-.node-label{
-  font-size:9.5px;
-  font-weight:500;
-  letter-spacing:.05em;
-  fill:var(--ink);
-}
-/* An open ring: a faint boundary round its members, and the mark a reader clicks to close it. */
-.node-boundary{
-  fill:none;
-  stroke:var(--rule);
-  stroke-width:1;
-  stroke-dasharray:2 5;
-  stroke-linecap:round;
-}
-.node--opened:hover .node-boundary{stroke:var(--ink-soft);}
-.node-fill--opened{fill:var(--paper);stroke:var(--rule);stroke-width:1;}
-.node-count--opened{font-size:12px;fill:var(--ink-soft);}
-.node-member{fill:var(--paper-lift);stroke:var(--external);stroke-width:2;}
-.node--internal .node-member{stroke:var(--internal);}
-/* A member nobody has identified is drawn, and drawn dashed. Hiding it because it has no name
-   to show would be the one thing the open ring must not do. */
-.node-member--open{stroke-dasharray:3 4;opacity:.8;}
-.node:hover .node-fill{fill:var(--paper);}
-.node:hover .node-arc{stroke-width:3.5;}
-.dim{opacity:.16;}
 
 /* The key. The notation is not common knowledge, and the sheet is read by someone seeing it
    for the first time, often on paper. */
@@ -246,6 +232,7 @@ export const STYLESHEET = `
 }
 .key{display:flex;gap:5px;align-items:center;}
 .key-mark{flex:none;width:13px;height:13px;}
+.key-mark--wide{width:22px;}
 .key-term{font-size:9px;font-weight:600;letter-spacing:.02em;color:var(--ink-soft);}
 .key-gloss{display:none;}
 
@@ -438,20 +425,19 @@ export const STYLESHEET = `
 @keyframes fade-in{from{opacity:0;}to{opacity:inherit;}}
 @keyframes settle{from{opacity:0;transform:scale(.9);}to{opacity:1;transform:scale(1);}}
 .path{animation:fade-in .4s ease-out both;}
-.node,.subject,.door,.controller{
+.node,.member,.subject,.door,.fold,.controller{
   animation:settle .32s ease-out both;
   transform-box:fill-box;
   transform-origin:center;
 }
 
 @media (prefers-reduced-motion:reduce){
-  .path,.node,.subject,.door,.controller{animation:none;}
+  .path,.node,.member,.subject,.door,.fold,.controller{animation:none;}
 }
 
 @media (max-width:900px){
   .sheet{display:block;height:auto;}
   .detail{width:auto;border-left:0;border-top:1px solid var(--rule);padding:20px 24px 24px;}
-  .map-svg{height:auto;}
 }
 @media (max-width:680px){
   .legend{grid-template-columns:repeat(2,minmax(0,1fr));}
