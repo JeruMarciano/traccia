@@ -8,6 +8,7 @@ import type {
 } from '../../core/types'
 import type {
   ControllerPanel,
+  DoorGroupPanel,
   DoorPanel,
   GroupPanel,
   PanelFact,
@@ -40,6 +41,8 @@ interface Props {
   dictionary: VendorDictionary
   /** Absent in contexts that only display, such as a test rendering the panel on its own. */
   onAnswer?: AnswerHandler
+  /** Selects something else from inside the panel. Absent where the panel only displays. */
+  onSelect?: (id: string) => void
 }
 
 const FIELD_LABEL: Readonly<Record<PanelFact['field'], string>> = {
@@ -342,7 +345,33 @@ function GroupView({ panel }: { panel: GroupPanel }) {
   )
 }
 
-export function DetailPanel({ project, selected, dictionary, onAnswer }: Props) {
+/** Every door of a folded kind, the ones the map hides behind "+N more" included. */
+export function DoorGroupView({ panel, onSelect }: { panel: DoorGroupPanel; onSelect?: (id: string) => void }) {
+  const words = (label: string): string => (panel.kind === 'form' && label === '/' ? STRINGS.homePage : label)
+  return (
+    <>
+      <h2 className="detail-head">{STRINGS.detailHeading}</h2>
+      <article className="detail-place">
+        <h3 className="detail-place-name">{STRINGS.doorFold[panel.kind](panel.doors.length)}</h3>
+        <ul className="detail-observations">
+          {panel.doors.map((d) => (
+            <li key={d.id}>
+              {onSelect === undefined ? (
+                words(d.label)
+              ) : (
+                <button className="detail-door-link" onClick={() => onSelect(`door:${d.id}`)}>
+                  {words(d.label)}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </article>
+    </>
+  )
+}
+
+export function DetailPanel({ project, selected, dictionary, onAnswer, onSelect }: Props) {
   if (selected === 'centre') {
     // The v0.2 people hub. The redesign draws each subject group as its own node, so this only
     // answers a selection carried over from an older sheet.
@@ -386,6 +415,7 @@ export function DetailPanel({ project, selected, dictionary, onAnswer }: Props) 
       {panel.sort === 'door' ? <DoorView panel={panel} /> : null}
       {panel.sort === 'controller' ? <ControllerView panel={panel} /> : null}
       {panel.sort === 'group' ? <GroupView panel={panel} /> : null}
+      {panel.sort === 'doorGroup' ? <DoorGroupView panel={panel} onSelect={onSelect} /> : null}
     </aside>
   )
 }

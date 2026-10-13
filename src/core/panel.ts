@@ -1,5 +1,5 @@
 import { controllerName } from './controller'
-import { deriveDoors, tracePaths } from './doors'
+import { DOOR_KINDS, FOLD_AT, barePath, deriveDoors, tracePaths } from './doors'
 import { computeGaps } from './gaps'
 import { groupMembers } from './layout'
 import { NOT_IDENTIFIED } from './scan'
@@ -110,7 +110,14 @@ export interface GroupPanel {
   members: { id: string; name: string; unexplained: boolean }[]
 }
 
-export type Panel = PlacePanel | DoorPanel | ControllerPanel | GroupPanel
+export interface DoorGroupPanel {
+  sort: 'doorGroup'
+  kind: DoorKind
+  /** Every door of the kind, in map order. `label` is the bare path for a form ('/' for the root). */
+  doors: { id: string; label: string }[]
+}
+
+export type Panel = PlacePanel | DoorPanel | ControllerPanel | GroupPanel | DoorGroupPanel
 
 // Mirrors the displayName/titleCase pair in scan.ts, the only place a scanned host is turned into
 // a place name. A Place carries no domain, so matching an observation back to the place it
@@ -261,6 +268,18 @@ export function panelFor(
     }
   }
 
+  if (selectedId.startsWith('doorGroup:')) {
+    const kind = DOOR_KINDS.find((k) => k === selectedId.slice('doorGroup:'.length))
+    if (kind === undefined) return null
+    const doors = deriveDoors(project).filter((d) => d.kind === kind)
+    // A fold exists only at FOLD_AT doors; a stale selection from before a rescan names nothing.
+    if (doors.length < FOLD_AT) return null
+    return {
+      sort: 'doorGroup',
+      kind,
+      doors: doors.map((d) => ({ id: d.id, label: kind === 'form' ? barePath(d.label) : d.label })),
+    }
+  }
   if (selectedId.startsWith('door:')) {
     const doorId = selectedId.slice('door:'.length)
     const doors = deriveDoors(project)
