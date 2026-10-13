@@ -30,4 +30,16 @@ describe('the printed sheet', () => {
     const print = PRINT.slice(PRINT.indexOf('@media print')).trim()
     expect(STYLESHEET.trim().endsWith(print)).toBe(true)
   })
+
+  it('prints on white, by changing colours the screen rules actually read', () => {
+    // The wrong answer: `--sheet: #FFFFFF`, a name nothing reads -- the page printed grey.
+    const set = [...PRINT.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1])
+    expect(set).toContain('--paper')
+    for (const name of set) expect(STYLESHEET).toContain(`var(${name})`)
+  })
+
+  it('leaves the scan control and the line under it on the screen', () => {
+    const hidden = PRINT.match(/([^{}]*)\{\s*display:\s*none/)?.[1] ?? ''
+    for (const screenOnly of ['.scanbar', '.scan-visitor', '.actions', '.notice']) expect(hidden).toContain(screenOnly)
+  })
 })

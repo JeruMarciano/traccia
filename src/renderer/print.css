@@ -15,18 +15,26 @@
  * Every other distinction the map makes is already carried by shape, weight or label (theme.ts).
  */
 @media print {
-  :root { --sheet: #FFFFFF; }
+  /* Paper is white. The screen's pale enamel would print as a grey wash, in ink the client pays for. */
+  :root { --paper: #FFFFFF; --paper-lift: #FFFFFF; }
+
+  /* The plate gives up its screen padding below, so the margin is the page's own, and the same
+     on every printer. */
+  @page { margin: 14mm; }
 
   .sheet { display: block; height: auto; }
   .plate { padding: 0; }
 
-  /* The scan control, the title-block actions, any session notice and the detail bar are all
-     for this screen -- none of them leaves the room on paper. */
-  .scanbar, .actions, .notice, .detail, .suggestions { display: none; }
+  /* The scan control and the line under it, the title-block actions, any session notice and the
+     detail bar are all for this screen -- none of them leaves the room on paper. */
+  .scanbar, .scan-visitor, .actions, .notice, .detail, .suggestions { display: none; }
 
-  /* Paper does not scroll: the sheet scales to the page, and an oversized project prints small. */
+  /* Paper does not scroll: the sheet scales to the page, and an oversized project prints small.
+     Width alone is not enough -- on a landscape page a tall map is wider than it is short, and
+     ran over three sheets. The height is capped at one page less the title block, the legend and
+     the limits (about 190 px together), and the drawing shrinks inside that box. */
   .map-scroll { overflow: visible; display: block; }
-  .map-svg { min-width: 0; max-width: none; width: 100%; height: auto; }
+  .map-svg { min-width: 0; max-width: none; width: 100%; height: auto; max-height: calc(100vh - 190px); }
   .dim { opacity: 1; }
 
   /* Six patterns for six door colours, all distinct. A door that shares a pattern with another
