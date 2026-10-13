@@ -242,6 +242,7 @@ export function App() {
             selected={selected}
             dictionary={VENDORS}
             onAnswer={answer}
+            onSelect={setSelected}
           />
         )}
       </div>

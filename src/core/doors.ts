@@ -227,3 +227,10 @@ export function classifyDoors(result: ScanResult, dictionary: VendorDictionary):
   }
   return doors
 }
+
+/** A form is named by its page's path; the site's own root is '/'. Anything that is not an
+ *  address is left as written: a blank beats a guess. */
+export function barePath(page: string): string {
+  const path = page.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '')
+  return path === '' ? '/' : path
+}

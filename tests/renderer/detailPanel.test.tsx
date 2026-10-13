@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { DetailPanel } from '../../src/renderer/components/DetailPanel'
+import { DetailPanel, DoorGroupView } from '../../src/renderer/components/DetailPanel'
+import { panelFor } from '../../src/core/panel'
+import type { DoorGroupPanel } from '../../src/core/panel'
+import { dorsaleUgly } from '../fixtures/dorsale'
 import { STRINGS } from '../../src/renderer/strings'
 import { rossiEditore } from '../fixtures/rossiEditore'
 import { answerByHand } from '../../src/core/answers'
@@ -196,5 +199,39 @@ describe('answering a question from the panel', () => {
       <DetailPanel project={rossiEditore()} selected="pl-7" dictionary={V} />,
     )
     expect(markup).not.toContain(STRINGS.detailAnswerYes)
+  })
+})
+
+describe('the panel of a folded row', () => {
+  const markup = renderToStaticMarkup(
+    <DetailPanel project={dorsaleUgly()} selected="doorGroup:form" dictionary={{}} onSelect={() => {}} />,
+  )
+
+  it('is headed like the row and lists all twelve forms', () => {
+    expect(markup).toContain('Forms on 12 pages')
+    expect((markup.match(/class="detail-door-link"/g) ?? []).length).toBe(12)
+    expect(markup).toContain(STRINGS.homePage)
+  })
+
+  it('makes each one a button that selects that door', () => {
+    const picked: string[] = []
+    const view = DoorGroupView({ panel: panelFor(dorsaleUgly(), 'doorGroup:form', {}) as DoorGroupPanel, onSelect: (id) => picked.push(id) })
+    const buttons: { props: { onClick: () => void } }[] = []
+    const walk = (n: unknown): void => {
+      if (Array.isArray(n)) return n.forEach(walk)
+      const el = n as { type?: unknown; props?: { children?: unknown; onClick?: () => void } } | null
+      if (el === null || typeof el !== 'object' || el.props === undefined) return
+      if (el.type === 'button') buttons.push(el as { props: { onClick: () => void } })
+      walk(el.props.children)
+    }
+    walk(view)
+    buttons[11]!.props.onClick()
+    expect(picked).toEqual(['door:cp:scan1-cp-12'])
+  })
+
+  it('lists them as plain text where nothing can be selected', () => {
+    const plain = renderToStaticMarkup(<DetailPanel project={dorsaleUgly()} selected="doorGroup:form" dictionary={{}} />)
+    expect(plain).not.toContain('<button class="detail-door-link"')
+    expect(plain).toContain('Forms on 12 pages')
   })
 })

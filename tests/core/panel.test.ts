@@ -4,6 +4,7 @@ import { panelFor } from '../../src/core/panel'
 import { answerByHand } from '../../src/core/answers'
 import { rossiEditore } from '../fixtures/rossiEditore'
 import { emptyProject } from '../fixtures/projects'
+import { dorsaleUgly, scanLike } from '../fixtures/dorsale'
 import vendorsJson from '../../src/data/vendors.json'
 import type { VendorDictionary } from '../../src/core/types'
 
@@ -228,5 +229,29 @@ describe('a fact somebody typed in', () => {
     if (before?.sort !== 'place' || after?.sort !== 'place') throw new Error('expected place panels')
     expect(after.unknowns.count).toBe(before.unknowns.count - 1)
     expect(after.facts.find((f) => f.field === 'eea')?.byHand).toBe(true)
+  })
+})
+
+describe('panelFor a folded row of ways in', () => {
+  it('lists every door of the kind, hidden ones included, each by its path', () => {
+    const p = panelFor(dorsaleUgly(), 'doorGroup:form', {})
+    if (p?.sort !== 'doorGroup') throw new Error('expected a door-group panel')
+    expect(p.kind).toBe('form')
+    expect(p.doors).toHaveLength(12)
+    expect(p.doors[0]).toEqual({ id: 'cp:scan1-cp-1', label: '/' })
+    expect(p.doors.every((d) => d.label.startsWith('/'))).toBe(true)
+  })
+
+  it('keeps the label of a door that is not a form', () => {
+    const p = panelFor(scanLike(['chat', 'chat', 'chat']), 'doorGroup:chat', {})
+    if (p?.sort !== 'doorGroup') throw new Error('expected a door-group panel')
+    expect(p.doors.map((d) => d.label)).toEqual(['Chat on Vendor cp-1', 'Chat on Vendor cp-2', 'Chat on Vendor cp-3'])
+  })
+
+  it('answers nothing for a kind that is not folded, or not a kind', () => {
+    // The wrong answer: a stale selection from before a rescan opens a panel of two chats.
+    expect(panelFor(scanLike(['chat', 'chat']), 'doorGroup:chat', {})).toBeNull()
+    expect(panelFor(dorsaleUgly(), 'doorGroup:embed', {})).toBeNull()
+    expect(panelFor(dorsaleUgly(), 'doorGroup:nonsense', {})).toBeNull()
   })
 })

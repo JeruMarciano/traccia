@@ -1,5 +1,5 @@
 import { controllerName } from './controller'
-import { deriveDoors, doorRows, tracePaths } from './doors'
+import { barePath, deriveDoors, doorRows, tracePaths } from './doors'
 import type { Door, DoorKind, DoorOrigin, Place, Project } from './types'
 
 /**
@@ -126,13 +126,6 @@ export function groupMembers(project: Project, group: string): Place[] {
   return project.places.filter(
     (p) => p.purposeGroup === group && p.kind !== 'collection' && p.id !== controller.placeId,
   )
-}
-
-/** A form is named by its page's path; the site's own root is '/'. Anything that is not an
- *  address is left as written: a blank beats a guess. */
-function barePath(page: string): string {
-  const path = page.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '')
-  return path === '' ? '/' : path
 }
 
 function capped<T>(items: T[]): { shown: T[]; hidden: T[] } {

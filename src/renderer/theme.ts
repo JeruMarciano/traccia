@@ -418,6 +418,9 @@ export const STYLESHEET = `
 .detail-declared{margin:10px 0 0;font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);}
 .detail-observations{list-style:none;margin:9px 0 0;padding:0;}
 .detail-observations li{margin:0 0 6px;font-size:11.5px;line-height:1.4;color:var(--ink);}
+.detail-door-link{all:unset;cursor:pointer;color:var(--ink);overflow-wrap:anywhere;}
+.detail-door-link:hover{text-decoration:underline;}
+.detail-door-link:focus-visible{outline:2px solid var(--person);outline-offset:2px;}
 
 /* The map settles rather than appears: rings first, then what sits on them. A scan is the one
    moment this tool has to show something happening, and a drawing that arrives all at once
