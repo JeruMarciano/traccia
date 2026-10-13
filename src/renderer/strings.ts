@@ -35,6 +35,21 @@ export const STRINGS = {
   yourOrganisation: 'Your organisation',
   doorDiscovered: 'discovered by the scan',
   doorDeclared: 'declared in a document',
+  /** A form on the site's own root, where a path would be a bare slash. */
+  homePage: 'Home page',
+  /** Three or more ways in of one kind, drawn as one row. */
+  doorFold: {
+    form: (n: number): string => `Forms on ${n} pages`,
+    newsletter: (n: number): string => `Newsletters (${n})`,
+    booking: (n: number): string => `Bookings (${n})`,
+    chat: (n: number): string => `Chats (${n})`,
+    embed: (n: number): string => `Embedded content (${n})`,
+  },
+  more: (n: number): string => `+${n} more`,
+  groupUnidentified: (n: number): string => `${n} not yet identified`,
+  headPeople: 'Whose data',
+  headDoors: 'Ways in',
+  headPlaces: 'Where it goes',
 
   keyPeople: 'People',
   keyPeopleGloss: 'Every line starts here.',
