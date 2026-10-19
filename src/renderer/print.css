@@ -37,6 +37,12 @@
   .map-scroll { overflow: visible; display: block; }
   .map-svg { min-width: 0; max-width: none; width: 100%; height: auto; max-height: calc(100vh - 190px); }
   .dim { opacity: 1; }
+  /* Nor outlined or underlined: each mark prints as it stands before anything is clicked. */
+  .selected > .card-box { stroke: var(--rule); stroke-width: 1; }
+  .controller .card-box { stroke: var(--ink); stroke-width: 1.2; }
+  .selected > .sub-box { fill: transparent; }
+  .highlighted .row-label { font-weight: 500; text-decoration: none; }
+  .controller .row-label { font-weight: 600; }
 
   /* Six patterns for six door colours, all distinct. A door that shares a pattern with another
      is a door a reader cannot follow on paper. */

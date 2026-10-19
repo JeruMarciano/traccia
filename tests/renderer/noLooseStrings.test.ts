@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs'
 import { findLooseStrings } from './looseStrings'
 
 function rendererComponents(): string[] {
-  const found = execSync("find src/renderer -name '*.tsx'").toString().trim()
+  const found = execSync("find src/renderer \\( -name '*.tsx' -o -name '*.ts' \\) ! -name strings.ts").toString().trim()
   return found === '' ? [] : found.split('\n')
 }
 

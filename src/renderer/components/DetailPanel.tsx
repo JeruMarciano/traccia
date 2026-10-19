@@ -328,7 +328,7 @@ function ControllerView({ panel }: { panel: ControllerPanel }) {
 }
 
 /** A row of destinations: every place it counts, each one a way to that place's own facts. */
-function GroupView({ panel, onSelect }: { panel: GroupPanel; onSelect?: (id: string) => void }) {
+export function GroupView({ panel, onSelect }: { panel: GroupPanel; onSelect?: (id: string) => void }) {
   const words = (m: GroupPanel['members'][number]): string =>
     m.purpose === undefined ? m.name : STRINGS.detailMemberPurpose(m.name, m.purpose)
   return (
@@ -360,7 +360,7 @@ function GroupView({ panel, onSelect }: { panel: GroupPanel; onSelect?: (id: str
 }
 
 /** The purposes the map folds into one row. Each opens the list of its own places. */
-function PurposesView({ panel, onSelect }: { panel: PurposesPanel; onSelect?: (id: string) => void }) {
+export function PurposesView({ panel, onSelect }: { panel: PurposesPanel; onSelect?: (id: string) => void }) {
   return (
     <>
       <h2 className="detail-head">{STRINGS.detailHeading}</h2>
