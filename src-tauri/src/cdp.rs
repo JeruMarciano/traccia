@@ -1678,6 +1678,18 @@ impl<T: CdpTransport> Driver<T> {
                 .and_then(|u| u.as_str())
             {
                 self.acc.record(url, self.phase);
+                // Opens the proxy's gate for the Google hosts Chrome also reaches on its own
+                // (`admission::asked_for_only`) — but not for Chrome's own pages: its error page
+                // (`chrome-error://`) reaches for the same hosts. A site's `about:srcdoc` or
+                // `blob:` frame is still the site asking.
+                let from_page = event
+                    .params
+                    .get("documentURL")
+                    .and_then(|d| d.as_str())
+                    .is_some_and(|d| !d.get(..6).is_some_and(|p| p.eq_ignore_ascii_case("chrome")));
+                if let Some(host) = http_host(url).filter(|_| from_page) {
+                    self.ledger.note_requested(&host);
+                }
             }
         } else if method == EventAttachedToTarget::IDENTIFIER {
             // A target this module cannot parse must not simply disappear.
@@ -3676,6 +3688,22 @@ mod tests {
     }
 
     // --- Directed by the security audit ---
+
+    #[tokio::test]
+    async fn a_request_a_site_page_made_opens_the_gate_and_chromes_error_page_does_not() {
+        let request = |url: &str, document: &str| CdpJsonEventMessage {
+            method: MethodId::from(EventRequestWillBeSent::IDENTIFIER),
+            session_id: None,
+            params: json!({"request": {"url": url}, "documentURL": document}),
+        };
+        let mut driver = Driver::new(FakeTransport::new());
+        driver.on_event(request("https://www.gstatic.com/recaptcha/api.js", "https://rossi-editore.it/"));
+        driver.on_event(request("https://www.google.com/search", "chrome-error://chromewebdata/"));
+        driver.on_event(request("https://accounts.google.com/gsi/client", "about:srcdoc"));
+        assert!(driver.ledger.was_requested("www.gstatic.com"));
+        assert!(driver.ledger.was_requested("accounts.google.com"), "a site's srcdoc frame");
+        assert!(!driver.ledger.was_requested("www.google.com"), "the browser's own error page");
+    }
 
     #[tokio::test]
     async fn an_attach_event_that_does_not_parse_is_counted_and_still_resumed() {

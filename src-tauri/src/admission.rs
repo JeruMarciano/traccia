@@ -46,6 +46,22 @@ const BROWSER_SERVICE_HOSTS: [&str; 3] = [
     "update.googleapis.com",
 ];
 
+/// Hosts Chrome reaches on its own during every scan — search preconnect (`www.google.com`),
+/// connectivity checks (`www.gstatic.com`), the account check run at profile startup
+/// (`accounts.google.com`) — that no launch flag or profile preference was found to stop (see
+/// `browser.rs`'s `launch_flags`). Sites use the same hosts (reCAPTCHA, Maps, "Sign in with
+/// Google"), so the name alone cannot decide: `proxy.rs` admits them only once a page of the
+/// scan has asked for them. Wrong answer next to the rule: denying them by name would hide a
+/// site's real reCAPTCHA from the map; admitting them by name lets Chrome reach Google while no
+/// page asked. Accepted risk (2026-10-19): once a page has asked for one of them, Chrome's own
+/// background connections to that host go through too, until the scan ends.
+const ASKED_FOR_ONLY_HOSTS: [&str; 3] = ["www.google.com", "www.gstatic.com", "accounts.google.com"];
+
+/// Whether `host` (already normalised by `decide`) is admitted only once a page asked for it.
+pub fn asked_for_only(host: &str) -> bool {
+    ASKED_FOR_ONLY_HOSTS.contains(&host)
+}
+
 /// `host` is the *normalised* host that was asked for — the only string the guard has actually
 /// vetted. The caller must connect to that and record that; the raw authority it parsed off the
 /// request line differs from it by anything `str::trim` removes, which is the whole Unicode
@@ -69,6 +85,8 @@ pub enum DenyReason {
     NoScanRunning,
     /// Chrome's own background subsystems, never a site's third party.
     BrowserService,
+    /// A host Chrome reaches on its own *and* sites use, reached while no page had asked for it.
+    NotAskedFor,
 }
 
 /// Normalise a host for comparison, or refuse to compare it at all.
