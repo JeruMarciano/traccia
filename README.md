@@ -14,15 +14,15 @@ A scan is a starting point, never a finished map. Whatever Traccia could not wor
 
 ## Download
 
-**[v0.3.0 (beta)](https://github.com/JeruMarciano/traccia/releases/latest)**
+**[v0.4.0 (beta)](https://github.com/JeruMarciano/traccia/releases/latest)**
 
 | | Installer | Portable, nothing installed |
 |---|---|---|
-| **macOS** | [`Traccia_0.3.0_universal.dmg`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_universal.dmg) | [`Traccia_0.3.0_universal_portable.app.zip`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_universal_portable.app.zip) |
-| **Windows** | [`Traccia_0.3.0_x64-setup.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_x64-setup.exe) | [`Traccia_0.3.0_x64_portable.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/Traccia_0.3.0_x64_portable.exe) |
+| **macOS** | [`Traccia_0.4.0_universal.dmg`](https://github.com/JeruMarciano/traccia/releases/download/v0.4.0/Traccia_0.4.0_universal.dmg) | [`Traccia_0.4.0_universal_portable.app.zip`](https://github.com/JeruMarciano/traccia/releases/download/v0.4.0/Traccia_0.4.0_universal_portable.app.zip) |
+| **Windows** | [`Traccia_0.4.0_x64-setup.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.4.0/Traccia_0.4.0_x64-setup.exe) | [`Traccia_0.4.0_x64_portable.exe`](https://github.com/JeruMarciano/traccia/releases/download/v0.4.0/Traccia_0.4.0_x64_portable.exe) |
 
 The macOS builds are universal, running on Apple Silicon and Intel alike. Checksums for all four
-downloads: [`SHA256SUMS.txt`](https://github.com/JeruMarciano/traccia/releases/download/v0.3.0/SHA256SUMS.txt).
+downloads: [`SHA256SUMS.txt`](https://github.com/JeruMarciano/traccia/releases/download/v0.4.0/SHA256SUMS.txt).
 
 The portable copies are the same application without the wizard. They run where they sit, from a
 Downloads folder or a USB stick, asking for no administrator rights and leaving no entry in the
@@ -46,8 +46,11 @@ afternoon. Neither is assumed to be technical.
 ## Privacy by construction
 
 The app has no account, no server, no telemetry, no crash reporting and no update check. The
-only network traffic it ever produces is the scan of an address you typed in yourself. Projects
-are plain files on your machine.
+only network traffic it ever produces is the scan of an address you typed in yourself. During that
+scan the page loads as a real visitor's browser would load it, so the third-party services on the
+site (analytics, chat widgets, embedded maps) receive the visit too. Addresses that are bare IP
+numbers, ports other than 80 and 443, and anything that resolves to your own machine or local
+network are refused. Projects are plain files on your machine.
 
 Unknowns are reported as "not yet identified", and nothing is ever labelled a violation. Traccia
 maps what is there; judging it against a regulation is the reader's job.
@@ -60,8 +63,9 @@ moving inside the organisation, anything that is not on the web, or connections 
 WebSockets (wss://), so a vendor reached only that way will not appear at all. Every printed
 sheet carries this statement on it.
 
-The no-traffic promise is not a matter of trust: `src-tauri/tests/egress.rs` fails the build if
-the app attempts any connection beyond the site being scanned.
+That promise is not a matter of trust: `src-tauri/tests/egress.rs` fails the build if a scan
+reaches a bare IP address, the browser's own background services, or anything the test site did
+not itself call on.
 
 ## Running from source
 
@@ -104,7 +108,7 @@ is in [`docs/decisions/`](docs/decisions).
 
 ## Status
 
-**v0.3.0 is out as a beta.** [Download it here](https://github.com/JeruMarciano/traccia/releases/latest):
+**v0.4.0 is out as a beta.** [Download it here](https://github.com/JeruMarciano/traccia/releases/latest):
 a universal `.dmg` for macOS, an installer for Windows, and checksums for both. Beta because the
 installers are unsigned, the project-file format is still settling, and one pair of hands has used
 it so far.
@@ -115,10 +119,13 @@ Nothing reaches the map unaccepted, and the documents themselves are never kept.
 depth, meaning cookies and their lifetimes, the pages that collect data, storage keys by name and
 size but never value, and whether a consent mechanism was present.
 
-Most recently the map itself was redrawn. It now reads as a sentence: whose data, through which
-door, to the organisation answering for it, and onward to whom. A side panel states what is known
-about any point along with the source of each fact, and rolls everything unanswered into a single
-line.
+Version 0.4 rebuilt both ends. The scanner now behaves like a real visitor: it records what
+loads before and after the cookie banner is accepted, picks the pages that matter (contacts,
+booking, shop), tells five kinds of way in apart, and names the organisation behind most
+third-party services. The map was redrawn for real sites with dozens of services: destinations are
+grouped into a few cards you can open, and lines that share a path are bundled. A side panel
+states what is known about any point along with the source of each fact, and rolls everything
+unanswered into a single line.
 
 Installers for macOS and Windows come out of the build workflow. Releases are made by hand,
 because an app that never contacts a server cannot update itself.
