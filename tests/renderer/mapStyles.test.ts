@@ -90,4 +90,12 @@ describe('the map’s styles', () => {
     expect(PRINT).toMatch(/\.map-svg\s*\{[^}]*min-width:\s*0/)
     expect(PRINT).toMatch(/\.map-scroll\s*\{[^}]*overflow:\s*visible/)
   })
+
+  it('prints a selected card and a highlighted label as they stand unclicked', () => {
+    // The wrong answer: an ink outline or a bold underlined name on the client's sheet, because
+    // something was clicked when Print was pressed.
+    expect(PRINT).toMatch(/\.selected > \.card-box\s*\{[^}]*stroke:\s*var\(--rule\)/)
+    expect(PRINT).toMatch(/\.selected > \.sub-box\s*\{[^}]*fill:\s*transparent/)
+    expect(PRINT).toMatch(/\.highlighted \.row-label\s*\{[^}]*text-decoration:\s*none/)
+  })
 })

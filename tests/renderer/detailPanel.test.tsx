@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { DetailPanel, DoorGroupView } from '../../src/renderer/components/DetailPanel'
+import { DetailPanel, DoorGroupView, GroupView, PurposesView } from '../../src/renderer/components/DetailPanel'
 import { panelFor } from '../../src/core/panel'
-import type { DoorGroupPanel } from '../../src/core/panel'
+import type { DoorGroupPanel, GroupPanel, PurposesPanel } from '../../src/core/panel'
 import { dorsaleOversized, dorsaleUgly } from '../fixtures/dorsale'
 import { STRINGS } from '../../src/renderer/strings'
 import { rossiEditore } from '../fixtures/rossiEditore'
@@ -246,5 +246,37 @@ describe('the panel of a folded row', () => {
     const plain = renderToStaticMarkup(<DetailPanel project={dorsaleUgly()} selected="doorGroup:form" dictionary={{}} />)
     expect(plain).not.toContain('<button class="detail-door-link"')
     expect(plain).toContain('Forms on 12 pages')
+  })
+})
+
+// The id a panel link sends is the id the sheet draws: with the card open a member is drawn as
+// `member:<id>`, and a bare place id would light nothing.
+function clicks(view: unknown): (() => void)[] {
+  const found: (() => void)[] = []
+  const walk = (n: unknown): void => {
+    if (Array.isArray(n)) return n.forEach(walk)
+    const el = n as { type?: unknown; props?: { children?: unknown; onClick?: () => void } } | null
+    if (el === null || typeof el !== 'object' || el.props === undefined) return
+    if (el.type === 'button' && el.props.onClick !== undefined) found.push(el.props.onClick)
+    walk(el.props.children)
+  }
+  walk(view)
+  return found
+}
+
+describe('the links in a row of destinations', () => {
+  it('select a member by the id the open card draws it under', () => {
+    const project = dorsaleUgly()
+    const panel = panelFor(project, 'group:Marketing', {}) as GroupPanel
+    const picked: string[] = []
+    clicks(GroupView({ panel, onSelect: (id) => picked.push(id) }))[0]!()
+    expect(picked).toEqual([`member:${panel.members[0]!.id}`])
+  })
+
+  it('open a folded purpose by its group id', () => {
+    const panel = panelFor(dorsaleOversized(), 'others', {}) as PurposesPanel
+    const picked: string[] = []
+    clicks(PurposesView({ panel, onSelect: (id) => picked.push(id) }))[0]!()
+    expect(picked).toEqual([`group:${panel.purposes[0]!.name}`])
   })
 })

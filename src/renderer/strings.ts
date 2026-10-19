@@ -28,7 +28,6 @@ export const STRINGS = {
   subjectGroupCount: (n: number): string => `${n} groups`,
   placesInGroup: (n: number): string => `${n} places`,
   notYetIdentified: 'not yet identified',
-  groupTitle: (name: string, places: number): string => `${name}: ${places} places`,
   mapEmpty: 'Open a project to draw the map.',
 
   /** The centre before any document has named the organisation. Never a guessed company name. */
