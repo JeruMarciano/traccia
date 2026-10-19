@@ -1952,6 +1952,9 @@ impl<T: CdpTransport> Driver<T> {
             .and_then(|e| e.as_str())
             .unwrap_or("")
             .to_string();
+        // Chrome's own verdict, independent of `errorText`: a download committed no document,
+        // whatever error text came with it.
+        let download = result.get("isDownload").and_then(|d| d.as_bool()) == Some(true);
         // Arming gets the whole load window, not one 100 ms read of it. A page
         // that attaches a burst of out-of-process iframes needs more than four
         // round trips' worth of budget, and a target left unarmed here is a
@@ -1971,6 +1974,7 @@ impl<T: CdpTransport> Driver<T> {
         // Decided only now, after the wait: whatever the browser fetched for
         // its own error page falls inside the window the caller rolls back.
         match error.as_str() {
+            _ if download => Ok(Visit::NoDocument),
             "" => Ok(Visit::Loaded),
             NO_DOCUMENT => Ok(Visit::NoDocument),
             HTTP_ERROR_STATUS => {
@@ -4828,6 +4832,18 @@ mod tests {
         let mut driver = one_navigation(http_error(), "http://www.rossi-editore.it:8080/x");
         driver.ledger.note_dial("www.rossi-editore.it", 8080, false);
         assert_eq!(visit_once(&mut driver).await, Visit::ErrorPage);
+    }
+
+    #[tokio::test]
+    async fn a_navigation_chrome_calls_a_download_is_never_a_loaded_page() {
+        // Chrome's own verdict wins over whatever `errorText` came with it: a download committed
+        // no document, so the page before it is still the live one.
+        for error in [json!(null), json!(""), json!(HTTP_ERROR_STATUS), json!(NO_DOCUMENT)] {
+            let mut driver = one_navigation(json!({"errorText": error, "isDownload": true}), T14_HOME);
+            assert_eq!(visit_once(&mut driver).await, Visit::NoDocument, "errorText {error}");
+        }
+        let mut driver = one_navigation(json!({"isDownload": false}), T14_HOME);
+        assert_eq!(visit_once(&mut driver).await, Visit::Loaded);
     }
 
     #[tokio::test]
