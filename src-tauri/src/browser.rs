@@ -153,11 +153,12 @@ pub enum LaunchError {
 /// headless start (well under a second on this machine) so a slow CI runner
 /// does not produce a false failure, but finite so a browser that never
 /// opens its debugging port cannot hang the caller forever.
-// Thirty seconds, not ten: a cold Chrome on a loaded Windows machine (observed on the
-// GitHub Actions runner) can take longer than ten to write DevToolsActivePort. The wait
-// still ends the moment the file appears or the process dies; only the failure case
-// waits this long.
-const DEVTOOLS_READY_TIMEOUT: Duration = Duration::from_secs(30);
+// Sixty seconds, not ten or thirty: a cold Chrome on a loaded Windows machine can take longer
+// than ten to write DevToolsActivePort, and the first launch on a fresh GitHub Actions Windows
+// runner took longer than thirty (2026-10-19, tests run one at a time) -- the same first scan a
+// user makes on a slow PC with an antivirus inspecting Chrome. The wait still ends the moment the
+// file appears or the process dies; only the failure case waits this long.
+const DEVTOOLS_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const DEVTOOLS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Right after `kill()`, a child's own children (e.g. Chrome's renderer
