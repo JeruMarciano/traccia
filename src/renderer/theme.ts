@@ -42,6 +42,12 @@
 import PRINT from './print.css?raw'
 import { MAP_MAX_WIDTH, MAP_MIN_WIDTH } from './mapMetrics'
 
+const PLATE_PADDING = 24
+const DETAIL_WIDTH = 296
+/** Below this window width the map at its narrowest and the detail bar do not fit side by side,
+ *  so the bar goes under the map instead of pushing the map's right column out of view. */
+export const DETAIL_BELOW_AT = MAP_MIN_WIDTH + 2 * PLATE_PADDING + DETAIL_WIDTH
+
 export const STYLESHEET = `
 :root{
   /* Pale enamel, the grey-green of a Lettera 22 — cool where every default is cream. */
@@ -84,7 +90,7 @@ export const STYLESHEET = `
   flex:1;
   min-width:0;
   min-height:0;
-  padding:0 24px 16px;
+  padding:0 ${PLATE_PADDING}px 16px;
 }
 
 :focus-visible{outline:2px solid var(--person);outline-offset:2px;}
@@ -92,8 +98,9 @@ export const STYLESHEET = `
 /* Title block. A sheet a consultant leaves behind has to say what it is and when it was begun. */
 .titleblock{
   display:flex;
+  flex-wrap:wrap;
   align-items:baseline;
-  gap:16px;
+  gap:8px 16px;
   padding:20px 0 12px;
   border-bottom:1px solid var(--rule);
 }
@@ -104,8 +111,8 @@ export const STYLESHEET = `
   text-transform:uppercase;
   color:var(--person);
 }
-.project{font-size:19px;font-weight:400;letter-spacing:-.01em;margin:0;min-width:0;}
-.drawn{font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--ink-soft);}
+.project{font-size:19px;font-weight:400;letter-spacing:-.01em;margin:0;min-width:0;overflow-wrap:anywhere;}
+.drawn{white-space:nowrap;font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--ink-soft);}
 .actions{margin-left:auto;display:flex;gap:8px;}
 .action{
   font-family:var(--sans);
@@ -319,7 +326,7 @@ export const STYLESHEET = `
 /* The detail bar: what the clicked point holds. Present only while something is selected, so
    the sheet is the drawing alone until a click asks a question of it. */
 .detail{
-  width:296px;
+  width:${DETAIL_WIDTH}px;
   flex:none;
   background:var(--paper-lift);
   border-left:1px solid var(--rule);
@@ -469,7 +476,7 @@ export const STYLESHEET = `
   .line,.map-svg [role="button"]{transition:none;}
 }
 
-@media (max-width:900px){
+@media (max-width:${DETAIL_BELOW_AT}px){
   .sheet{display:block;height:auto;}
   .detail{width:auto;border-left:0;border-top:1px solid var(--rule);padding:20px 24px 24px;}
 }
