@@ -56,7 +56,12 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a finished scan waits for [`Ledger::settled`]: every accepted connection decides
 /// within `HEADER_READ_TIMEOUT` of its accept by construction, plus a margin for a loaded
 /// machine to schedule the handler.
-pub const SETTLE_WITHIN: Duration = HEADER_READ_TIMEOUT.saturating_add(Duration::from_secs(2));
+pub const SETTLE_WITHIN: Duration =
+    HEADER_READ_TIMEOUT.saturating_add(ASKED_FOR_WAIT).saturating_add(Duration::from_secs(2));
+/// How long a connection to an `admission::asked_for_only` host waits for a page to ask for it.
+/// Generous next to the race it covers (the CDP event normally lands within milliseconds);
+/// Chrome's own background connections are the only ones that wait it out.
+const ASKED_FOR_WAIT: Duration = Duration::from_secs(2);
 /// How long the accept loop waits after a failed `accept` before trying again. Long enough that
 /// a persistently failing listener cannot saturate a core, short enough to be invisible.
 const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(50);
@@ -137,6 +142,8 @@ pub struct Ledger {
     /// for them was this proxy's own, not the site's. Kept apart from the accounting above;
     /// names and ports only. Per port, so a dead :80 and a live :443 never overwrite each other.
     unreachable: Mutex<std::collections::BTreeSet<(String, u16)>>,
+    /// `admission::asked_for_only` hosts a page of this scan has asked for.
+    requested: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl Ledger {
@@ -195,6 +202,31 @@ impl Ledger {
     /// for it is this proxy's 502 and not an answer from the site.
     pub fn unreachable(&self, host: &str, port: u16) -> bool {
         self.unreachable.lock().is_ok_and(|set| set.contains(&(host.to_string(), port)))
+    }
+    /// A page of the scan asked for `host` (`cdp.rs`, from `Network.requestWillBeSent`). Kept
+    /// only for [`admission::asked_for_only`] hosts, so the set is bounded by that list however
+    /// many hosts a page asks for.
+    pub fn note_requested(&self, host: &str) {
+        if crate::admission::asked_for_only(host) {
+            if let Ok(mut set) = self.requested.lock() {
+                set.insert(host.to_string());
+            }
+        }
+    }
+    pub fn was_requested(&self, host: &str) -> bool {
+        self.requested.lock().is_ok_and(|set| set.contains(host))
+    }
+    /// Waits up to [`ASKED_FOR_WAIT`] for a page to ask for `host`: the page's CDP event and
+    /// Chrome's connection race, and the event can land a moment after the CONNECT.
+    async fn asked_for(&self, host: &str) -> bool {
+        let deadline = tokio::time::Instant::now() + ASKED_FOR_WAIT;
+        while !self.was_requested(host) {
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        true
     }
     pub fn allowed(&self) -> Vec<(String, u16)> {
         self.allowed.lock().map(|v| v.clone()).unwrap_or_default()
@@ -512,7 +544,19 @@ async fn handle(
     // poisoned mutex degrades to an empty list — which `decide` treats as NoScanRunning, i.e.
     // deny everything. Failing closed is the only acceptable direction here.
     let origins = scan_origins.lock().map(|g| g.clone()).unwrap_or_default();
-    match decide(&host, port, &origins) {
+    let mut decision = decide(&host, port, &origins);
+    if let Decision::Allow { host: approved } = &decision {
+        if crate::admission::asked_for_only(approved) {
+            decision = if ledger.asked_for(approved).await {
+                // The wait can outlast the scan: decided again on the origins as they are now.
+                let origins = scan_origins.lock().map(|g| g.clone()).unwrap_or_default();
+                decide(&host, port, &origins)
+            } else {
+                Decision::Deny { reason: DenyReason::NotAskedFor }
+            };
+        }
+    }
+    match decision {
         Decision::Deny { reason } => {
             ledger.note_denied(host, port, reason);
             let _ = client.write_all(REFUSED).await;
@@ -1391,6 +1435,66 @@ mod tests {
         // A client that did speak, badly, still gets its 403.
         let answer = send(p.addr, "GET / HTTP/9\r\n\r\n").await;
         assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+    }
+
+    #[tokio::test]
+    async fn a_google_host_chrome_reaches_on_its_own_is_admitted_only_once_a_page_asked_for_it() {
+        // Chrome contacts www.google.com (search preconnect), www.gstatic.com and
+        // accounts.google.com (account check) with no page asking. A site's reCAPTCHA or
+        // "Sign in with Google" asks for the same hosts, so the name alone cannot decide.
+        let (upstream, _seen) = recording_upstream().await;
+        let p = start(origins(&["rossi-editore.it"]), connector_to(upstream)).await.unwrap();
+        let answer = send(p.addr, "CONNECT www.google.com:443 HTTP/1.1\r\n\r\n").await;
+        assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+        assert_eq!(
+            p.ledger.denied(),
+            vec![("www.google.com".to_string(), 443, DenyReason::NotAskedFor)]
+        );
+        assert!(p.ledger.allowed().is_empty());
+        // A page asked; the next connection goes through. A page asking for one does not
+        // open the others.
+        p.ledger.note_requested("www.google.com");
+        let answer = send(p.addr, "CONNECT www.google.com:443 HTTP/1.1\r\n\r\n").await;
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        let answer = send(p.addr, "CONNECT accounts.google.com:443 HTTP/1.1\r\n\r\n").await;
+        assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+        // Any other third party is untouched.
+        let answer = send(p.addr, "CONNECT fonts.googleapis.com:443 HTTP/1.1\r\n\r\n").await;
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn a_scan_that_ends_during_the_wait_admits_nothing() {
+        let scan = origins(&["rossi-editore.it"]);
+        let p = start(Arc::clone(&scan), connector_that_must_never_be_called()).await.unwrap();
+        let ledger = Arc::clone(&p.ledger);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            scan.lock().unwrap().clear();
+            ledger.note_requested("www.google.com");
+        });
+        let answer = send(p.addr, "CONNECT www.google.com:443 HTTP/1.1\r\n\r\n").await;
+        assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+        assert_eq!(
+            p.ledger.denied(),
+            vec![("www.google.com".to_string(), 443, DenyReason::NoScanRunning)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_page_asking_shortly_after_chrome_connects_still_gets_through() {
+        // The page's request and Chrome's connection race: the CDP event can land a moment
+        // after the CONNECT. The proxy waits for it rather than refusing at once.
+        let (upstream, _seen) = recording_upstream().await;
+        let p = start(origins(&["rossi-editore.it"]), connector_to(upstream)).await.unwrap();
+        let ledger = Arc::clone(&p.ledger);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            ledger.note_requested("www.gstatic.com");
+        });
+        let answer = send(p.addr, "CONNECT www.gstatic.com:443 HTTP/1.1\r\n\r\n").await;
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
     }
 
     #[tokio::test]
