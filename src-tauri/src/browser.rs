@@ -356,10 +356,11 @@ const PROFILE_REMOVE_RETRY_DELAY: Duration = Duration::from_millis(100);
 ///
 /// **Status for the Task 13 handover:** six hosts of Chrome's own are *attempted* during a
 /// scan — distinct from *unverified*; what remains unsuppressed, after two evidence-based search
-/// rounds, is the attempt itself. Three are still admitted on 80/443 like any host a visitor's
-/// browser reaches (`www.gstatic.com`, `accounts.google.com`, `www.google.com`), so in the
-/// product they may reach the network, only at an address `proxy::is_permitted_upstream`
-/// permits; in tests the connector refuses to dial them. Three are refused by name in
+/// rounds, is the attempt itself. Three (`www.gstatic.com`, `accounts.google.com`,
+/// `www.google.com`) are denied by `proxy.rs` (`DenyReason::NotAskedFor`) unless a page of the
+/// scan asked for them — sites use the same hosts, so they cannot be refused by name; a
+/// 2026-10-19 attempt to stop them through seeded profile preferences (`signin.allowed`,
+/// `default_search_provider.enabled`) measured no change. Three are refused by name in
 /// `admission::decide` (`BROWSER_SERVICE_HOSTS`, `DenyReason::BrowserService`) and never reach
 /// the network: `android.clients.google.com`, `update.googleapis.com` and
 /// `safebrowsingohttpgateway.googleapis.com`. None becomes a host the site contacted:
