@@ -113,6 +113,10 @@ pub struct Launched {
     pub child: Child,
     pub profile_dir: PathBuf,
     pub devtools_port: u16,
+    /// Set once teardown has killed and reaped the child. After that its pid,
+    /// and so its process group id, is free for the system to reuse, so the
+    /// second teardown (`Drop` after `tear_down`) must not signal it again.
+    reaped: bool,
 }
 
 #[derive(Debug)]
@@ -165,9 +169,12 @@ const DEVTOOLS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// processes) can still hold open handles into the profile directory for a
 /// short window — `Child::wait` only reaps the immediate child, not its
 /// descendants. Most sharply on Windows, where an open handle blocks
-/// deletion outright rather than merely racing it. A short retry absorbs
-/// that window instead of turning a normal teardown into a reported error.
-const PROFILE_REMOVE_RETRIES: u32 = 5;
+/// deletion outright rather than merely racing it. On Unix the whole process
+/// group is killed and waited out first ([`Launched::kill_and_wait`]); this
+/// retry is what absorbs the window on Windows. Up to five seconds, not half
+/// of one: on a loaded macOS runner (2026-10-19) a cancelled scan's profile
+/// outlived half a second. Removal stops at the first success.
+const PROFILE_REMOVE_RETRIES: u32 = 50;
 const PROFILE_REMOVE_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 /// The flags every launch carries. Grouped by what each closes, since a flag
@@ -624,6 +631,11 @@ pub fn launch(found: &Found, profile_dir: PathBuf, proxy_port: u16) -> Result<La
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    // Chrome in a process group of its own, so teardown can stop its helpers
+    // with it: killing only the main process leaves them writing into the
+    // profile while it is being removed.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
 
     let mut child = match command.spawn() {
         Ok(child) => child,
@@ -638,10 +650,16 @@ pub fn launch(found: &Found, profile_dir: PathBuf, proxy_port: u16) -> Result<La
             child,
             profile_dir,
             devtools_port,
+            reaped: false,
         }),
         Err(e) => {
-            let _ = child.kill();
-            let _ = child.wait();
+            // A child that exited on its own was already reaped by the wait: its group id may
+            // be free, so only a live child's group is signalled.
+            if matches!(e, LaunchError::ProcessExitedBeforeReady { .. }) {
+                let _ = child.wait();
+            } else {
+                kill_process_tree(&mut child);
+            }
             let _ = remove_profile_with_retry(&profile_dir);
             Err(e)
         }
@@ -654,8 +672,57 @@ impl Launched {
     /// actionable by a caller that is itself tearing things down. Shared by
     /// `Drop` and [`tear_down`] so the two cannot drift apart.
     fn kill_and_wait(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if !self.reaped {
+            kill_process_tree(&mut self.child);
+            self.reaped = true;
+        }
+    }
+}
+
+/// How long teardown waits for Chrome's helpers to go once their group was
+/// killed. They die on SIGKILL; this only covers the kernel reaping them.
+#[cfg(unix)]
+const GROUP_EXIT_WAIT: Duration = Duration::from_secs(5);
+
+/// Sends `signal` to every process in `group` through the system's `kill`,
+/// since the crate forbids `unsafe` and std has no call to signal a group.
+/// True when the signal was delivered, i.e. the group still has a member.
+#[cfg(unix)]
+fn signal_group(group: u32, signal: &str) -> bool {
+    // An absolute path: a `kill` that cannot be found would skip the group kill silently.
+    Command::new("/bin/kill")
+        .arg(signal)
+        .arg("--")
+        .arg(format!("-{group}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Kills the child and, on Unix, every process in its group (Chrome's
+/// helpers), then waits until none is left, so nothing is still writing into
+/// the profile when it is removed. Errors are ignored: the group may already
+/// be gone, and a caller tearing down has nothing to do about either.
+fn kill_process_tree(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        // `process_group(0)` at spawn made the child's pid its group id.
+        let group = child.id();
+        signal_group(group, "-KILL");
+        let _ = child.kill();
+        let _ = child.wait();
+        let deadline = Instant::now() + GROUP_EXIT_WAIT;
+        // Signal 0 checks existence only.
+        while signal_group(group, "-0") && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
@@ -690,8 +757,9 @@ impl Drop for Launched {
 /// it had already exited on its own) and removes the ephemeral profile.
 /// Called on every path — success, failure and cancellation alike. `Drop`
 /// (above) repeats this best-effort when `launched` goes out of scope at
-/// the end of this function, which is redundant but harmless: killing an
-/// already-reaped child is a no-op error that is ignored either way, and
+/// the end of this function, which is redundant but harmless: the second
+/// kill is skipped once the child is reaped (`Launched::reaped`), since its
+/// process group id may already belong to someone else, and
 /// [`remove_profile`] treats "already gone" as success.
 pub fn tear_down(mut launched: Launched) -> Result<(), LaunchError> {
     launched.kill_and_wait();
@@ -1023,6 +1091,7 @@ mod tests {
                 child,
                 profile_dir: profile.clone(),
                 devtools_port: 0,
+                reaped: false,
             };
             // Dropped here, at the end of this block.
         }
@@ -1046,6 +1115,25 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn teardown_stops_the_childs_own_children_too() {
+        // The wrong answer: killing only the process we spawned. Chrome's helpers are its
+        // children, and on a loaded Mac they kept writing into the profile after the main
+        // process died, so a cancelled scan left the profile (and the site's cookies) behind.
+        use std::os::unix::process::CommandExt;
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30 & sleep 30"])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let group = child.id();
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(signal_group(group, "-0"), "the helper never started");
+        kill_process_tree(&mut child);
+        assert!(!signal_group(group, "-0"), "a helper outlived teardown");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn tear_down_kills_the_process_and_removes_the_profile() {
         let dir = tempfile::tempdir().expect("tempdir");
         let profile = dir.path().join("profile");
@@ -1060,6 +1148,7 @@ mod tests {
             child,
             profile_dir: profile.clone(),
             devtools_port: 0,
+            reaped: false,
         };
         tear_down(launched).expect("tear_down");
 
