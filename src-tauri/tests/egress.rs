@@ -330,9 +330,9 @@ const FIXTURE_IP_LITERALS: [&str; 3] = ["192.0.2.10", "198.51.100.20", "203.0.11
 /// This is an **allowlist of known, documented exceptions** — not a claim that any
 /// of it is acceptable to leave unsuppressed forever. Six entries: three admitted, three denied.
 /// Since spec §13 admission
-/// admits any named host on 80/443, so www.gstatic.com, accounts.google.com and
-/// www.google.com are admitted like a visitor's third party (in the product they reach
-/// the network at a permitted address; here the test connector refuses them). The
+/// admits any named host on 80/443, but www.gstatic.com, accounts.google.com and
+/// www.google.com go through only once a page asked for them (`ASKED_FOR_ONLY_HOSTS`
+/// below); this fixture never does, so here they are attempted and denied. The
 /// other three — `admission::BROWSER_SERVICE_HOSTS` — are denied by name
 /// (`DenyReason::BrowserService`) and must never be admitted. A host the proxy sees
 /// during a scan that is **not** in this list is the finding this test exists to catch.
@@ -396,6 +396,28 @@ const REFUSED_BROWSER_SERVICE_HOSTS: [&str; 3] = [
     "android.clients.google.com",
     "update.googleapis.com",
 ];
+
+/// Google hosts Chrome reaches on its own and sites also use: `admission::asked_for_only`.
+const ASKED_FOR_ONLY_HOSTS: [&str; 3] = ["www.google.com", "www.gstatic.com", "accounts.google.com"];
+
+#[tokio::test]
+async fn a_google_host_the_page_asks_for_is_reached_like_any_third_party() {
+    // The other half of the gate: a site's own reCAPTCHA must still be on the map.
+    let site = common::fixture_site_serving(vec![(
+        "/",
+        "<!doctype html><script src=\"https://www.gstatic.com/recaptcha/api.js\"></script>".into(),
+    )])
+    .await;
+    let (ledger, output) = run_scan_with_output(&site).await;
+    assert!(
+        ledger.allowed().iter().any(|(h, _)| h == "www.gstatic.com"),
+        "the page asked for www.gstatic.com and the proxy refused it: {:?}",
+        ledger.denied()
+    );
+    assert!(output.hosts.iter().any(|h| h.host == "www.gstatic.com"), "{:?}", output.hosts);
+    // Chrome's own contacts in the same scan stay shut.
+    assert!(!ledger.allowed().iter().any(|(h, _)| h == "accounts.google.com"), "{:?}", ledger.allowed());
+}
 
 #[tokio::test]
 async fn the_browsers_own_background_traffic_never_becomes_a_site_host() {
@@ -462,6 +484,23 @@ async fn the_browsers_own_background_traffic_never_becomes_a_site_host() {
         assert!(
             !attempted.contains(&forbidden),
             "{forbidden} was attempted — a flag verified to silence this host has regressed"
+        );
+    }
+
+    // Admitted only once a page asked for them, and no page of this fixture does. Chrome
+    // must actually have tried: if it stops, this check would pass on nothing.
+    assert!(
+        denied.iter().any(|(_, _, r)| *r == DenyReason::NotAskedFor),
+        "Chrome made none of its own Google contacts — revisit ASKED_FOR_ONLY_HOSTS: {denied:?}"
+    );
+    for gated in ASKED_FOR_ONLY_HOSTS {
+        assert!(
+            !allowed.iter().any(|(h, _)| h == gated),
+            "{gated} was admitted though no page asked for it"
+        );
+        assert!(
+            denied.iter().filter(|(h, _, _)| h == gated).all(|(_, _, r)| *r == DenyReason::NotAskedFor),
+            "{gated} was denied for a reason other than NotAskedFor"
         );
     }
 
