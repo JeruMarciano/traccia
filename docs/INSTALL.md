@@ -23,10 +23,10 @@ nothing is copied into system folders, no administrator rights are asked for, an
 in Apps and Features or the Applications folder unless you put it there yourself. This is the one
 to take to a machine you do not own.
 
-- **Windows**: download `Traccia_0.3.0_x64_portable.exe` and double-click it. The portable
+- **Windows**: download `Traccia_0.4.0_x64_portable.exe` and double-click it. The portable
   executable is larger than the installer, around 7 MB against 2 MB, because an installer
   compresses its payload and a bare executable does not.
-- **macOS**: download `Traccia_0.3.0_universal_portable.app.zip`, unzip it, and open `Traccia.app`
+- **macOS**: download `Traccia_0.4.0_universal_portable.app.zip`, unzip it, and open `Traccia.app`
   from wherever it landed. A `.app` has always been a self-contained folder; dragging it to
   Applications is a convention rather than a requirement.
 
@@ -44,7 +44,7 @@ Both checksums are published as `SHA256SUMS.txt` on the same release page.
 macOS:
 
 ```bash
-VERSION=0.3.0
+VERSION=0.4.0
 BASE=https://github.com/JeruMarciano/traccia/releases/download/v$VERSION
 curl -fL -o Traccia.dmg "$BASE/Traccia_${VERSION}_universal.dmg"
 curl -fL -o SHA256SUMS.txt "$BASE/SHA256SUMS.txt"
@@ -57,7 +57,7 @@ hdiutil detach /Volumes/Traccia
 Windows, in PowerShell:
 
 ```powershell
-$VERSION = "0.3.0"
+$VERSION = "0.4.0"
 $BASE = "https://github.com/JeruMarciano/traccia/releases/download/v$VERSION"
 Invoke-WebRequest "$BASE/Traccia_${VERSION}_x64-setup.exe" -OutFile Traccia-setup.exe
 Invoke-WebRequest "$BASE/SHA256SUMS.txt" -OutFile SHA256SUMS.txt
