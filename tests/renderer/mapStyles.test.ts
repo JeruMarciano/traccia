@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { MAP_MAX_WIDTH, MAP_MIN_WIDTH } from '../../src/renderer/mapMetrics'
-import { STYLESHEET as THEME } from '../../src/renderer/theme'
+import { DETAIL_BELOW_AT, STYLESHEET as THEME } from '../../src/renderer/theme'
 
 const PRINT = readFileSync('src/renderer/print.css', 'utf8')
 const rule = (css: string, selector: string): string =>
@@ -12,6 +12,22 @@ describe('the map’s styles', () => {
     expect(MAP_MIN_WIDTH).toBe(750)
     expect(rule(THEME, '.map-svg')).toContain(`min-width:${MAP_MIN_WIDTH}px`)
     expect(rule(THEME, '.map-svg')).toContain(`max-width:${MAP_MAX_WIDTH}px`)
+  })
+
+  it('puts the detail bar under the map wherever the two would not fit side by side', () => {
+    // The wrong answer: a fixed 900 px, which on a 1000 px window with the bar open leaves the
+    // map 684 px for its 750, and the destinations column scrolled out of view.
+    const plate = Number(rule(THEME, '.plate').match(/padding:0 (\d+)px/)?.[1])
+    const bar = Number(rule(THEME, '.detail').match(/width:(\d+)px/)?.[1])
+    expect(DETAIL_BELOW_AT).toBe(MAP_MIN_WIDTH + 2 * plate + bar)
+    expect(THEME).toContain(`@media (max-width:${DETAIL_BELOW_AT}px){\n  .sheet{display:block;`)
+  })
+
+  it('wraps the title block rather than squeezing the project’s name under its date', () => {
+    // The wrong answer seen on a narrow window: the name shrunk to 10 px wide, its text running
+    // over "Started", and the date broken over three lines.
+    expect(rule(THEME, '.titleblock')).toContain('flex-wrap:wrap')
+    expect(rule(THEME, '.drawn')).toContain('white-space:nowrap')
   })
 
   it('lets the sheet’s height follow its rows, and scrolls what does not fit', () => {
