@@ -851,9 +851,16 @@ mod tests {
         let path = dir.path().join("forged.xlsx");
         std::fs::write(&path, &buf).unwrap();
         let result = extract_text(&[path]);
-        let f = ok_of(&result[0]);
-        assert_eq!(f.text, "");
-        assert!(f.truncated);
+        // Two refusals are both right. zip 8 inflated the entry and our own pass caught the true
+        // size (empty and truncated). zip 9 holds an entry to its declared size and rejects the
+        // forged archive outright (unreadable). The wrong answer is any text from it.
+        match &result[0] {
+            ExtractResult::Ok(f) => {
+                assert_eq!(f.text, "");
+                assert!(f.truncated);
+            }
+            ExtractResult::Err(e) => assert_eq!(e.error, "UNREADABLE"),
+        }
     }
 
     #[test]
