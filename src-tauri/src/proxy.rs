@@ -53,6 +53,10 @@ pub type Connector =
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 /// A client that opens a connection and then says nothing must not hold a task open.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a finished scan waits for [`Ledger::settled`]: every accepted connection decides
+/// within `HEADER_READ_TIMEOUT` of its accept by construction, plus a margin for a loaded
+/// machine to schedule the handler.
+pub const SETTLE_WITHIN: Duration = HEADER_READ_TIMEOUT.saturating_add(Duration::from_secs(2));
 /// How long the accept loop waits after a failed `accept` before trying again. Long enough that
 /// a persistently failing listener cannot saturate a core, short enough to be invisible.
 const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(50);
@@ -221,6 +225,24 @@ impl Ledger {
     }
     pub fn healthy(&self) -> bool {
         self.handler_panics.load(Ordering::SeqCst) == 0 && self.accepted() == self.outcomes()
+    }
+    /// `healthy()`, read once every connection already accepted has had the chance to reach
+    /// its outcome — and no later than `within`. Outcomes land when a handler decides, and a
+    /// handler still waiting on its preamble decides only when the bytes arrive, the client
+    /// closes or `HEADER_READ_TIMEOUT` fires. When a scan kills Chrome, its network process
+    /// dies a moment after the browser, so a spare connection it held open closes after the
+    /// scan is ready to read: read at once, a live sensor looks dead (CI run 39296023398,
+    /// `(false, 0, 12)`). Past `within`, a missing outcome is a real one and still fails.
+    pub async fn settled(&self, within: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + within;
+        // A panicked handler never records its outcome, and `healthy()` fails on it anyway.
+        while self.accepted() != self.outcomes()
+            && self.handler_panics.load(Ordering::SeqCst) == 0
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        self.healthy()
     }
     /// Test-support only, and deliberately not `#[cfg(test)]`: `tests/egress.rs` links this crate
     /// as an external crate, so a `#[cfg(test)]` item built for this crate's own unit tests is not
@@ -433,13 +455,23 @@ async fn handle(
     connect: Connector,
     ledger: Arc<Ledger>,
 ) {
-    let Some((head, early)) = read_head(&mut client).await else {
+    let (head, early) = match read_head(&mut client).await {
+        Ok(read) => read,
         // A timeout, an oversized preamble, bytes that were not UTF-8, or a client that closed
         // without speaking. Nothing was contacted, so there is no host to record — but the
         // connection is still counted, or `accepted` reconciles against nothing.
-        ledger.note_refused();
-        let _ = client.write_all(REFUSED).await;
-        return;
+        Err(spoke) => {
+            ledger.note_refused();
+            // Only a client that sent something gets the 403. Chrome opens spare connections
+            // ahead of need; one that idled past the timeout and was answered anyway kept that
+            // 403 queued, and the next request Chrome sent on it read the stale 403 as its own
+            // answer — a download link reported as a loaded page. A bare close, by contrast,
+            // is an idle connection ending, and Chrome retries the request on a fresh one.
+            if spoke {
+                let _ = client.write_all(REFUSED).await;
+            }
+            return;
+        }
     };
 
     let Some(request) = parse_request(&head) else {
@@ -535,9 +567,10 @@ async fn handle(
     }
 }
 
-/// Read the request line and headers, bounded in both bytes and time. Returns None on a timeout,
-/// on an oversized header block, on a closed connection, or on bytes that are not UTF-8 — every
-/// one of which is a refusal, never a longer read.
+/// Read the request line and headers, bounded in both bytes and time. Fails on a timeout, on an
+/// oversized header block, on a closed connection, or on bytes that are not UTF-8 — every one of
+/// which is a refusal, never a longer read. The error says whether the client sent any byte at
+/// all: one that never spoke has asked nothing, so it must not be answered (see `handle`).
 /// Returns the preamble and any bytes that arrived behind it in the same read.
 ///
 /// A client may pipeline: `CONNECT host:443\r\n\r\n` immediately followed by a TLS ClientHello,
@@ -549,26 +582,27 @@ async fn handle(
 /// Splitting at the terminator also means only the preamble has to be UTF-8. Early data is
 /// binary by nature, and running `from_utf8` over it would have refused exactly the clients that
 /// pipelined correctly.
-async fn read_head(client: &mut TcpStream) -> Option<(String, Vec<u8>)> {
+async fn read_head(client: &mut TcpStream) -> Result<(String, Vec<u8>), bool> {
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     let deadline = tokio::time::Instant::now() + HEADER_READ_TIMEOUT;
     let end = loop {
-        let n = tokio::time::timeout_at(deadline, client.read(&mut chunk)).await.ok()?.ok()?;
-        if n == 0 {
-            return None;
-        }
-        buf.extend_from_slice(chunk.get(..n)?);
+        let read = tokio::time::timeout_at(deadline, client.read(&mut chunk)).await;
+        let n = match read {
+            Ok(Ok(n)) if n > 0 => n,
+            _ => return Err(!buf.is_empty()),
+        };
+        buf.extend_from_slice(chunk.get(..n).ok_or(true)?);
         if buf.len() > MAX_HEADER_BYTES {
-            return None;
+            return Err(true);
         }
         if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
             break at + 4;
         }
     };
-    let head = String::from_utf8(buf.get(..end)?.to_vec()).ok()?;
-    let early = buf.get(end..)?.to_vec();
-    Some((head, early))
+    let head = String::from_utf8(buf.get(..end).ok_or(true)?.to_vec()).map_err(|_| true)?;
+    let early = buf.get(end..).ok_or(true)?.to_vec();
+    Ok((head, early))
 }
 
 /// What a connection is for, once its request line has been read. The two arms differ only in
@@ -1323,6 +1357,65 @@ mod tests {
              reconciled against what the ledger saw, which is how the spike's oracle died quietly"
         );
         assert_sensor_alive(&p.ledger);
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_never_spoke_is_closed_without_an_answer() {
+        // Chrome opens spare proxy connections ahead of need. One that idled past
+        // HEADER_READ_TIMEOUT used to get a 403 written into it; Chrome then sent a real request
+        // on that socket and read the stale 403 as its answer — a download link reported as a
+        // loaded page (CI run 39296023398). With no answer, only a closed socket, Chrome retries
+        // the request on a fresh connection.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        let idle = async {
+            let mut c = TcpStream::connect(p.addr).await.unwrap();
+            let mut got = Vec::new();
+            let _ = c.read_to_end(&mut got).await;
+            got
+        };
+        let closed = async {
+            let mut c = TcpStream::connect(p.addr).await.unwrap();
+            c.shutdown().await.unwrap();
+            let mut got = Vec::new();
+            let _ = c.read_to_end(&mut got).await;
+            got
+        };
+        let (idle, closed) = tokio::join!(idle, closed);
+        assert_eq!(String::from_utf8_lossy(&idle), "", "idle past the timeout");
+        assert_eq!(String::from_utf8_lossy(&closed), "", "closed without a byte");
+        // Still accounted for: silence is a refusal in the ledger, just not on the wire.
+        assert_eq!(p.ledger.refused(), 2);
+        assert_sensor_alive(&p.ledger);
+        // A client that did speak, badly, still gets its 403.
+        let answer = send(p.addr, "GET / HTTP/9\r\n\r\n").await;
+        assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+    }
+
+    #[tokio::test]
+    async fn a_connection_still_opening_when_the_scan_ends_is_waited_for_not_read_as_dead() {
+        // CI run 39296023398, `(false, 0, 12)`: Chrome's network process outlives the browser
+        // by a moment, so a spare connection it held is still waiting for its preamble when the
+        // scan reads the ledger. It closes a little later and lands as a refusal.
+        let p = start(origins(&["rossi-editore.it"]), connector_that_must_never_be_called())
+            .await
+            .unwrap();
+        let spare = TcpStream::connect(p.addr).await.unwrap();
+        while p.ledger.accepted() == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(!p.ledger.healthy(), "read at once, a live sensor looks dead");
+        let closer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            drop(spare);
+        });
+        assert!(p.ledger.settled(SETTLE_WITHIN).await);
+        closer.await.unwrap();
+        // The wait is bounded: an outcome that never comes still fails.
+        let lost = Ledger::new();
+        lost.note_accepted();
+        assert!(!lost.settled(Duration::from_millis(50)).await);
     }
 
     #[tokio::test]

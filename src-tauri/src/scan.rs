@@ -476,6 +476,10 @@ async fn run_pipeline(
     #[cfg(not(feature = "test-support"))]
     let _ = poison_ledger_for_test;
 
+    // Read after the browser is dead but not before every connection it opened has landed in
+    // the record: see `Ledger::settled`.
+    let healthy = proxy_handle.ledger.settled(proxy::SETTLE_WITHIN).await;
+
     let result = (|| {
         let observation = observed.map_err(|e| {
             scan_trace("observe", &e);
@@ -489,7 +493,7 @@ async fn run_pipeline(
         }
 
         if !ledger_is_consistent(
-            proxy_handle.ledger.healthy(),
+            healthy,
             proxy_handle.ledger.dropped_records(),
             &proxy_handle.ledger.allowed(),
             &target.origins,
@@ -497,7 +501,7 @@ async fn run_pipeline(
             scan_trace(
                 "ledger assertion",
                 &(
-                    proxy_handle.ledger.healthy(),
+                    healthy,
                     proxy_handle.ledger.dropped_records(),
                     proxy_handle.ledger.allowed().len(),
                 ),
