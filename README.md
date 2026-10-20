@@ -14,7 +14,7 @@ A scan is a starting point, never a finished map. Whatever Traccia could not wor
 
 ## Download
 
-**[v0.4.0 (beta)](https://github.com/JeruMarciano/traccia/releases/latest)**
+**[v0.4.0 (beta)](https://github.com/JeruMarciano/traccia/releases/tag/v0.4.0)**
 
 | | Installer | Portable, nothing installed |
 |---|---|---|
@@ -108,7 +108,7 @@ is in [`docs/decisions/`](docs/decisions).
 
 ## Status
 
-**v0.4.0 is out as a beta.** [Download it here](https://github.com/JeruMarciano/traccia/releases/latest):
+**v0.4.0 is out as a beta.** [Download it here](https://github.com/JeruMarciano/traccia/releases/tag/v0.4.0):
 a universal `.dmg` for macOS, an installer for Windows, and checksums for both. Beta because the
 installers are unsigned, the project-file format is still settling, and one pair of hands has used
 it so far.
