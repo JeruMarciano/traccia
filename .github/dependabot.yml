@@ -1,0 +1,48 @@
+# Dependency updates.
+#
+# Security alerts were already on; this adds routine version updates so the
+# app does not drift far behind and then need one large, risky jump.
+#
+# Weekly for code, monthly for CI: a daily cadence would only train you to
+# ignore the notifications. The spike/ crates are throwaway experiments and
+# are deliberately not covered.
+version: 2
+updates:
+  # Frontend (Vite + Tauri JS API).
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for routine patch/minor bumps. Majors still arrive separately,
+      # because those deserve to be read.
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps"
+
+  # The Rust app and scanner.
+  - package-ecosystem: cargo
+    directory: "/src-tauri"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps"
+
+  # Stale third-party actions are a well-travelled supply-chain path into the
+  # release build, which is what produces the files people download.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
