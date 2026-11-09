@@ -45,6 +45,40 @@ describe('deriveDoors', () => {
     expect(cp?.fields).toEqual(['email', 'nome', 'messaggio'])
   })
 
+  it('lists each field once and never a blank one', () => {
+    // Two forms on one page both asking "email", and an input with neither name nor label, used
+    // to reach the panel as ['email', 'email', '', ''] — two empty bullets and a duplicated row.
+    const p = rossiEditore()
+    p.collectionPoints![0]!.fields = [
+      { name: 'email', kind: 'email' },
+      { name: '', kind: 'free-text' },
+      { name: 'email', kind: 'email' },
+      { name: '', kind: 'free-text' },
+    ]
+    expect(deriveDoors(p).find((d) => d.id === 'cp:cp-1')?.fields).toEqual(['email'])
+  })
+
+  it('names an unnamed field by its label', () => {
+    const fields: RawFormField[] = [
+      { page: 'https://x.test/c', name: '', type: 'text', autocomplete: '', label: 'Telefono', form: 0 },
+      { page: 'https://x.test/c', name: 'msg', type: 'textarea', autocomplete: '', label: '', form: 0 },
+    ]
+    const result: ScanResult = {
+      scannedHost: 'x.test',
+      hosts: [{ host: 'x.test', requestCount: 1 }],
+      pagesVisited: 1,
+      possibleGaps: 0,
+      stoppedEarly: false,
+      cookies: [],
+      formFields: fields,
+      storageKeys: [],
+      consentMarkers: [],
+      capturedAtEpochSeconds: 1_770_000_000,
+    }
+    const door = classifyDoors(result, { vendors: [] } as unknown as VendorDictionary).find((d) => d.kind === 'form')
+    expect(door?.fields.map((f) => f.name)).toEqual(['Telefono', 'msg'])
+  })
+
   it('assigns colours by row and cycles past six rows', () => {
     // Eight rows: the site, two of each of three kinds, one embed. Nothing folds.
     const p = scanLike(['form', 'form', 'newsletter', 'newsletter', 'booking', 'booking', 'embed'])

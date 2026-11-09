@@ -89,7 +89,7 @@ export function deriveDoors(project: Project): Door[] {
     label: doorLabel(cp.kind ?? 'form', cp.page, cp.provider),
     origin: 'discovered' as DoorOrigin,
     colourIndex: 0,
-    fields: cp.fields.map((f) => f.name),
+    fields: [...new Set(cp.fields.map((f) => f.name).filter((n) => n !== ''))],
     kind: cp.kind ?? 'form',
     pages: cp.pages ?? [cp.page],
     ...(cp.destination === undefined ? {} : { destination: cp.destination }),
@@ -191,7 +191,7 @@ export function classifyDoors(result: ScanResult, dictionary: VendorDictionary):
     for (const group of forms.values()) {
       if (!isDoorForm(group)) continue
       const collecting = group.filter(isCollectingField)
-      const fields = collecting.map((f) => ({ name: f.name, kind: classifyField(f) }))
+      const fields = collecting.map((f) => ({ name: f.name || f.label, kind: classifyField(f) }))
       const action = group.map((f) => f.actionHost ?? '').find((h) => thirdParty(h)) ?? null
       const passwordAsked = collecting.some((f) => f.type.trim().toLowerCase() === 'password')
       const mailingVendor = action !== null && identify(action, dictionary)?.category === 'email-marketing'
